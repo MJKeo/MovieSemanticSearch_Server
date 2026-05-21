@@ -717,6 +717,7 @@ async def generate_llm_response_async(
     system_prompt: str,
     response_format: BaseModel,
     model: str,
+    timeout: float | None = None,
     **kwargs,
 ) -> Tuple[BaseModel, int, int]:
     """Route a structured-output request to the appropriate provider,
@@ -729,13 +730,21 @@ async def generate_llm_response_async(
     The timeout / retry / jitter discipline lives here (the lowest
     layer) rather than being duplicated at orchestrator + handler
     levels. A pathological hang therefore burns at most one
-    `LLM_PER_ATTEMPT_TIMEOUT_SECONDS * LLM_MAX_ATTEMPTS` window
-    instead of compounding across stacked retry wrappers.
+    `per_attempt_timeout * LLM_MAX_ATTEMPTS` window instead of
+    compounding across stacked retry wrappers.
+
+    Callers that run heavier prompts (e.g. reasoning-model generators
+    like concept_tags) can pass an explicit `timeout` to override the
+    default `LLM_PER_ATTEMPT_TIMEOUT_SECONDS`. When None, the module
+    default is used.
 
     Returns a tuple of (parsed_response, input_tokens, output_tokens).
     """
     generate_fn = _PROVIDER_DISPATCH[provider]
     pass_model = provider not in _PROVIDERS_WITHOUT_MODEL_PARAM
+    per_attempt_timeout = (
+        timeout if timeout is not None else LLM_PER_ATTEMPT_TIMEOUT_SECONDS
+    )
 
     last_exc: BaseException | None = None
     for attempt in range(LLM_MAX_ATTEMPTS):
@@ -749,7 +758,7 @@ async def generate_llm_response_async(
                         model=model,
                         **kwargs,
                     ),
-                    timeout=LLM_PER_ATTEMPT_TIMEOUT_SECONDS,
+                    timeout=per_attempt_timeout,
                 )
             return await asyncio.wait_for(
                 generate_fn(
@@ -758,7 +767,7 @@ async def generate_llm_response_async(
                     response_format=response_format,
                     **kwargs,
                 ),
-                timeout=LLM_PER_ATTEMPT_TIMEOUT_SECONDS,
+                timeout=per_attempt_timeout,
             )
         except Exception as exc:  # noqa: BLE001 — broad catch is intentional
             last_exc = exc

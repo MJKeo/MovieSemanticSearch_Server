@@ -20,13 +20,19 @@ Inputs:
       of structural/storytelling craft. Primary signal for
       NONLINEAR_TIMELINE, supports PLOT_TWIST / UNRELIABLE_NARRATOR /
       BREAKING_FOURTH_WALL (may be None)
-    - nt_output: NarrativeTechniquesOutput from Wave 2. character_arcs
-      terms (film-language arc labels like "redemption arc") are now
-      passed and act as ANTI_HERO disqualifiers (may be None)
-    - pa_output: PlotAnalysisOutput from Wave 2 (may be None)
-    - ve_output: ViewerExperienceOutput from Wave 2 — only the
-      ending_aftertaste section is routed into the prompt, as the
-      primary signal for emotional-ending classification (may be None)
+    - nt_output: NarrativeTechniquesOutput from Wave 2 — 5 sections
+      (narrative_archetype, narrative_delivery, pov_perspective,
+      information_control, additional_narrative_devices). The
+      character_arcs and audience_character_perception sections were
+      removed after the three-way eval showed they were the primary
+      drivers of ANTI_HERO false positives: their term lists literally
+      contain "antihero maturation arc" / "sympathetic antihero" and
+      the consumer rubber-stamped those labels (may be None)
+    - pa_output: PlotAnalysisOutput from Wave 2. character_arc_labels
+      (arc transformation labels like "impostor to reconciled
+      contributor") + conflict_type now carry the protagonist-arc
+      signal that NT character_arcs previously provided, in a form
+      that doesn't pre-classify into a tag (may be None)
 
 When Wave 1/2 outputs are unavailable, the prompt builder uses raw movie
 data as fallback (best_plot_fallback for plot, "not available" for absent
@@ -38,7 +44,7 @@ Skip condition (enforced by pre_consolidation):
     - best_plot_fallback() >= 250 chars
     - plot_keywords >= 3
 
-Provider/model: OpenAI gpt-5-mini, reasoning_effort: medium, verbosity: low.
+Provider/model: OpenAI gpt-5.4-mini, reasoning_effort: none, verbosity: low.
 """
 
 from __future__ import annotations
@@ -51,7 +57,6 @@ from schemas.metadata import (
     ConceptTagsOutput,
     PlotAnalysisOutput,
     NarrativeTechniquesOutput,
-    ViewerExperienceOutput,
 )
 from movie_ingestion.metadata_generation.inputs import (
     build_user_prompt,
@@ -68,7 +73,7 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 GENERATION_TYPE = MetadataType.CONCEPT_TAGS
 
 _PROVIDER = LLMProvider.OPENAI
-_MODEL = "gpt-5-mini"
+_MODEL = "gpt-5.4-mini"
 
 
 def _format_narrative_technique_terms(
@@ -76,11 +81,16 @@ def _format_narrative_technique_terms(
 ) -> str:
     """Format narrative technique terms as a compact labeled block.
 
-    Extracts terms from the 7 relevant sections (no justifications),
-    including character_arcs whose film-language arc labels
-    ("redemption arc", "fall from grace") disambiguate ANTI_HERO.
-    Each section is one line; empty sections show "not available" so
-    the LLM knows the data was checked but absent.
+    Extracts terms from the 5 relevant sections (no justifications):
+    narrative_archetype, narrative_delivery, pov_perspective,
+    information_control, additional_narrative_devices. Each section is
+    one line; empty sections show "not available" so the LLM knows the
+    data was checked but absent.
+
+    The character_arcs and audience_character_perception sections were
+    removed (see extract_narrative_technique_terms docstring) because
+    their terms used tag-shaped vocabulary that the consumer
+    rubber-stamped without independent reasoning.
 
     Returns "not available" if the entire NT output is absent.
     """
@@ -100,32 +110,6 @@ def _format_narrative_technique_terms(
     #   narrative_delivery: ...
     # rather than jamming the first section onto the label line.
     return "\n" + "\n".join(lines)
-
-
-def _format_ending_aftertaste(
-    ve_output: ViewerExperienceOutput | None,
-) -> str:
-    """Format the ending_aftertaste VE section as a compact one-liner.
-
-    Concatenates terms and negations (negations carry "not"/"no" prefix
-    in the source data, so they are kept verbatim). This is the purpose-
-    built signal for which ending tag the audience experiences and the
-    single highest-leverage input for the endings category. Other VE
-    sections are intentionally not passed — they don't carry concept-
-    tag-level signal that isn't already covered by emotional_observations.
-
-    Returns "not available" when VE output or the section is absent.
-    """
-    if ve_output is None:
-        return "not available"
-
-    section = ve_output.ending_aftertaste
-    pieces: list[str] = []
-    pieces.extend(section.terms)
-    pieces.extend(section.negations)
-    if not pieces:
-        return "not available"
-    return ", ".join(pieces)
 
 
 def _format_parental_guide_items(
@@ -200,7 +184,6 @@ def build_concept_tags_user_prompt(
     nt_output: NarrativeTechniquesOutput | None,
     pa_output: PlotAnalysisOutput | None,
     craft_observations: str | None = None,
-    ve_output: ViewerExperienceOutput | None = None,
 ) -> str:
     """Build the user prompt for concept tag classification.
 
@@ -211,12 +194,14 @@ def build_concept_tags_user_prompt(
     with the 'plot_summary' label. When unavailable, best_plot_fallback()
     is passed with the 'plot_text' label to signal lower quality tier.
 
-    The four post-baseline inputs (craft_observations, ending_aftertaste
-    from ve_output, parental_guide_items from movie, and character_arcs
-    terms now included in nt_output's term block) target specific failure
-    clusters from the baseline evaluation. They are kept as optional
-    kwargs to avoid breaking existing callsites that haven't been
-    updated to source them.
+    The post-baseline inputs (craft_observations, parental_guide_items,
+    character_arc_labels + conflict_type from pa_output) target specific
+    failure clusters. The previously-added `ending_aftertaste` from
+    ViewerExperience and the NT `character_arcs` /
+    `audience_character_perception` subsections were removed after the
+    three-way eval showed they drove the BITTERSWEET / ANTI_HERO
+    upstream-label contamination — see extract_narrative_technique_terms
+    for the rationale.
 
     All absent inputs are rendered as "not available" so the LLM sees
     explicit absence rather than silent omission.
@@ -239,7 +224,6 @@ def build_concept_tags_user_prompt(
     # Format upstream outputs
     nt_terms_str = _format_narrative_technique_terms(nt_output)
     arc_labels_str, conflict_type_str = _format_plot_analysis_fields(pa_output)
-    ending_aftertaste_str = _format_ending_aftertaste(ve_output)
     parental_guide_str = _format_parental_guide_items(movie)
 
     # Top-5 billed cast gives the LLM a prominence ranking to cross-
@@ -255,7 +239,6 @@ def build_concept_tags_user_prompt(
         top_billed_cast=top_billed_cast,
         emotional_observations=emotional_observations or "not available",
         craft_observations=craft_observations or "not available",
-        ending_aftertaste=ending_aftertaste_str,
         narrative_technique_terms=nt_terms_str,
         character_arc_labels=arc_labels_str,
         conflict_type=conflict_type_str,
@@ -270,7 +253,7 @@ async def generate_concept_tags(
     nt_output: NarrativeTechniquesOutput | None = None,
     pa_output: PlotAnalysisOutput | None = None,
     craft_observations: str | None = None,
-    ve_output: ViewerExperienceOutput | None = None,
+    timeout: float | None = None,
 ) -> Tuple[ConceptTagsOutput, TokenUsage]:
     """Generate concept tags for a single movie.
 
@@ -278,7 +261,7 @@ async def generate_concept_tags(
     calls the LLM with the binary classification prompt, and returns the
     parsed result alongside token usage.
 
-    Uses gpt-5-mini with medium reasoning effort and low verbosity.
+    Uses gpt-5.4-mini with reasoning effort 'none' and low verbosity.
 
     Args:
         movie: Raw movie input data from the ingestion pipeline.
@@ -293,9 +276,13 @@ async def generate_concept_tags(
         craft_observations: Reviewer descriptions of structural and
             storytelling craft from Wave 1 reception. None when reception
             was skipped or had no craft content.
-        ve_output: Full ViewerExperienceOutput from Wave 2. Only the
-            ending_aftertaste section is routed into the prompt. None
-            when viewer_experience was skipped or not yet generated.
+        timeout: Optional per-attempt LLM timeout in seconds. Concept
+            tags runs gpt-5.4-mini with reasoning effort 'none' over a
+            heavy multi-section prompt, so wall time routinely exceeds
+            the router default. Callers that fan out many concurrent
+            runs (e.g. the eval script) should pass a higher value to
+            avoid premature `asyncio.wait_for` cancellation. None falls
+            back to the router default.
 
     Returns:
         Tuple of (ConceptTagsOutput, TokenUsage).
@@ -312,7 +299,6 @@ async def generate_concept_tags(
         nt_output,
         pa_output,
         craft_observations=craft_observations,
-        ve_output=ve_output,
     )
     title_with_year = movie.title_with_year()
 
@@ -323,8 +309,9 @@ async def generate_concept_tags(
             system_prompt=SYSTEM_PROMPT,
             response_format=ConceptTagsOutput,
             model=_MODEL,
-            reasoning_effort="medium",
+            reasoning_effort="none",
             verbosity="low",
+            timeout=timeout,
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")

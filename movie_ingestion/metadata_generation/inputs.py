@@ -312,19 +312,24 @@ def load_narrative_techniques_output(
 def extract_narrative_technique_terms(
     nt,
 ) -> dict[str, list[str]]:
-    """Extract terms (no justifications) from the 7 NT sections concept tags need.
+    """Extract terms (no justifications) from the 5 NT sections concept tags need.
 
     Returns a dict mapping section name -> list of term strings. Sections
     with empty term lists are included with empty lists so the caller can
     distinguish "section had no terms" from "section wasn't available."
 
-    character_arcs is included because its film-language arc labels
-    ("redemption arc", "fall from grace", "moral awakening") disambiguate
-    ANTI_HERO. PlotAnalysis's character_arcs are a different abstraction
-    (thematic transformations); both signals are kept and labeled
-    distinctly in the prompt.
+    The `character_arcs` and `audience_character_perception` sections
+    are deliberately EXCLUDED. Three-way eval (BASE / REV / RSN) showed
+    they were the primary upstream-label contamination driving ANTI_HERO
+    false positives: the upstream literally emits "antihero maturation
+    arc" / "sympathetic antihero" as terms, and the consumer model
+    rubber-stamped those labels instead of deriving from raw behavior.
+    ANTI_HERO classification is now derived from plot_summary +
+    character_arc_labels (PlotAnalysis thematic transformations) +
+    conflict_type, which describe what the protagonist actually does
+    without using tag-shaped words.
 
-    The 2 excluded sections (characterization_methods,
+    The 2 still-excluded sections (characterization_methods,
     conflict_stakes_design) don't carry signal for any of the 25 concept
     tags as of this baseline.
 
@@ -337,9 +342,7 @@ def extract_narrative_technique_terms(
         "narrative_delivery": list(nt.narrative_delivery.terms),
         "pov_perspective": list(nt.pov_perspective.terms),
         "information_control": list(nt.information_control.terms),
-        "audience_character_perception": list(nt.audience_character_perception.terms),
         "additional_narrative_devices": list(nt.additional_narrative_devices.terms),
-        "character_arcs": list(nt.character_arcs.terms),
     }
 
 
@@ -357,11 +360,15 @@ def load_viewer_experience_output(
     the existing schema model. Returns None when viewer_experience wasn't
     generated or can't be parsed.
 
-    Concept_tags uses this loader to access `ending_aftertaste` — the
-    purpose-built signal for which ending tag (happy / sad / bittersweet /
-    no_clear_choice) the audience actually experiences. Other VE sections
-    are loaded for free as part of the same row but only ending_aftertaste
-    is currently routed into the concept_tags prompt.
+    Concept_tags previously used this loader to read `ending_aftertaste`,
+    but that input has been removed: the three-way eval showed it was
+    the primary driver of BITTERSWEET_ENDING over-tagging because the
+    upstream generator literally emits "bittersweet" as a term for any
+    ending with permanent loss, and the downstream consumer rubber-
+    stamped the label. Ending classification now derives from
+    emotional_observations + plot_summary closing-scene events. The
+    loader is kept available for other potential consumers of the
+    ViewerExperience output.
     """
     from schemas.metadata import ViewerExperienceOutput, normalize_legacy_metadata_payload
 

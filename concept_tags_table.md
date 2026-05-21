@@ -83,7 +83,7 @@ incidental.
 |---|---|---|---|
 | **FEMALE_LEAD** (31) ⚠️ stricter default | The *single core protagonist* of the story is female. | All three conditions must hold: (1) the movie has a single core protagonist whose arc IS the movie; (2) that protagonist is identifiable in plot_summary AND corroborated by top_billed_cast prominence ranking; (3) that protagonist is female with high confidence. | Any movie without a single dominant protagonist; 2 co-leads of equal weight even if one is female; a prominent female character in an ensemble; a wife/girlfriend/daughter/mother/love interest important but not core; a female POV character whose core arc belongs to someone else; ANY case where slot 1 of top_billed_cast is a man and the plot does not clearly establish a different female protagonist. When in doubt, do NOT tag. |
 | **ENSEMBLE_CAST** (32) | 3+ main characters share roughly equal importance, screen time, and storyline focus. The "protagonist" is often the group or an event. | `pov_perspective` terms suggesting multiple POVs; plot_summary shows 3+ characters with independent intertwined arcs of comparable importance. Decision test: removing any one character's storyline would NOT fundamentally collapse the film. | A protagonist with several important supporting characters; parallel plotlines where one character's arc is clearly primary; exactly 2 co-leads of equal weight (ensemble requires 3+); many named characters with one clear lead. A long character list ≠ ensemble — count whose *decisions* drive the plot. |
-| **ANTI_HERO** (33) | Protagonist operates outside conventional morality as a defining trait — substantive boundary-crossing (criminal acts, violence, exploitation, vigilantism) as primary mode of operating. | `audience_character_perception` terms; `character_arc_labels`; plot_keywords "anti hero"; plot_summary supports it. | A flawed but fundamentally moral character who does the right thing; a teenager who skips school or breaks minor rules; a character described as "rebellious" without substantive moral transgression. |
+| **ANTI_HERO** (33) | Protagonist operates outside conventional morality as a defining trait — substantive boundary-crossing (criminal acts, violence, exploitation, vigilantism) as primary mode of operating. | `plot_summary` (the protagonist's actual behavior across the runtime); `character_arc_labels` from PlotAnalysis (an arc landing on a moral end-state is a HARD DISQUALIFIER in single-protagonist films); `conflict_type`; plot_keywords "anti hero". DO NOT derive from upstream-labeled terms — derive from what the protagonist does. | A flawed but fundamentally moral character who does the right thing; a teenager who skips school or breaks minor rules; a character described as "rebellious" without substantive moral transgression. |
 
 ---
 
@@ -91,8 +91,12 @@ incidental.
 
 **Exactly one** tag per movie. Captures how the *audience feels* when
 the credits roll, NOT a factual ledger of plot outcomes. Independent of
-OPEN_ENDING/CLIFFHANGER_ENDING above. Primary signal:
-`emotional_observations` reports of audience reactions to the ending.
+OPEN_ENDING/CLIFFHANGER_ENDING above. Primary signals: the literal
+closing scene in `plot_summary` AND `emotional_observations` reports
+of how audiences felt LEAVING the theater. The previously-routed
+`ending_aftertaste` field was removed after the three-way eval showed
+it literally emits "bittersweet" too often and the consumer
+rubber-stamped the label.
 
 | Tag (ID) | What it represents | Select WHEN | Do NOT select for |
 |---|---|---|---|
@@ -252,26 +256,64 @@ Columns:
 
 ### Already-generated but NOT currently fed to concept_tags
 
-The following fields are produced by upstream stages and stored, but
-the current `build_concept_tags_user_prompt` doesn't pass them:
+Three high-leverage fields are passed to address baseline failures
+(see "Cross-cutting observations" below for the cluster each targets):
+
+- ✅ **`craft_observations`** (ReceptionOutput) — passed.
+- ✅ **`parental_guide_items`** (MovieInputData) — passed.
+- ✅ **`character_arc_labels`** (PlotAnalysis thematic arc transformations)
+  + **`conflict_type`** — passed; primary signal for ANTI_HERO
+  disambiguation via redemption-arc detection.
+
+The `narrative_technique_terms` block passes 5 of the 7 NT sections:
+`narrative_archetype`, `narrative_delivery`, `pov_perspective`,
+`information_control`, `additional_narrative_devices`.
+
+**Removed after three-way eval (BASE / REV / RSN):**
+
+- ❌ **`ending_aftertaste`** (ViewerExperience section) — was the
+  primary driver of BITTERSWEET_ENDING over-tagging. The upstream
+  literally emits "bittersweet" as a term for any film with permanent
+  loss at credits ("bittersweet ending, earned victory, cathartic
+  payoff" appeared verbatim for Mad Max, Catch Me, Deadpool, John
+  Wick, etc.), and the consumer model rubber-stamped the label even
+  when the schema description warned that "earned" / "hard-won" are
+  HAPPY signals. Replaced by the closing-scene test on `plot_summary`
+  + `emotional_observations` filtered for end-state language.
+- ❌ **NT `character_arcs.terms`** — drove ANTI_HERO false positives.
+  The upstream literally emits "antihero maturation arc" as a term
+  even for films with redemption arcs (Catch Me If You Can). Replaced
+  by `character_arc_labels` (PlotAnalysis) + `plot_summary` behavior
+  + `conflict_type`.
+- ❌ **NT `audience_character_perception.terms`** — drove the same
+  ANTI_HERO failures with "sympathetic antihero" labels. Same
+  substitutes as above.
+
+The following fields remain produced upstream but are not passed —
+held back to keep prompt length bounded and avoid double-counting
+signals already covered by what's above. Add only with evidence of a
+new failure cluster.
 
 - **From `MovieInputData`:** `genres`, `directors`, `featured_reviews`
   (summary + text), `audience_reception_attributes` (review themes
   with sentiment), `maturity_rating` + `maturity_reasoning`,
-  `parental_guide_items` (category + severity), `collection_name`.
+  `collection_name`.
 - **From `ReceptionOutput`:** `thematic_observations`,
-  `craft_observations`, `source_material_hint`, `reception_summary`,
-  `praised_qualities`, `criticized_qualities`.
+  `source_material_hint`, `reception_summary`, `praised_qualities`,
+  `criticized_qualities`.
 - **From `PlotAnalysisOutput`:** `genre_signatures`,
   `thematic_concepts` (concept_label), `elevator_pitch`,
   `generalized_plot_overview`, `character_arcs[].reasoning`.
-- **From `NarrativeTechniquesOutput`:** the 3 dropped sections —
-  `characterization_methods.terms`, `character_arcs.terms`
-  (film-language arc labels), `conflict_stakes_design.terms` — plus
-  the `evidence_basis` text for every section.
-- **From `ViewerExperienceOutput`:** entirely — especially
-  `ending_aftertaste`, `emotional_palette`, `tone_self_seriousness`,
-  `emotional_volatility`, `disturbance_profile`.
+- **From `NarrativeTechniquesOutput`:** the 2 originally-dropped
+  sections — `characterization_methods.terms`,
+  `conflict_stakes_design.terms` — plus the now-dropped
+  `character_arcs.terms` and `audience_character_perception.terms`
+  (removed for upstream-label contamination, see above) and the
+  `evidence_basis` text for every section.
+- **From `ViewerExperienceOutput`:** all 8 sections —
+  `emotional_palette`, `tone_self_seriousness`, `emotional_volatility`,
+  `disturbance_profile`, `ending_aftertaste` (removed, see above),
+  etc. None are currently routed.
 - **From `WatchContextOutput`:** entirely — especially `identity_note`,
   `key_movie_feature_draws`.
 
@@ -279,15 +321,15 @@ the current `build_concept_tags_user_prompt` doesn't pass them:
 
 | Tag | Inclusion criteria | Boundary cases | Evidence (how to use it) | Missing data (already generated) |
 |---|---|---|---|---|
-| **PLOT_TWIST** | A late-film reveal that recontextualizes events the audience already witnessed. The audience must have formed a model that the reveal explicitly overturns. | Tragic irony at the ending (The Mist) ≠ twist — nothing prior is recontextualized.<br>Sequel-setup reveals (Kill Bill Vol. 1's "B.B. is alive") = setup, not recontextualizing.<br>Structural ambiguity (Inception's spinning top) = OPEN_ENDING.<br>Character revealing motivation audience already suspected ≠ twist. | **`information_control`** NT terms — primary direct signal.<br>**`plot_keywords`** — "twist ending," "plot twist."<br>**`plot_summary`** — explicit late reveals reframing prior scenes. | **`craft_observations`** (ReceptionOutput) — reviewers often explicitly call out "twist," "rug-pull," "third-act reveal" when discussing narrative craft. Currently invisible to concept_tags. |
-| **TWIST_VILLAIN** | The *identity* of the antagonist is hidden from the audience and revealed late. Auto-implies PLOT_TWIST. | Known villain whose deeper motivations are uncovered later ≠ tagged (Vader's parentage is about who he IS).<br>Cooperative ally revealed as antagonist clearly qualifies (Hans, Get Out's Armitages).<br>Tyler Durden in Fight Club is borderline — psychotic alter-ego, not a "villain identity reveal." | **`information_control`** — "false ally," "hidden antagonist," "betrayal reveal."<br>**`plot_summary`** — "is revealed to be," "all along," "secretly engineered." | **`craft_observations`** — "the reveal of [character] as the antagonist" patterns.<br>**`audience_reception_attributes`** — review themes often include "shocking villain reveal" with sentiment. |
+| **PLOT_TWIST** | A late-film reveal that recontextualizes events the audience already witnessed. The audience must have formed a model that the reveal explicitly overturns. | Tragic irony at the ending (The Mist) ≠ twist — nothing prior is recontextualized.<br>Sequel-setup reveals (Kill Bill Vol. 1's "B.B. is alive") = setup, not recontextualizing.<br>Structural ambiguity (Inception's spinning top) = OPEN_ENDING.<br>Character revealing motivation audience already suspected ≠ twist. | **`information_control`** NT terms — primary direct signal.<br>**`plot_keywords`** — "twist ending," "plot twist."<br>**`plot_summary`** — explicit late reveals reframing prior scenes.<br>**`craft_observations`** — reviewers often call out "twist," "rug-pull," "third-act reveal" when discussing narrative craft. | None — all high-leverage fields now in the prompt. |
+| **TWIST_VILLAIN** | The *identity* of the antagonist is hidden from the audience and revealed late. Auto-implies PLOT_TWIST. | Known villain whose deeper motivations are uncovered later ≠ tagged (Vader's parentage is about who he IS).<br>Cooperative ally revealed as antagonist clearly qualifies (Hans, Get Out's Armitages).<br>Tyler Durden in Fight Club is borderline — psychotic alter-ego, not a "villain identity reveal." | **`information_control`** — "false ally," "hidden antagonist," "betrayal reveal."<br>**`plot_summary`** — "is revealed to be," "all along," "secretly engineered."<br>**`craft_observations`** — "the reveal of [character] as the antagonist" patterns. | **`audience_reception_attributes`** — review themes often include "shocking villain reveal" with sentiment. |
 | **TIME_LOOP** | Characters relive the same time period repeatedly as central premise. | Time travel ≠ time loop.<br>Single repeated scene as flashback ≠ loop. | **`narrative_delivery`** — "time loop," "reliving."<br>**`plot_keywords`** — "time loop" direct.<br>**`plot_summary`** — "wakes up to the same day." | None — current signals work (Groundhog Day correctly tagged 3/3). |
-| **NONLINEAR_TIMELINE** | Non-chronological structure is a *defining identity* of the film. Audience has to reconstruct the timeline from scrambled pieces. | Occasional flashbacks within chronological narrative ≠ nonlinear (Catch Me If You Can over-tag).<br>Prologue/epilogue out of order ≠ nonlinear.<br>Multi-chapter scrambled (Pulp Fiction, Kill Bill Vol. 1, Memento) qualifies.<br>**Kill Bill miss** — 0/3 runs tagged it; upstream NT didn't surface chapter-structure signal. | **`narrative_delivery`** — "nonlinear," "fragmented timeline."<br>**`plot_keywords`** — "nonlinear timeline."<br>**`plot_summary`** — explicit structural language. | **`craft_observations`** — primary place reviewers describe structure ("told in chapters," "the film moves between timelines"). For Kill Bill, this almost certainly contains the missing signal.<br>**`audience_reception_attributes`** — often includes "non-linear narrative" as a tagged theme. |
-| **UNRELIABLE_NARRATOR** | The narrator/POV character's account is later revealed to the audience as distorted or fabricated. Trust with the AUDIENCE is broken. | Characters lying to other characters (Catch Me If You Can) ≠ tagged.<br>Hallucinations presented as reality and revealed = qualifies.<br>Inception current 3/3 tag is debatable — Cobb's Mal flashbacks are subjective but audience knows his issues from early on. | **`pov_perspective`** — "unreliable narrator," "subjective POV."<br>**`plot_summary`** — explicit revelation that prior shown material was distorted. | **`craft_observations`** — reviewers explicitly flag unreliable narration as a craft choice.<br>**NT `evidence_basis` text** for `pov_perspective` — the justification sentence usually states whether the narration is reliable. Currently we pass terms only. |
-| **OPEN_ENDING** | Story completes its arc but the *central question* is deliberately left ambiguous. | Sequel setup = CLIFFHANGER, not OPEN.<br>Side questions open ≠ tagged if central conflict resolved.<br>Inception, The Graduate, A Serious Man = positives. | **`plot_keywords`** — "ambiguous ending."<br>**`plot_summary`** — final beat avoids resolution.<br>**`emotional_observations`** — reviewers debating meaning. | **`thematic_observations`** — explicitly describes how reviewers interpret central question ("audiences continue debating whether...").<br>**`ending_aftertaste`** (ViewerExperience) — directly captures whether the ending lingers as an open question. |
+| **NONLINEAR_TIMELINE** | Non-chronological structure is a *defining identity* of the film. Audience has to reconstruct the timeline from scrambled pieces. | Occasional flashbacks within chronological narrative ≠ nonlinear (Catch Me If You Can over-tag).<br>Prologue/epilogue out of order ≠ nonlinear.<br>Multi-chapter scrambled (Pulp Fiction, Kill Bill Vol. 1, Memento) qualifies.<br>**Kill Bill miss** — 0/3 runs tagged it; upstream NT didn't surface chapter-structure signal. | **`craft_observations`** — primary place reviewers describe structure ("told in chapters," "the film moves between timelines"). Expected to close the Kill Bill miss.<br>**`narrative_delivery`** — "nonlinear," "fragmented timeline."<br>**`plot_keywords`** — "nonlinear timeline."<br>**`plot_summary`** — explicit structural language. | **`audience_reception_attributes`** — often includes "non-linear narrative" as a tagged theme. |
+| **UNRELIABLE_NARRATOR** | The narrator/POV character's account is later revealed to the audience as distorted or fabricated. Trust with the AUDIENCE is broken. | Characters lying to other characters (Catch Me If You Can) ≠ tagged.<br>Hallucinations presented as reality and revealed = qualifies.<br>Inception current 3/3 tag is debatable — Cobb's Mal flashbacks are subjective but audience knows his issues from early on. | **`pov_perspective`** — "unreliable narrator," "subjective POV."<br>**`plot_summary`** — explicit revelation that prior shown material was distorted.<br>**`craft_observations`** — reviewers explicitly flag unreliable narration as a craft choice. | **NT `evidence_basis` text** for `pov_perspective` — the justification sentence usually states whether the narration is reliable. Currently we pass terms only. |
+| **OPEN_ENDING** | Story completes its arc but the *central question* is deliberately left ambiguous. | Sequel setup = CLIFFHANGER, not OPEN.<br>Side questions open ≠ tagged if central conflict resolved.<br>Inception, The Graduate, A Serious Man = positives. | **`plot_summary`** — final beat intentionally avoids resolution of the central question.<br>**`plot_keywords`** — "ambiguous ending."<br>**`emotional_observations`** — reviewers reporting "ambiguous," "lingering question," "audiences debate."<br>**`craft_observations`** — reviewer descriptions of intentional ambiguity at the close. | **`thematic_observations`** — explicitly describes how reviewers interpret central question ("audiences continue debating whether..."). |
 | **SINGLE_LOCATION** | Nearly all action confined to one physical location. The spatial constraint IS the film's identity. | "Mostly one building but significant exterior scenes" ≠ tagged (The Mist over-tag).<br>12 Angry Men, Phone Booth = positives. | **`plot_summary`** — count distinct locations. | **`identity_note`** (WatchContext) — short classifier like "claustrophobic single-room thriller" would directly flag this.<br>**`key_movie_feature_draws`** — "bottle-movie tension" / "confined setting" often called out as a draw.<br>**`elevator_pitch`** (PlotAnalysis) — log-line phrasing usually names the constrained setting if it's identity-level. |
-| **BREAKING_FOURTH_WALL** | Characters directly address the audience or acknowledge the film as a film. Notable, recurring stylistic choice. | Voiceover narration (Fight Club) ≠ tagged.<br>Deadpool's direct camera address = positive. | **`additional_narrative_devices`** — "fourth wall break," "direct address."<br>**`plot_keywords`** — "breaking the fourth wall." | **`craft_observations`** — reviewers often discuss fourth-wall as craft.<br>**`praised_qualities` / `criticized_qualities`** — sometimes lists "fourth wall breaks" as a draw. |
-| **CLIFFHANGER_ENDING** | Central conflict unresolved at credits with strong continuation setup. Story stopped mid-arc. | Distinct from OPEN_ENDING (completed arc with ambiguity).<br>Kill Bill Vol. 1 = positive. Star Wars: A New Hope = NOT (Death Star destroyed). | **`plot_summary`** ending — "to be continued" energy.<br>**`plot_keywords`** — "cliffhanger." | **`collection_name`** (MovieInputData) — knowing the movie is part of a named collection ("Kill Bill Collection") flags planned-continuation context.<br>**`ending_aftertaste`** (VE) — captures "unresolved, leaves you wanting more" sensation. |
+| **BREAKING_FOURTH_WALL** | Characters directly address the audience or acknowledge the film as a film. Notable, recurring stylistic choice. | Voiceover narration (Fight Club) ≠ tagged.<br>Deadpool's direct camera address = positive. | **`additional_narrative_devices`** — "fourth wall break," "direct address."<br>**`plot_keywords`** — "breaking the fourth wall."<br>**`craft_observations`** — reviewers often discuss fourth-wall as craft. | **`praised_qualities` / `criticized_qualities`** — sometimes lists "fourth wall breaks" as a draw. |
+| **CLIFFHANGER_ENDING** | Central conflict unresolved at credits with strong continuation setup. Story stopped mid-arc. | Distinct from OPEN_ENDING (completed arc with ambiguity).<br>Kill Bill Vol. 1 = positive. Star Wars: A New Hope = NOT (Death Star destroyed). | **`plot_summary`** ending — unresolved main conflict with sequel setup / "to be continued" energy.<br>**`emotional_observations`** — "unresolved," "leaves you wanting more," "sets up the next chapter."<br>**`craft_observations`** — reviewers describing the ending as mid-arc / continuation-bound.<br>**`plot_keywords`** — "cliffhanger." | **`collection_name`** (MovieInputData) — knowing the movie is part of a named collection ("Kill Bill Collection") flags planned-continuation context. |
 
 ### Plot Archetypes
 
@@ -295,7 +337,7 @@ the current `build_concept_tags_user_prompt` doesn't pass them:
 |---|---|---|---|---|
 | **REVENGE** | Vengeance is the *primary narrative engine*. Protagonist's central sustained goal IS getting revenge. | **Taken over-tag** — rescue mission ≠ revenge; Bryan's goal is rescue.<br>Revenge subplot inside a larger plot ≠ tagged.<br>John Wick, Kill Bill = positives. | **`plot_keywords`** — "revenge" direct.<br>**`conflict_type`** — supporting signal.<br>**`plot_summary`** — protagonist's stated goal involves "make them pay"? | **`elevator_pitch`** — 6-word log-line; if it doesn't contain a vengeance verb, REVENGE probably isn't the central engine. Would have flagged Taken as "father rescues kidnapped daughter."<br>**`thematic_concepts`** (PlotAnalysis) — likely contains "vengeance," "retribution" as concepts for real revenge movies.<br>**`generalized_plot_overview`** — 1-3 sentence thematic frame. |
 | **UNDERDOG** | The protagonist's disadvantage IS the central dramatic question. Identity-level, not setting-level. | **Star Wars over-tag** — rebels-vs-empire is *setting*; Luke is chosen-one.<br>Skilled professionals facing stronger opponents ≠ underdog.<br>Rocky, Erin Brockovich = positives. | **`narrative_archetype`** — "underdog rising."<br>**`plot_keywords`** — "underdog."<br>**`plot_summary`** — protagonist's lack of skill/resources framed as the central engine. | **`conflict_stakes_design.terms`** (the dropped NT section) — directly describes the *design* of the conflict and what's at stake. Would distinguish "outmatched individual vs. world" (UNDERDOG) from "small force vs. larger force as setting" (NOT UNDERDOG).<br>**`thematic_concepts`** — "outmatched protagonist," "against the odds" appear here when central.<br>**`elevator_pitch`** — usually names the disadvantage if it's the identity. |
-| **KIDNAPPING** | A kidnapping IS the central plot. The movie is about the abduction event and its direct consequences. | **Mad Max over-tag** — captives in a chase movie; the chase IS the plot.<br>Imprisonment as backstory ≠ tagged.<br>Taken = positive. | **`plot_keywords`** — "kidnapping," "abduction."<br>**`plot_summary`** — kidnapping is inciting incident AND ongoing plot driver. | **`elevator_pitch`** — log-line names the central plot engine; if the abduction isn't in 6 words, it's likely not central.<br>**`generalized_plot_overview`** — describes what the movie is *about* thematically.<br>**`parental_guide_items`** — likely tags "kidnapping" as a content category with severity, surfacing it even when plot_summary is thin. |
+| **KIDNAPPING** | A kidnapping IS the central plot. The movie is about the abduction event and its direct consequences. | **Mad Max over-tag** — captives in a chase movie; the chase IS the plot.<br>Imprisonment as backstory ≠ tagged.<br>Taken = positive. | **`plot_keywords`** — "kidnapping," "abduction."<br>**`plot_summary`** — kidnapping is inciting incident AND ongoing plot driver.<br>**`parental_guide_items`** — an "Abduction" / "Kidnapping" content category with non-trivial severity is corroborating, but tag only when plot_summary also confirms the abduction is the central plot (this category fires for any kidnapping including incidental ones). | **`elevator_pitch`** — log-line names the central plot engine; if the abduction isn't in 6 words, it's likely not central.<br>**`generalized_plot_overview`** — describes what the movie is *about* thematically. |
 | **CON_ARTIST** | Protagonist is a con artist/grifter/scammer as defining occupation. | Single con in non-con plot ≠ tagged.<br>Villain who deceives ≠ tagged.<br>Catch Me If You Can = positive. | **`plot_keywords`** — "con artist," "grifter."<br>**`plot_summary`** — does protagonist make their living through cons? | **`thematic_concepts`** — "deception as craft," "art of the con" appear here when central.<br>**`identity_note`** (WatchContext) — often phrased "stylish con-artist romp" / "grifter thriller" for these films. |
 
 ### Settings
@@ -312,16 +354,16 @@ the current `build_concept_tags_user_prompt` doesn't pass them:
 |---|---|---|---|---|
 | **FEMALE_LEAD** ⚠️ stricter default | All three: (1) single core protagonist, (2) identifiable in plot_summary AND corroborated by top_billed_cast slot 1 or 2, (3) female with high confidence. | 2 co-leads of equal weight ≠ tagged (Frozen, La La Land, Mad Max all correctly NOT).<br>Prominent female in ensemble ≠ tagged.<br>If slot 1 of cast is male AND plot doesn't unambiguously center a different female → do NOT tag. | **`plot_summary`** — primary (whose decisions drive the plot).<br>**`top_billed_cast`** — corroborating; slot 1 prominence significant.<br>**`plot_keywords`** — "female protagonist." | **`elevator_pitch`** — 6-word log-line; if it doesn't name a single female character, drop the tag. Reliable single-protagonist test.<br>**`character_arcs[].reasoning`** (PlotAnalysis) — full sentence describing the arc; would name the protagonist explicitly.<br>**`thematic_observations`** — reviewers often discuss a film as "a [female adjective]-led story" when that's the identity. |
 | **ENSEMBLE_CAST** | 3 OR MORE main characters share roughly equal narrative weight. The "protagonist" is often the group or an event. | 2 co-leads ≠ ensemble (Mad Max over-tag).<br>Protagonist with several important supports ≠ ensemble (The Conjuring over-tag).<br>**Decision test:** would removing any one character collapse the film? Ensemble = no.<br>Pulp Fiction, 12 Angry Men = positives. | **`pov_perspective`** — "multiple POVs," "rotating POV."<br>**`plot_summary`** — count protagonists by DECISION-driving role.<br>**`top_billed_cast`** — equal plot prominence across 3-5 supports ensemble. | **`character_arcs[].reasoning`** (PA, plural) — PlotAnalysis emits 0-3 arc objects; count of named-and-developed protagonists is a direct signal.<br>**`characterization_methods.terms`** (dropped NT section) — sometimes contains "ensemble character work" / "rotating POV characterization."<br>**`elevator_pitch`** — naming a group ("five strangers," "the jury") vs. an individual is diagnostic. |
-| **ANTI_HERO** | Protagonist's defining mode involves substantive moral transgression. Identity-level, not arc-level. | **MASS FAILURE — 4 false positives, 3/3 each:**<br>• Taken (Bryan — fundamentally moral father)<br>• Groundhog Day (Phil — arc IS redemption, ends moral)<br>• Catch Me If You Can (Frank — charming-rogue framing)<br>• Inception (Cobb — morally grey, family-motivated)<br>**Rule:** if the protagonist's arc moves toward conventional morality (redemption arc), they are NOT anti-hero by film's end. | **`audience_character_perception`** — "morally compromised," "anti-hero."<br>**`character_arc_labels`** (PA) — does the arc keep them outside morality, or end with redemption?<br>**`plot_keywords`** — "anti hero."<br>**`plot_summary`** — primary mode of operating throughout. | **`character_arcs.terms`** (the dropped NT section — distinct from PA arcs) — contains film-language arc labels like "redemption arc," "fall from grace," "moral awakening." A "redemption arc" label here should DISQUALIFY anti-hero — would catch 3 of 4 current false positives.<br>**`thematic_concepts`** (PA) — "morality redeemed," "loyalty over self" are common for false-positive cases.<br>**`character_arcs[].reasoning`** — full sentence on the arc; explicit moral trajectory described. |
+| **ANTI_HERO** | Protagonist's defining mode involves substantive moral transgression. Identity-level, not arc-level. | **HISTORICAL FAILURES (baseline run, 4 false positives 3/3 each):**<br>• Taken (Bryan — fundamentally moral father)<br>• Groundhog Day (Phil — arc IS redemption, ends moral)<br>• Catch Me If You Can (Frank — charming-rogue framing)<br>• Inception (Cobb — morally grey, family-motivated)<br>**Rule:** if the protagonist's arc moves toward conventional morality (redemption arc), they are NOT anti-hero by film's end.<br>**Note:** the NT `character_arcs` + `audience_character_perception` subsections were tried as ANTI_HERO disambiguators and REMOVED — they literally emit "antihero maturation arc" / "sympathetic antihero" and the consumer rubber-stamped the label, re-introducing the Catch Me failure. | **`plot_summary`** — PRIMARY: derive from the protagonist's actual behavior across the runtime (criminal acts, exploitation, vigilantism as default? Or principled action with rough edges?).<br>**`character_arc_labels`** (PA) — an arc transformation that lands on a moral end-state ("impostor to reconciled contributor", "criminal to cooperator") is a HARD DISQUALIFIER in single-protagonist films.<br>**`conflict_type`** — is the protagonist's stance structurally outside conventional morality, or against an antagonist while themselves moral?<br>**`plot_keywords`** — "anti hero" direct. | **`thematic_concepts`** (PA) — "morality redeemed," "loyalty over self" are common for false-positive cases.<br>**`character_arcs[].reasoning`** (PA) — full sentence on the arc; explicit moral trajectory described. |
 
 ### Endings
 
 | Tag | Selection criterion | Boundary cases | Evidence (how to use it) | Missing data (already generated) |
 |---|---|---|---|---|
-| **HAPPY_ENDING** | Audience leaves feeling positive — satisfaction, relief, triumph, warmth. A hard-won victory IS happy. | **3 current misses defaulted to NO_CLEAR:**<br>• Inception — Cobb returns to kids; open question is reality, NOT emotion.<br>• The Conjuring — family freed, evil contained.<br>• Get Out — Chris escapes.<br>**Rule:** structural ambiguity DOES NOT mean emotional ambiguity.<br>John Wick currently BITTERSWEET — should be HAPPY (puppy died in setup, not ending). | **`emotional_observations`** — primary; how audiences felt LEAVING.<br>**`plot_summary`** — final beat at credits.<br>**`plot_keywords`** — "happy ending." | **`ending_aftertaste`** (ViewerExperience) — purpose-built section: terms describing the AUDIENCE FEELING at the ending. Currently invisible to concept_tags. This single field would resolve most ending failures.<br>**`emotional_volatility`** (VE) — captures the shape of the emotional ride; an emotionally turbulent journey landing on warmth is different from one landing on grief.<br>**`praised_qualities`** — "satisfying conclusion," "uplifting ending" often appear here.<br>**`audience_reception_attributes`** — review themes are sentiment-tagged ({name: "ending", sentiment: "positive"}), giving direct audience signal. |
-| **SAD_ENDING** | Audience leaves feeling predominantly sad — grief, devastation, heartbreak. | Victory at great cost still felt as victory ≠ sad.<br>Tragic journey ending in peace ≠ sad.<br>Marley & Me, The Mist = positives. | **`emotional_observations`** — "devastating," "heartbroken," "left me sobbing."<br>**`plot_summary`** — ending state of loss. | **`ending_aftertaste`** (VE) — same field; should directly contain "devastating ending," "tragic close."<br>**`audience_reception_attributes`** — sentiment-tagged themes around the ending.<br>**`featured_reviews`** (raw text) — reviewer reactions to the ending often quoted in summary or text. |
-| **BITTERSWEET_ENDING** | Audience genuinely experiences MIXED emotions — joy AND sadness in unresolvable tension. Both achievement AND substantial loss at the ending. | **NOT a fallback option.**<br>• The Graduate over-tag (3/3) — fading-smiles is existential NO_CLEAR.<br>• John Wick over-tag (3/3) — puppy died in setup, revenge at end → HAPPY.<br>Happy ending requiring sacrifice ≠ bittersweet (audience feels victory).<br>La La Land = positive. | **`emotional_observations`** — explicit "mixed feelings," "joy and sadness."<br>**`plot_summary`** — substantial achievement AND substantial loss simultaneously at ending. | **`ending_aftertaste`** (VE) — bittersweet endings often described directly as "bittersweet" / "joy and sorrow in equal measure" in this purpose-built field.<br>**`emotional_volatility`** (VE) — high volatility ending often correlates with bittersweet.<br>**`thematic_concepts`** — sometimes names "sacrifice for love," "achievement at cost." |
-| **NO_CLEAR_CHOICE** | Ending genuinely doesn't fit happy/sad/bittersweet — existential, contemplative, unresolved-question. | A Serious Man, The Graduate, Kill Bill Vol. 1 = positives.<br>Do NOT pick just because endings have *some* complexity (currently the default trap). | **`emotional_observations`** — absence of clear positive/negative/mixed signal; presence of "contemplative," "existential." | **`ending_aftertaste`** (VE) — when it contains "ambiguous," "lingering," "contemplative" without clear valence, NO_CLEAR is right.<br>**`tone_self_seriousness`** (VE) — existential/philosophical tone signals correlate with NO_CLEAR endings.<br>**`thematic_observations`** — reviewers describing the ending as "philosophical" / "open to interpretation." |
+| **HAPPY_ENDING** | Audience leaves feeling positive — satisfaction, relief, triumph, warmth. A hard-won victory IS happy. | **HISTORICAL MISSES (baseline defaulted to NO_CLEAR):**<br>• Inception — Cobb returns to kids; open question is reality, NOT emotion.<br>• The Conjuring — family freed, evil contained.<br>• Get Out — Chris escapes.<br>**Rule:** structural ambiguity DOES NOT mean emotional ambiguity.<br>**Note:** `ending_aftertaste` was tried as PRIMARY and removed — it literally emitted "bittersweet" too freely (John Wick, Mad Max, Catch Me, Deadpool) and the consumer rubber-stamped the label. | **`plot_summary` closing scene** — PRIMARY: a celebration / reunion / kiss / cheer / platform-raise beat → HAPPY regardless of runtime cost.<br>**`emotional_observations`** — how audiences felt LEAVING: "uplifting", "satisfying", "triumphant", "earned", "hard-won", "achievement at a cost" (these are HAPPY signals, NOT bittersweet).<br>**`plot_keywords`** — "happy ending."<br>**Base rate:** HAPPY is empirically dominant; default here when torn between HAPPY and BITTERSWEET. | **`emotional_volatility`** (VE) — captures the shape of the emotional ride; an emotionally turbulent journey landing on warmth is different from one landing on grief.<br>**`praised_qualities`** — "satisfying conclusion," "uplifting ending" often appear here.<br>**`audience_reception_attributes`** — review themes are sentiment-tagged ({name: "ending", sentiment: "positive"}), giving direct audience signal. |
+| **SAD_ENDING** | Audience leaves feeling predominantly sad — grief, devastation, heartbreak. | Victory at great cost still felt as victory ≠ sad.<br>Tragic journey ending in peace ≠ sad.<br>Marley & Me, The Mist = positives. | **`plot_summary` closing scene** — PRIMARY: a beat of grief, defeat, or loss with no recuperative upswing (a funeral, a destroyed home, a protagonist alone in ruin, an unsaved life).<br>**`emotional_observations`** — "devastating," "heartbroken," "left me sobbing," "crushing," "bleak."<br>**`plot_summary` final state** — substantial unrecovered loss at credits. | **`audience_reception_attributes`** — sentiment-tagged themes around the ending.<br>**`featured_reviews`** (raw text) — reviewer reactions to the ending often quoted in summary or text. |
+| **BITTERSWEET_ENDING** | Audience genuinely experiences MIXED emotions — joy AND sadness in unresolvable tension. Both achievement AND substantial loss at the ending. | **NOT a fallback option.**<br>• The Graduate over-tag (3/3) — fading-smiles is existential NO_CLEAR.<br>• John Wick over-tag (3/3) — puppy died in setup, revenge at end → HAPPY.<br>Happy ending requiring sacrifice ≠ bittersweet (audience feels victory).<br>La La Land = positive.<br>**Note:** `ending_aftertaste` was removed as a source — it emitted the literal word "bittersweet" for any film with permanent loss, driving 7+ false positives in the second eval. | **`plot_summary` closing scene** — bittersweet endings tend to close on a quiet, contemplative beat (a long look, an unspoken moment, a what-might-have-been montage, a protagonist staring into the distance with both achievement and loss visible). A celebration beat → HAPPY.<br>**`emotional_observations`** — must contain EXPLICIT audience-cannot-resolve language: "mixed feelings audiences cannot resolve", "knot despite the win", "unable to celebrate fully", "genuinely torn". Treat "earned" / "hard-won" / "achievement at a cost" as HAPPY signals.<br>**Base rate:** uncommon. Pick BITTERSWEET only when you can defend that NEITHER HAPPY nor SAD would be a reasonable alternative. | **`emotional_volatility`** (VE) — high volatility ending often correlates with bittersweet.<br>**`thematic_concepts`** — sometimes names "sacrifice for love," "achievement at cost." |
+| **NO_CLEAR_CHOICE** | Ending genuinely doesn't fit happy/sad/bittersweet — existential, contemplative, unresolved-question. | A Serious Man, The Graduate, Kill Bill Vol. 1 = positives.<br>Do NOT pick just because endings have *some* complexity. | **`plot_summary` closing scene** — an existential beat (a long-held expression, a cosmic-indifference image, an unresolved philosophical question) that doesn't map to celebration / loss / mixed-feelings.<br>**`emotional_observations`** — "ambiguous", "contemplative", "philosophical", "open to interpretation" WITHOUT clear positive/negative/mixed valence.<br>**`craft_observations`** — reviewer descriptions of deliberately interpretive endings. | **`tone_self_seriousness`** (VE) — existential/philosophical tone signals correlate with NO_CLEAR endings.<br>**`thematic_observations`** — reviewers describing the ending as "philosophical" / "open to interpretation." |
 
 ### Experiential
 
@@ -334,43 +376,51 @@ the current `build_concept_tags_user_prompt` doesn't pass them:
 
 | Tag | Inclusion criteria | Boundary cases | Evidence (how to use it) | Missing data (already generated) |
 |---|---|---|---|---|
-| **ANIMAL_DEATH** | A non-human animal dies on screen OR as a significant plot point. | Brief incidental animal death without plot consequence ≠ tagged (Get Out's opening-scene deer is borderline).<br>Fantasy creatures clearly not real animals ≠ tagged.<br>John Wick (puppy), The Conjuring (Sadie), Marley & Me = positives. | **`plot_keywords`** — "animal death," "dog dies."<br>**`plot_summary`** — animal death described as a beat, not background. | **`parental_guide_items`** (MovieInputData) — IMDB-scraped {category, severity} entries directly include "Violence Against Animals" / "Animal cruelty" with severity ratings. This is the **single highest-leverage missing input** for this tag — would resolve the Get Out borderline (low severity → incidental) and confirm John Wick / The Conjuring / Marley & Me (high severity → significant).<br>**`maturity_reasoning`** — sometimes lists animal death as a reason for the rating. |
+| **ANIMAL_DEATH** | A non-human animal dies on screen OR as a significant plot point. | Brief incidental animal death without plot consequence ≠ tagged (Get Out's opening-scene deer is borderline).<br>Fantasy creatures clearly not real animals ≠ tagged.<br>John Wick (puppy), The Conjuring (Sadie), Marley & Me = positives. | **`parental_guide_items`** — PRIMARY signal per the prompt. IMDB {category, severity} entries directly include "Violence Against Animals" / "Animal cruelty" with severity ratings. Moderate-or-severe severity → significant plot beat; mild severity → check plot_summary before tagging (likely incidental).<br>**`plot_keywords`** — "animal death," "dog dies."<br>**`plot_summary`** — animal death described as a beat, not background. | **`maturity_reasoning`** — sometimes lists animal death as a reason for the rating. |
 
 ### Cross-cutting observations
 
-A few already-generated fields keep showing up across many tags,
-suggesting **single-field additions with compound payoff**:
+Iteration history of input changes and their evaluated effect:
 
-- **`ending_aftertaste` (ViewerExperience)** — the most leveraged
-  single field. Purpose-built to capture audience emotional landing.
-  Directly addresses all 4 ending failures (3 HAPPY misses + 2
-  BITTERSWEET over-corrections). Would also help OPEN_ENDING and
-  CLIFFHANGER_ENDING.
-- **`craft_observations` (ReceptionOutput)** — reviewers' explicit
-  descriptions of structural/storytelling craft. Directly helps
-  NONLINEAR_TIMELINE (the Kill Bill miss), PLOT_TWIST,
-  UNRELIABLE_NARRATOR, BREAKING_FOURTH_WALL.
-- **NT `character_arcs.terms` (dropped section)** — film-language arc
-  labels distinct from PlotAnalysis's thematic arcs. A "redemption
-  arc" label here would disqualify ANTI_HERO and catch 3 of 4 current
-  false positives (Phil, Frank, Cobb).
+1. **NONLINEAR_TIMELINE Kill Bill miss** → `craft_observations`
+   (primary signal for the structural-craft tags). Kept.
+2. **ANIMAL_DEATH Get Out borderline + corroboration on positives** →
+   `parental_guide_items` (primary signal — severity drives
+   incidental-vs-beat distinction). Kept.
+3. **Ending failures (5 of them)** → `ending_aftertaste` was added
+   as PRIMARY for HAPPY/SAD/BITTERSWEET/NO_CLEAR. **Removed** after
+   the three-way eval (BASE / REV / RSN): the upstream emits the
+   literal word "bittersweet" too freely, and the consumer
+   rubber-stamped that label even with explicit anti-pattern
+   guidance in the schema description. Ending classification now
+   derives from the closing scene in `plot_summary` +
+   `emotional_observations` filtered for end-state language.
+4. **ANTI_HERO over-tagging (4 of them)** → NT `character_arcs`
+   section was added inside `narrative_technique_terms`, with
+   "redemption arc" as a hard disqualifier. **Removed** after the
+   eval: the upstream literally emits "antihero maturation arc" as
+   a term for films like Catch Me If You Can, and the consumer
+   rubber-stamped it. The `audience_character_perception` section
+   was removed for the same reason ("sympathetic antihero" labels).
+   ANTI_HERO now derives from `plot_summary` (raw protagonist
+   behavior) + `character_arc_labels` (PlotAnalysis thematic arc
+   end-state) + `conflict_type`.
+
+Still-unused fields that remain worth considering if a follow-up
+baseline surfaces new clusters:
+
 - **`elevator_pitch` (PlotAnalysis)** — 6-word log-line is a strong
-  protagonist-count + central-plot-engine signal. Helps FEMALE_LEAD,
-  ENSEMBLE_CAST, REVENGE vs. KIDNAPPING (Taken), UNDERDOG.
-- **`parental_guide_items` (MovieInputData)** — IMDB category-with-
-  severity tags directly capture ANIMAL_DEATH and could help
-  KIDNAPPING by surfacing "abduction" categories.
+  protagonist-count + central-plot-engine signal. Would help
+  FEMALE_LEAD, ENSEMBLE_CAST, REVENGE vs. KIDNAPPING (Taken),
+  UNDERDOG.
 - **`identity_note` (WatchContext)** — 2-8 word viewing-appeal
   classifier. Already does much of what concept_tags is trying to do;
   useful cross-check for SMALL_TOWN, POST_APOCALYPTIC,
   HAUNTED_LOCATION, FEEL_GOOD, CON_ARTIST.
+- **`thematic_concepts` (PlotAnalysis)** — supplements ANTI_HERO
+  arc check and UNDERDOG identity check.
 
-The cluster of failures most directly addressable by these
-existing-but-unused fields:
-
-1. **Ending failures (5 of them)** → `ending_aftertaste` alone.
-2. **ANTI_HERO over-tagging (4 of them)** → NT `character_arcs.terms`
-   redemption-arc check.
-3. **NONLINEAR_TIMELINE Kill Bill miss** → `craft_observations`.
-4. **ANIMAL_DEATH Get Out borderline** → `parental_guide_items`
-   severity.
+Held back deliberately: `genres` / `genre_signatures` (would pull
+the model back toward genre-conventions inference, which the prompt
+forbids); raw `featured_reviews` (too noisy, already condensed in
+`emotional_observations` and `craft_observations`).

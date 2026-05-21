@@ -38,7 +38,7 @@ from concept_tags_test_movies import CONCEPT_TAGS_TEST_MOVIES
 from movie_ingestion.metadata_generation.generators.concept_tags import (
     generate_concept_tags,
 )
-from schemas.enums import EndingTag
+from schemas.enums import ConceptTagCategory, EndingTag
 from schemas.metadata import (
     CharacterAssessment,
     ConceptTagsOutput,
@@ -52,7 +52,6 @@ from schemas.metadata import (
     PlotEventsOutput,
     ReceptionOutput,
     SettingAssessment,
-    ViewerExperienceOutput,
     normalize_legacy_metadata_payload,
 )
 from schemas.movie_input import MovieInputData
@@ -66,15 +65,30 @@ TRACKER_DB = Path("ingestion_data/tracker.db")
 RESULTS_ROOT = Path("concept_tags_results")
 NUM_RUNS_PER_MOVIE = 3
 
-# (field_name, AssessmentCls) pairs for the six list-typed categories.
-# Endings is handled separately (single tag, mode vote).
+# Per-attempt LLM timeout for this eval. gpt-5.4-mini at reasoning_effort
+# 'none' is much faster than gpt-5-mini at medium, but we keep a 60s
+# ceiling because fanning out ~24 movies × 3 runs = ~72 concurrent calls
+# inflates tail latency above the router default (25s).
+LLM_TIMEOUT_SECONDS = 60.0
+
+# (field_name, AssessmentCls) pairs for the list-typed categories.
+# Derived from ConceptTagCategory (the single source of truth for which
+# categories exist and which are multi-label vs one-of) — adding a new
+# multi-label category to that enum auto-propagates here. Endings is the
+# only one-of category and is excluded from this list; majority_merge()
+# handles it separately as a mode vote on a single tag value.
+_ASSESSMENT_BY_FIELD: dict[str, type] = {
+    "narrative_structure": NarrativeStructureAssessment,
+    "plot_archetypes":     PlotArchetypeAssessment,
+    "settings":            SettingAssessment,
+    "characters":          CharacterAssessment,
+    "experiential":        ExperientialAssessment,
+    "content_flags":       ContentFlagAssessment,
+}
 LIST_CATEGORIES: list[tuple[str, type]] = [
-    ("narrative_structure", NarrativeStructureAssessment),
-    ("plot_archetypes",     PlotArchetypeAssessment),
-    ("settings",            SettingAssessment),
-    ("characters",          CharacterAssessment),
-    ("experiential",        ExperientialAssessment),
-    ("content_flags",       ContentFlagAssessment),
+    (cat.field_name, _ASSESSMENT_BY_FIELD[cat.field_name])
+    for cat in ConceptTagCategory
+    if cat.cardinality == "multi"
 ]
 
 
@@ -102,7 +116,6 @@ def fetch_all_movie_data(
         NarrativeTechniquesOutput | None,
         PlotAnalysisOutput | None,
         str | None,  # craft_observations
-        ViewerExperienceOutput | None,
     ],
 ]:
     """One SQLite query joins raw movie inputs with all upstream Wave 1/2 outputs.
@@ -110,7 +123,7 @@ def fetch_all_movie_data(
     Returns a dict keyed by tmdb_id; each value is the tuple of arguments
     needed by generate_concept_tags:
         (MovieInputData, plot_summary, emotional_observations, nt_output,
-         pa_output, craft_observations, ve_output)
+         pa_output, craft_observations)
 
     Movies missing from the join are absent from the returned dict — callers
     must handle the missing case.
@@ -150,8 +163,7 @@ def fetch_all_movie_data(
                 g.plot_events,
                 g.reception,
                 g.narrative_techniques,
-                g.plot_analysis,
-                g.viewer_experience
+                g.plot_analysis
             FROM tmdb_data t
             JOIN imdb_data i ON t.tmdb_id = i.tmdb_id
             LEFT JOIN generated_metadata g ON t.tmdb_id = g.tmdb_id
@@ -230,21 +242,14 @@ def fetch_all_movie_data(
             except Exception:
                 pass
 
-        # ViewerExperienceOutput — only ending_aftertaste is routed into the
-        # prompt, but the whole object is parsed so future expansions can
-        # route additional sections without changing the loader.
-        ve: ViewerExperienceOutput | None = None
-        if row["viewer_experience"]:
-            try:
-                ve_payload = json.loads(row["viewer_experience"])
-                ve_payload = normalize_legacy_metadata_payload(ve_payload, ViewerExperienceOutput)
-                ve = ViewerExperienceOutput.model_validate(ve_payload)
-            except Exception:
-                pass
+        # ViewerExperienceOutput is no longer routed — ending_aftertaste
+        # was the single contaminated upstream-label input that drove
+        # the BITTERSWEET over-tag; ending classification now derives
+        # from emotional_observations + plot_summary closing-scene.
 
         result[tmdb_id] = (
             movie, plot_summary, emotional_observations, nt, pa,
-            craft_observations, ve,
+            craft_observations,
         )
 
     return result
@@ -272,6 +277,18 @@ def majority_merge(outputs: list[ConceptTagsOutput]) -> ConceptTagsOutput:
 
     merged_kwargs: dict = {}
 
+    # Helper: concatenate the per-run reasoning strings for a given
+    # category into a single audit-trail string. The merged assessment
+    # is a programmatic synthesis (majority vote), so its reasoning is
+    # the joined reasoning of the underlying runs — useful for debugging
+    # disagreements and visible in saved JSON.
+    def _join_reasoning(field_name: str) -> str:
+        parts = [
+            f"[Run {i + 1}] {getattr(out, field_name).reasoning}"
+            for i, out in enumerate(outputs)
+        ]
+        return "\n\n".join(parts)
+
     # List-typed categories
     for field_name, assessment_cls in LIST_CATEGORIES:
         counter: Counter = Counter()
@@ -281,7 +298,10 @@ def majority_merge(outputs: list[ConceptTagsOutput]) -> ConceptTagsOutput:
         majority_tags = [tag for tag, count in counter.items() if count >= threshold]
         # Sort by concept_tag_id for stable deterministic output
         majority_tags.sort(key=lambda t: t.concept_tag_id)
-        merged_kwargs[field_name] = assessment_cls(tags=majority_tags)
+        merged_kwargs[field_name] = assessment_cls(
+            reasoning=_join_reasoning(field_name),
+            tags=majority_tags,
+        )
 
     # Endings — mode vote, first-run tiebreaker
     ending_counter = Counter(out.endings.tag for out in outputs)
@@ -292,7 +312,10 @@ def majority_merge(outputs: list[ConceptTagsOutput]) -> ConceptTagsOutput:
     else:
         first_run_ending = outputs[0].endings.tag
         chosen_ending = first_run_ending if first_run_ending in top_candidates else top_candidates[0]
-    merged_kwargs["endings"] = EndingAssessment(tag=chosen_ending)
+    merged_kwargs["endings"] = EndingAssessment(
+        reasoning=_join_reasoning("endings"),
+        tag=chosen_ending,
+    )
 
     return ConceptTagsOutput(**merged_kwargs)
 
@@ -317,7 +340,6 @@ async def run_three_times(
     nt: NarrativeTechniquesOutput | None,
     pa: PlotAnalysisOutput | None,
     craft_observations: str | None,
-    ve: ViewerExperienceOutput | None,
 ) -> list[ConceptTagsOutput]:
     """Fire NUM_RUNS_PER_MOVIE generation calls concurrently. Skip failures."""
     tasks = [
@@ -328,7 +350,7 @@ async def run_three_times(
             nt,
             pa,
             craft_observations=craft_observations,
-            ve_output=ve,
+            timeout=LLM_TIMEOUT_SECONDS,
         )
         for _ in range(NUM_RUNS_PER_MOVIE)
     ]
@@ -360,12 +382,12 @@ async def process_movie(
 
     (
         movie, plot_summary, emotional_observations, nt, pa,
-        craft_observations, ve,
+        craft_observations,
     ) = movie_data
     start = time.monotonic()
     outputs = await run_three_times(
         movie, plot_summary, emotional_observations, nt, pa,
-        craft_observations, ve,
+        craft_observations,
     )
     elapsed = time.monotonic() - start
 
