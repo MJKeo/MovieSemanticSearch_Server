@@ -16,8 +16,8 @@
 #             trait its call lives in).
 #   Phase D — Per-trait scoring: for each candidate, for each trait,
 #             compose per-call scores via the category's combine type
-#             (SINGLE / ADDITIVE / ALTERNATIVES / NO_OP), then fold
-#             across the trait's categories by combine_mode — FRAMINGS
+#             (SINGLE / ADDITIVE / ALTERNATIVES / CONSENSUS / NO_OP),
+#             then fold across the trait's categories by combine_mode — FRAMINGS
 #             takes MAX (alternative homes for one underlying thing);
 #             FACETS takes PRODUCT (compound concept whose axes must
 #             compound). Trait weight is commitment × rarity (rarity =
@@ -164,6 +164,14 @@ def combine_calls(
       ALTERNATIVES — each call is an alternative way of finding the
                      trait; max across calls. Matching any one is
                      sufficient evidence.
+      CONSENSUS    — every committed call should weigh in. Soft
+                     geometric mean over committed-call scores with
+                     `_CONSENSUS_FOLD_FLOOR` lifting any sub-floor
+                     value. Prevents one endpoint from over-promoting
+                     the category on its own while keeping a single
+                     0 from collapsing it. Single-commit cases
+                     passthrough (geom mean over one element = that
+                     element, modulo the floor).
       NO_OP        — category never fires. Returns None so the across-
                      category max can skip it rather than treating it
                      as a 0.0 framing that drags down the max for
@@ -195,6 +203,17 @@ def combine_calls(
         return out
     if combine_type is CategoryCombineType.ALTERNATIVES:
         return max(scores)
+    if combine_type is CategoryCombineType.CONSENSUS:
+        # Soft geometric mean over committed-call scores. Floor lifts
+        # sub-EPS values so one missing/zero endpoint cannot zero the
+        # category, but the lifted EPS still drags the geom_mean well
+        # below the high-scorer — exactly the "no single endpoint
+        # over-promotes" property the mode exists for.
+        n = len(scores)
+        product = 1.0
+        for s in scores:
+            product *= max(s, _CONSENSUS_FOLD_FLOOR)
+        return product ** (1.0 / n)
     # Defensive — keep the type checker honest if a new mode lands
     # without a branch above.
     raise ValueError(f"unknown combine_type: {combine_type!r}")
@@ -209,6 +228,14 @@ def combine_calls(
 # but missing on another still scores well above 0 but well below 1.
 # Tune via the EPS sweep documented in rescore_overhaul.md Phase 7.2.
 _FACETS_FOLD_FLOOR: float = 0.1
+
+# CONSENSUS fold floor — within-category analogue of `_FACETS_FOLD_FLOOR`.
+# Lifts each committed-call score to at least this value before the
+# geometric mean so a single 0-scoring endpoint cannot collapse the
+# category, while still dragging the result well below a clean
+# multi-endpoint match. Same EPS as FACETS so the within- and across-
+# category soft folds share calibration; tune together.
+_CONSENSUS_FOLD_FLOOR: float = 0.1
 
 
 def combine_categories(
@@ -310,8 +337,8 @@ class CategoryScore:
     `combine_calls` fold over its live calls). Surfacing these per-
     category scores lets callers see WHICH category drove the trait's
     contribution. `combine_type` mirrors the category's combine rule
-    (SINGLE / ADDITIVE / ALTERNATIVES) so the breakdown is self-
-    describing without round-tripping back to the taxonomy.
+    (SINGLE / ADDITIVE / ALTERNATIVES / CONSENSUS) so the breakdown is
+    self-describing without round-tripping back to the taxonomy.
 
     `expressions` and `retrieval_intent` mirror the upstream Step-3
     CategoryCall so the breakdown carries the human-language ask that
@@ -814,9 +841,9 @@ def _score_positive_trait(
     numpy array ops: per-spec score arrays are computed once via a
     sparse scatter, combined into per-category arrays with the
     category's fold rule (SINGLE = identity, ADDITIVE = product,
-    ALTERNATIVES = max), then folded across categories per the
-    trait's combine_mode (FRAMINGS = max, FACETS = floor + geom
-    mean, SOLO = first category). The dataclass-construction pass
+    ALTERNATIVES = max, CONSENSUS = floor + geom mean), then folded
+    across categories per the trait's combine_mode (FRAMINGS = max,
+    FACETS = floor + geom mean, SOLO = first category). The dataclass-construction pass
     over candidates is preserved so `score_breakdowns` stays
     semantically identical for downstream display + implicit-prior
     rerank.
@@ -914,6 +941,14 @@ def _score_positive_trait(
                 cat_arr = np.prod(stacked, axis=0)
             elif combine_type is CategoryCombineType.ALTERNATIVES:
                 cat_arr = np.max(stacked, axis=0)
+            elif combine_type is CategoryCombineType.CONSENSUS:
+                # Soft geometric mean over committed-call scores with
+                # `_CONSENSUS_FOLD_FLOOR` (mirrors the FACETS across-
+                # category fold, but at the within-category level).
+                # See `combine_calls` for rationale.
+                n_specs = stacked.shape[0]
+                floored = np.maximum(stacked, _CONSENSUS_FOLD_FLOOR)
+                cat_arr = np.prod(floored, axis=0) ** (1.0 / n_specs)
             else:
                 raise ValueError(f"unknown combine_type: {combine_type!r}")
         cat_blocks.append((cc, combine_type, spec_arrays, cat_arr))

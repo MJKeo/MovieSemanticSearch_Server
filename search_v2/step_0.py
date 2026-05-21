@@ -359,15 +359,17 @@ SYSTEM_PROMPT = (
 )
 
 
-# Step 0 is pinned to Gemini 3 Flash with thinking disabled and a very
-# low temperature. Flow routing runs on every query and is latency-
-# sensitive, so we standardize on the fastest reliable backend. With
-# the tighter taxonomy and Rich-fields teaching, prose variation is
-# not load-bearing — a more deterministic classifier is what we want.
+# Step 0 is pinned to Gemini 3.5 Flash with minimal thinking
+# (`thinking_level="minimal"` — the lowest non-disabled level, below
+# "low") and a very low temperature. Flow routing runs on every
+# query and is latency-sensitive, so we standardize on the fastest
+# reliable backend. With the tighter taxonomy and Rich-fields
+# teaching, prose variation is not load-bearing — a more
+# deterministic classifier is what we want.
 _STEP_0_PROVIDER = LLMProvider.GEMINI
-_STEP_0_MODEL = "gemini-3-flash-preview"
+_STEP_0_MODEL = "gemini-3.5-flash"
 _STEP_0_KWARGS: dict = {
-    "thinking_config": {"thinking_budget": 0},
+    "thinking_config": {"thinking_level": "minimal"},
     "temperature": 0.1,
 }
 

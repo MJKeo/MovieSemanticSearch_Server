@@ -439,17 +439,18 @@ SYSTEM_PROMPT = (
 #                      Executor
 # ===============================================================
 #
-# Model is finalized to Gemini 3 Flash with thinking disabled and a
-# modest temperature — the same configuration steps 0 and 2 use, so
-# the three prompts share a consistent backend profile. Callers
-# cannot override — keeps the step reproducible and makes
-# cost/latency predictable end-to-end.
+# Model is finalized to Gemini 3.5 Flash with minimal thinking
+# (`thinking_level="minimal"` — the lowest non-disabled level, below
+# "low") and a modest temperature — the same configuration steps 0
+# and 2 use, so the three prompts share a consistent backend
+# profile. Callers cannot override — keeps the step reproducible
+# and makes cost/latency predictable end-to-end.
 
 
 _PROVIDER = LLMProvider.GEMINI
-_MODEL = "gemini-3-flash-preview"
+_MODEL = "gemini-3.5-flash"
 _MODEL_KWARGS: dict = {
-    "thinking_config": {"thinking_budget": 0},
+    "thinking_config": {"thinking_level": "minimal"},
     "temperature": 0.35,
 }
 

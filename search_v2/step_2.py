@@ -26,10 +26,11 @@
 # procedural. Field-level "how to fill" guidance is not duplicated
 # here.
 #
-# Model choice is finalized to Gemini 3 Flash (no thinking, modest
-# temperature). The run function does not accept a model parameter —
-# provider and model are hard-coded here so callers stay simple and
-# behavior is reproducible.
+# Model choice is finalized to Gemini 3.5 Flash with minimal
+# thinking (`thinking_level="minimal"`) and modest temperature. The
+# run function does not accept a model parameter — provider and
+# model are hard-coded here so callers stay simple and behavior is
+# reproducible.
 #
 # Usage:
 #   python -m search_v2.step_2 "your query here"
@@ -946,15 +947,17 @@ SYSTEM_PROMPT = (
 #                      Executor
 # ===============================================================
 #
-# Model is finalized to Gemini 3 Flash with thinking disabled and a
-# modest temperature. Callers cannot override — this keeps the step
-# reproducible and makes cost/latency predictable end-to-end.
+# Model is finalized to Gemini 3.5 Flash with minimal thinking
+# (`thinking_level="minimal"` — the lowest non-disabled level, below
+# "low") and a modest temperature. Callers cannot override — this
+# keeps the step reproducible and makes cost/latency predictable
+# end-to-end.
 
 
 _PROVIDER = LLMProvider.GEMINI
-_MODEL = "gemini-3-flash-preview"
+_MODEL = "gemini-3.5-flash"
 _MODEL_KWARGS: dict = {
-    "thinking_config": {"thinking_budget": 0},
+    "thinking_config": {"thinking_level": "minimal"},
     "temperature": 0.35,
 }
 

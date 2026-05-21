@@ -472,6 +472,13 @@ class OperationType(StrEnum):
 #   across [0, 1] scores. Strict — any 0 zeros the category.
 # - ALTERNATIVES: each call is a distinct way of finding the trait;
 #   max across calls. Matching any one is sufficient evidence.
+# - CONSENSUS: every committed call should weigh in. Soft geometric
+#   mean over committed-call scores with an EPS floor (mirrors the
+#   FACETS across-category fold). One endpoint scoring high cannot
+#   over-promote the category on its own — sibling endpoints that
+#   committed but scored weakly pull the result down without a single
+#   zero collapsing it. Single-commit cases passthrough (geom mean
+#   over one element = that element).
 # - NO_OP: category never fires (e.g. BELOW_THE_LINE_CREATOR's
 #   EXPLICIT_NO_OP bucket emits zero specs); the per-category combine
 #   returns a sentinel that the across-category max skips entirely.
@@ -479,6 +486,7 @@ class CategoryCombineType(StrEnum):
     SINGLE = "single"
     ADDITIVE = "additive"
     ALTERNATIVES = "alternatives"
+    CONSENSUS = "consensus"
     NO_OP = "no_op"
 
 

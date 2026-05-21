@@ -71,3 +71,74 @@ archetype). All judged as net-positive or acceptable.
   worked under base now scores zero, that's the place to look.
 - 25 experiment queries from `search_improvement_planning/rescore_overhal_queries.md`
   must continue to be kept out of any prompt/schema example set.
+
+## Steps 0/1/2: swap to gemini-3.5-flash with `thinking_level="minimal"`
+Files: search_v2/step_0.py, search_v2/step_1.py, search_v2/step_2.py
+
+### Intent
+Bring the front-end query-understanding stages onto the same model
+family as the recently-shipped Step 3, but at the cheaper
+`thinking_level="minimal"` setting (one level below `"low"`).
+Verified valid via API probe — `minimal` is accepted by
+`gemini-3.5-flash` and is strictly lower than `"low"`.
+
+### Key Decisions
+- **Step 3 stays on `"low"`, not `"minimal"`.** Step 3 is the
+  routing-decision stage with the most reasoning load (per-trait
+  category routing, granularity gate, combine-mode selection); the
+  user explicitly asked for the others to be "minimal thinking
+  (NOT low thinking)" so the lighter front-end stages get the
+  cheaper config while routing keeps the headroom.
+- **`implicit_expectations.py` left untouched.** The user gated the
+  change with "ONLY if [implicit priors is] not already using a
+  gemini model" — it is already on `gemini-3-flash-preview`, so
+  per the condition we leave it alone.
+- **Temperatures unchanged** (step_0: 0.1, step_1: 0.35, step_2:
+  0.35). Only the model + thinking_config changed.
+- **Module-doc comments updated** in all three files to reflect
+  the new model + thinking level.
+
+### Testing Notes
+- Smoke-tested all three stages end-to-end against
+  `"heartwarming holiday films"`: step_0 ran in <1s, step_1 in
+  2.52s, step_2 in 5.04s with 2 traits returned. Zero failures.
+- No suite-level regression test for steps 0/1/2 — the
+  category_candidates_experiment harness exercises step_2 + step_3
+  but not 0 or 1. Watch for behavior drift in production.
+
+## New `CategoryCombineType.CONSENSUS` + SENSITIVE_CONTENT switched to it
+Files: schemas/enums.py, schemas/trait_category.py, search_v2/stage_4_execution.py
+
+Why: Under `ALTERNATIVES` (max), one endpoint scoring high could
+over-promote SENSITIVE_CONTENT on its own — e.g. SEMANTIC matching
+"gory" descriptive plot prose while KW disagrees and META is silent.
+The user wants consensus credit: movies that match across the
+committed endpoints should rank above movies that spike on a single
+endpoint.
+
+Approach: Added a new `CONSENSUS` combine type that takes the
+geometric mean over committed-call scores with `_CONSENSUS_FOLD_FLOOR
+= 0.1`, mirroring the existing FACETS across-category fold but at
+the within-category level. SENSITIVE_CONTENT switched from
+ALTERNATIVES → CONSENSUS. Walk-then-commit handler gating means the
+fold only sees committed endpoints, so single-endpoint commits (e.g.
+"famous for gratuitous gore" → SEMANTIC-only) degenerate to
+passthrough; multi-endpoint commits get pulled toward agreement.
+
+Design context: Rationale tradeoff documented in
+search_improvement_planning/rescore_overhaul.md (ALTERNATIVES — max);
+this change explicitly diverges for SENSITIVE_CONTENT to combat
+single-endpoint over-promotion. Same EPS as FACETS for shared
+calibration. Score impact is intentionally aggressive — a 3-spec
+[0.95, 0.05, 0.05] commit drops from 0.95 (max) to ~0.21
+(consensus). Reversible by flipping CategoryCombineType back to
+ALTERNATIVES on the SENSITIVE_CONTENT enum row.
+
+Testing notes:
+- `unit_tests/test_schema_factories.py` exercises SENSITIVE_CONTENT
+  routing but does not assert combine_type — should still pass.
+- No existing combine_calls(CONSENSUS) test; eyeball validation via
+  the next end-to-end run on queries like "no gore", "not too
+  bloody", "famous for over-the-top gore".
+- TARGET_AUDIENCE still on ALTERNATIVES (also bucket 8); revisit
+  after a CONSENSUS query window if the same pattern shows up there.

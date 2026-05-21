@@ -795,7 +795,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
         HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
-        CategoryCombineType.ALTERNATIVES,
+        CategoryCombineType.CONSENSUS,
     )
     SEASONAL_HOLIDAY = (
         "Seasonal / holiday",
