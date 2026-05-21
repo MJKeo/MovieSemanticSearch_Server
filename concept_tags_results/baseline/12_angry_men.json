@@ -1,0 +1,123 @@
+{
+  "title": "12 Angry Men",
+  "year": 1957,
+  "tmdb_id": 389,
+  "merged": {
+    "narrative_structure": {
+      "tags": [
+        "single_location"
+      ]
+    },
+    "plot_archetypes": {
+      "tags": []
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": [
+        "ensemble_cast"
+      ]
+    },
+    "endings": {
+      "tag": "happy_ending"
+    },
+    "experiential": {
+      "tags": [
+        "feel_good"
+      ]
+    },
+    "content_flags": {
+      "tags": []
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": [
+          "single_location"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "ensemble_cast"
+        ]
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "single_location"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "ensemble_cast"
+        ]
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "single_location"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "ensemble_cast"
+        ]
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    }
+  ]
+}

@@ -47,6 +47,7 @@ from schemas.metadata import (
     SourceOfInspirationOutput,
     ViewerExperienceOutput,
     WatchContextOutput,
+    normalize_legacy_metadata_payload,
 )
 
 
@@ -832,38 +833,10 @@ def _parse_metadata_json(
         raise ValueError(f"Malformed metadata JSON in {label}.") from exc
 
     try:
-        normalized = _normalize_metadata_payload(decoded, schema_class)
+        normalized = normalize_legacy_metadata_payload(decoded, schema_class)
         return schema_class.model_validate(normalized)
     except Exception as exc:
         raise ValueError(f"Malformed metadata JSON in {label}.") from exc
-
-
-def _normalize_metadata_payload(
-    payload: object,
-    schema_class: type[BaseModel],
-) -> object:
-    """Normalize known legacy metadata shapes into the current schema."""
-    if not isinstance(payload, dict):
-        return payload
-
-    if schema_class in {NarrativeTechniquesOutput, WatchContextOutput}:
-        normalized_payload = dict(payload)
-        for key, value in normalized_payload.items():
-            if not isinstance(value, dict):
-                continue
-            if "justification" in value and "evidence_basis" not in value:
-                section = dict(value)
-                section["evidence_basis"] = section.pop("justification")
-                normalized_payload[key] = section
-        payload = normalized_payload
-
-    if schema_class is SourceOfInspirationOutput:
-        normalized_payload = dict(payload)
-        normalized_payload.pop("source_evidence", None)
-        normalized_payload.pop("lineage_evidence", None)
-        payload = normalized_payload
-
-    return payload
 
 
 __all__ = ["IMDBData", "Movie", "TMDBData"]

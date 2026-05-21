@@ -112,13 +112,37 @@ Primary signal for FEMALE_LEAD and ENSEMBLE_CAST; useful supporting \
 signal for any tag that depends on identifying the protagonist.
 - emotional_observations: Audience emotional response from reviewers. \
 Reports how audiences actually felt, not what happened in the plot. \
-AUTHORITATIVE source for experiential tags and ending classification \
-— see those categories for details.
-- narrative_technique_terms: Pre-classified structural labels from 6 \
-sections. Each section maps to specific tags — check the relevant \
-section for each tag.
-- character_arc_labels: Pre-classified arc transformation labels.
+AUTHORITATIVE source for experiential tags (feel_good, tearjerker).
+- craft_observations: Reviewer descriptions of narrative structure, \
+pacing, and storytelling craft. PRIMARY signal for tags about HOW \
+the story is told — nonlinear_timeline, plot_twist, \
+unreliable_narrator, breaking_fourth_wall. Reviewers describe \
+structural choices here in plain language (e.g. "told in chapters", \
+"rug-pull third-act reveal", "directly addresses the camera").
+- ending_aftertaste: Concise terms (and negations) describing how the \
+ending FEELS to audiences when the credits roll. PRIMARY signal for \
+selecting one of happy_ending / sad_ending / bittersweet_ending / \
+no_clear_ending, and a strong supporting signal for open_ending and \
+cliffhanger_ending. Distinct from emotional_observations (which spans \
+the whole movie); this field is specifically about the ending.
+- narrative_technique_terms: Pre-classified structural labels from 7 \
+sections (narrative_archetype, narrative_delivery, pov_perspective, \
+information_control, audience_character_perception, \
+additional_narrative_devices, character_arcs). Each section maps to \
+specific tags — check the relevant section for each tag. The \
+character_arcs section contains film-language arc labels \
+(e.g. "redemption arc", "fall from grace", "moral awakening") that \
+disambiguate anti_hero.
+- character_arc_labels: Pre-classified arc transformation labels \
+from plot_analysis (thematic transformations like "naive → wise"). \
+Distinct from the character_arcs section inside \
+narrative_technique_terms (which uses film-language arc labels).
 - conflict_type: Pre-classified conflict type.
+- parental_guide_items: IMDB content-advisory categories with \
+severity ratings (e.g. "Violence Against Animals (severe)", \
+"Kidnapping (mild)"). Direct evidence for content-flag tags and a \
+supporting signal for plot-archetype tags whose content is \
+typically flagged (kidnapping in particular).
 
 When an input is marked "not available", treat it as absent data — \
 do not guess what it might contain.
@@ -147,7 +171,9 @@ understanding that the reveal overturns. An early betrayal or \
 deception revealed before the audience has formed contrary \
 expectations is plot setup, not a twist.
   Check: information_control terms, plot_keywords ("surprise ending", \
-"plot twist"), plot_summary reveals.
+"plot twist"), plot_summary reveals, craft_observations \
+(reviewers often name twists explicitly: "third-act reveal", \
+"rug-pull", "the film pulls the rug out").
   NOT plot_twist: any surprise or unexpected event; a late-act \
 betrayal the audience could see coming; new information that adds \
 to the story without changing prior understanding.
@@ -169,14 +195,20 @@ plot_summary.
 - NONLINEAR_TIMELINE: Non-chronological structure is a defining \
 feature of how the story is told — not just "has a flashback."
   Check: narrative_delivery terms, plot_keywords ("nonlinear \
-timeline"), plot_summary structure.
+timeline"), plot_summary structure, craft_observations (reviewers \
+typically describe scrambled-chapter or interwoven-timeline films \
+explicitly: "told in chapters", "non-linear", "the film moves \
+between timelines").
   NOT nonlinear: occasional flashbacks within a chronological \
 main narrative; a single framing device or prologue.
 
 - UNRELIABLE_NARRATOR: The narrator or POV character's account is \
 revealed as untrustworthy. The audience discovers that what they \
 were shown or told was distorted or fabricated.
-  Check: pov_perspective terms, plot_summary contradictions.
+  Check: pov_perspective terms, plot_summary contradictions, \
+craft_observations (reviewers often flag unreliable narration as a \
+deliberate craft choice: "unreliable narrator", "the film deceives \
+the audience").
   NOT unreliable_narrator: a character who lies to other characters \
 (that is deception, not unreliable narration); a character who \
 hallucinates unless the film presents hallucinations as reality to \
@@ -186,7 +218,9 @@ the audience and then reveals the distortion.
 leaves its central question ambiguous — audiences debate what \
 happened or what it means. Not every loose thread qualifies — the \
 ambiguity must be intentional and central.
-  Check: plot_keywords ("ambiguous ending"), plot_summary ending.
+  Check: plot_keywords ("ambiguous ending"), plot_summary ending, \
+ending_aftertaste (look for "ambiguous", "lingering question", \
+"audiences debate").
   NOT open_ending: a sequel setup (that is CLIFFHANGER_ENDING); \
 unanswered side questions; an ending that is emotionally unsatisfying \
 but narratively clear. If the central conflict is resolved, the \
@@ -203,7 +237,9 @@ also travel to other locations.
 acknowledge they are in a movie. Must be a notable, deliberate \
 choice — not a brief aside.
   Check: additional_narrative_devices terms, plot_keywords \
-("breaking the fourth wall").
+("breaking the fourth wall"), craft_observations (reviewers often \
+single out direct address as a craft choice: "talks to the camera", \
+"fourth-wall breaks").
   NOT breaking_fourth_wall: voiceover narration where the character \
 tells their story but does not acknowledge the audience; \
 documentary-style interviews; songs that comment on the action \
@@ -214,7 +250,9 @@ with a strong setup for continuation. The audience is left in \
 suspense about what happens next — the story is deliberately \
 unfinished. Distinct from OPEN_ENDING (story complete but \
 ambiguous) — cliffhanger means the story stopped mid-arc.
-  Check: plot_summary ending (unresolved main conflict, sequel setup).
+  Check: plot_summary ending (unresolved main conflict, sequel setup), \
+ending_aftertaste (look for "unresolved", "leaves you wanting more", \
+"sets up the next chapter").
   NOT cliffhanger: a satisfying resolution where the villain \
 survives or a sequel is possible; the central conflict is resolved \
 even if side threads remain open.
@@ -263,7 +301,12 @@ not make the movie an underdog story.
 - KIDNAPPING: A kidnapping or abduction IS the central plot — the \
 movie is about the kidnapping event itself and its direct \
 consequences (rescue attempt, escape, ransom negotiation).
-  Check: plot_keywords ("kidnapping"), plot_summary.
+  Check: plot_keywords ("kidnapping"), plot_summary, \
+parental_guide_items (an "Abduction" or "Kidnapping" category \
+with non-trivial severity is corroborating evidence — but only \
+tag when the plot_summary also confirms abduction is the central \
+plot, since this category fires for any kidnapping including \
+incidental ones).
   NOT kidnapping: imprisonment as backstory that motivates a \
 different main plot (e.g., revenge); captive people as the premise \
 for a chase or escape story where the chase is the plot; characters \
@@ -388,13 +431,28 @@ than the rest, that is a lead, not an ensemble.
 - ANTI_HERO: The protagonist operates outside conventional morality \
 as a defining character trait. The moral boundary-crossing must be \
 substantive — criminal acts, violence, exploitation, or \
-vigilantism as the character's primary mode of operating.
-  Check: audience_character_perception terms, character_arc_labels, \
-plot_keywords ("anti hero"), plot_summary.
+vigilantism as the character's primary mode of operating. This is \
+an IDENTITY-LEVEL claim, not an arc-level one: a character whose \
+ARC moves them toward conventional morality (a redemption arc) is \
+NOT an anti-hero by film's end.
+  Check: audience_character_perception terms, character_arc_labels \
+(from plot_analysis), the character_arcs section of \
+narrative_technique_terms, plot_keywords ("anti hero"), plot_summary.
+  DISQUALIFIER: if the character_arcs section of \
+narrative_technique_terms contains a redemption-style label \
+("redemption arc", "moral awakening", "redemption", "reform arc") \
+AND the plot_summary supports that the protagonist ends in a moral \
+place, do NOT tag ANTI_HERO. The character may have started \
+morally compromised, but the film's defining claim about them is \
+their moral arrival, not their transgression.
   NOT anti_hero: a flawed but fundamentally moral character who \
-does the right thing; a teenager who skips school or breaks minor \
-rules; a character described as "rebellious" or "rule-breaking" \
-without substantive moral transgression.
+does the right thing (a father whose mission is to rescue his \
+daughter is a moral protagonist, not an anti-hero, regardless of \
+methods); a charming-rogue framing where the protagonist's crimes \
+are presented as harmless fun and the arc ends in moral arrival; \
+a teenager who skips school or breaks minor rules; a character \
+described as "rebellious" or "rule-breaking" without substantive \
+moral transgression.
 
 
 ENDINGS — how the audience FEELS when the credits roll. Exactly \
@@ -419,21 +477,32 @@ above.
 
 HOW TO THINK THROUGH THIS CATEGORY — work through these steps \
 internally before selecting a tag:
-1. Ending-specific emotional_observations: What did reviewers or \
+1. ending_aftertaste (PRIMARY SIGNAL): This input is purpose-built \
+to describe how the ending FEELS to audiences. Read its terms and \
+negations carefully — they directly indicate which of the four \
+tags applies. Examples:
+   - "uplifting", "satisfying", "triumphant", "warm closure" → HAPPY_ENDING
+   - "devastating", "tragic close", "heartbreaking", "bleak finale" → SAD_ENDING
+   - "bittersweet", "joy tinged with sorrow", "achievement at a cost" → BITTERSWEET_ENDING
+   - "ambiguous", "lingering question", "contemplative", "open to \
+interpretation" with no clear valence → NO_CLEAR_ENDING
+2. Ending-specific emotional_observations: What did reviewers or \
 audiences report feeling as the film ends? Filter out journey-level \
 emotions ("tense", "frightening", "dark") that describe the \
 experience, not the ending. Only consider observations about the \
 ending itself.
-2. Final state of affairs: When the credits roll, where do the \
+3. Final state of affairs: When the credits roll, where do the \
 characters stand? What has been gained, lost, or left unresolved? \
 This is factual — do not interpret the emotion yet.
-3. Ending-related plot_keywords: Any keywords that directly signal \
+4. Ending-related plot_keywords: Any keywords that directly signal \
 ending type (e.g. "tragic ending", "happy ending", "twist ending").
 
-Then select the tag that best matches the evidence. When \
-emotional_observations describe audience reactions to the ending, \
-treat those as the primary signal over your own inferences from \
-the final state of affairs.
+When ending_aftertaste gives a clear valence, trust it over your \
+own inference from the final state of affairs. Structural ambiguity \
+about WHAT happened (e.g. Inception's spinning top) is NOT the \
+same as emotional ambiguity about HOW the audience felt — if the \
+ending_aftertaste is warm/positive, tag HAPPY_ENDING even when the \
+plot leaves a structural question open.
 
 - HAPPY_ENDING: The audience leaves feeling positive. The film's \
 final moments bring satisfaction, relief, triumph, or warmth. A \
@@ -516,10 +585,17 @@ CONTENT FLAGS — things users search to AVOID.
 - ANIMAL_DEATH: A non-human animal (dog, cat, horse, bird, etc.) \
 dies on screen or as a significant plot point. This tag is \
 exclusively about animals.
-  Check: plot_keywords ("animal death", "dog dies"), plot_summary.
+  Check: plot_keywords ("animal death", "dog dies"), plot_summary, \
+parental_guide_items (PRIMARY signal — IMDB explicitly tags this \
+under categories like "Violence Against Animals" or "Animal \
+cruelty" with severity ratings: moderate-or-severe severity \
+indicates a significant plot beat; mild severity may be incidental \
+and warrants checking plot_summary before tagging).
   NOT animal_death: human deaths of any kind; violence against \
 humans; the word "animal" appearing in an unrelated context; \
-creatures in fantasy/sci-fi that are clearly not real animals.
+creatures in fantasy/sci-fi that are clearly not real animals; a \
+parental_guide entry at "mild" severity with no plot_summary or \
+plot_keyword corroboration (likely incidental, not a beat).
 
 ---
 

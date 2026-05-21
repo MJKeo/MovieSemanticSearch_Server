@@ -1,0 +1,127 @@
+{
+  "title": "Get Out",
+  "year": 2017,
+  "tmdb_id": 419430,
+  "merged": {
+    "narrative_structure": {
+      "tags": [
+        "plot_twist",
+        "twist_villain"
+      ]
+    },
+    "plot_archetypes": {
+      "tags": [
+        "kidnapping"
+      ]
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": []
+    },
+    "endings": {
+      "tag": "no_clear_choice"
+    },
+    "experiential": {
+      "tags": []
+    },
+    "content_flags": {
+      "tags": [
+        "animal_death"
+      ]
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": [
+          "plot_twist",
+          "twist_villain"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": [
+          "kidnapping"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "plot_twist",
+          "twist_villain"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": [
+          "kidnapping"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "no_clear_choice"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "plot_twist",
+          "twist_villain"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": [
+          "kidnapping"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "no_clear_choice"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    }
+  ]
+}

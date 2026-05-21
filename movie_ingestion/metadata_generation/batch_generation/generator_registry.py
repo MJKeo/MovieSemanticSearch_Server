@@ -35,6 +35,7 @@ from movie_ingestion.metadata_generation.inputs import (
     load_wave1_outputs,
     load_plot_analysis_output,
     load_narrative_techniques_output,
+    load_viewer_experience_output,
 )
 
 
@@ -406,9 +407,12 @@ def _concept_tags_eligibility_checker(movie: MovieInputData) -> str | None:
 def _concept_tags_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     """Adapter for concept_tags — loads Wave 1 + Wave 2 outputs and builds prompts.
 
-    Loads plot_summary and emotional_observations from Wave 1, plus
-    narrative_techniques and plot_analysis from Wave 2. Missing outputs
-    are passed as None — the generator handles "not available" formatting.
+    Loads plot_summary + emotional_observations + craft_observations from
+    Wave 1, plus narrative_techniques, plot_analysis, and viewer_experience
+    from Wave 2. craft_observations and viewer_experience.ending_aftertaste
+    were added post-baseline to address NONLINEAR_TIMELINE / craft-tag misses
+    and ending classification failures, respectively. Missing outputs are
+    passed as None — the generator handles "not available" formatting.
     """
     from ..generators.concept_tags import build_concept_tags_user_prompt
     from ..prompts.concept_tags import SYSTEM_PROMPT
@@ -416,8 +420,15 @@ def _concept_tags_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     w1 = load_wave1_outputs(movie.tmdb_id)
     nt = load_narrative_techniques_output(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
+    ve = load_viewer_experience_output(movie.tmdb_id)
     return build_concept_tags_user_prompt(
-        movie, w1.plot_summary, w1.emotional_observations, nt, pa,
+        movie,
+        w1.plot_summary,
+        w1.emotional_observations,
+        nt,
+        pa,
+        craft_observations=w1.craft_observations,
+        ve_output=ve,
     ), SYSTEM_PROMPT
 
 
@@ -428,8 +439,15 @@ async def _concept_tags_live_generator(movie: MovieInputData):
     w1 = load_wave1_outputs(movie.tmdb_id)
     nt = load_narrative_techniques_output(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
+    ve = load_viewer_experience_output(movie.tmdb_id)
     return await generate_concept_tags(
-        movie, w1.plot_summary, w1.emotional_observations, nt, pa,
+        movie,
+        w1.plot_summary,
+        w1.emotional_observations,
+        nt,
+        pa,
+        craft_observations=w1.craft_observations,
+        ve_output=ve,
     )
 
 

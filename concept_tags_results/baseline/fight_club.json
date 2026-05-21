@@ -1,0 +1,122 @@
+{
+  "title": "Fight Club",
+  "year": 1999,
+  "tmdb_id": 550,
+  "merged": {
+    "narrative_structure": {
+      "tags": [
+        "plot_twist",
+        "twist_villain",
+        "unreliable_narrator"
+      ]
+    },
+    "plot_archetypes": {
+      "tags": []
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": [
+        "anti_hero"
+      ]
+    },
+    "endings": {
+      "tag": "no_clear_choice"
+    },
+    "experiential": {
+      "tags": []
+    },
+    "content_flags": {
+      "tags": []
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": [
+          "plot_twist",
+          "unreliable_narrator"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "no_clear_choice"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "plot_twist",
+          "twist_villain",
+          "unreliable_narrator"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "sad_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "plot_twist",
+          "twist_villain",
+          "unreliable_narrator"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "no_clear_choice"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    }
+  ]
+}

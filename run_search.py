@@ -151,7 +151,7 @@ async def _step_1(query: str) -> None:
     for i, spin in enumerate(response.spins, 1):
         print(f"\nSpin {i}:")
         print(f"  query: {spin.query}")
-        print(f"  branching_opportunity: {spin.branching_opportunity}")
+        print(f"  ui_label: {spin.ui_label}")
 
     print(f"\n[step 1 elapsed: {elapsed:.2f}s]")
 

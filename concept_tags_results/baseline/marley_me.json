@@ -1,0 +1,115 @@
+{
+  "title": "Marley & Me",
+  "year": 2008,
+  "tmdb_id": 14306,
+  "merged": {
+    "narrative_structure": {
+      "tags": []
+    },
+    "plot_archetypes": {
+      "tags": []
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": []
+    },
+    "endings": {
+      "tag": "sad_ending"
+    },
+    "experiential": {
+      "tags": [
+        "tearjerker"
+      ]
+    },
+    "content_flags": {
+      "tags": [
+        "animal_death"
+      ]
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "sad_ending"
+      },
+      "experiential": {
+        "tags": [
+          "tearjerker"
+        ]
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "sad_ending"
+      },
+      "experiential": {
+        "tags": [
+          "tearjerker"
+        ]
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "sad_ending"
+      },
+      "experiential": {
+        "tags": [
+          "tearjerker"
+        ]
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    }
+  ]
+}

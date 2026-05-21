@@ -1368,3 +1368,63 @@ class ConceptTagsOutput(BaseModel):
         if ending_tag.concept_tag_id >= 0:
             ids.add(ending_tag.concept_tag_id)
         return sorted(ids)
+
+
+# ---------------------------------------------------------------------------
+# Legacy payload normalization (shared by every reader of stored metadata)
+# ---------------------------------------------------------------------------
+
+# Maps stored metadata JSON written under older schema shapes onto the
+# current shape. The DB still holds rows written before two known schema
+# changes — both readers in the codebase (the Movie loader for final
+# ingestion, and inputs.load_narrative_techniques_output for the concept
+# tags generator) must apply this before model_validate, or the legacy
+# rows fail to parse and silently appear absent.
+#
+# Known migrations handled here:
+#   1. NarrativeTechniquesOutput / WatchContextOutput: per-section
+#      "justification" was renamed to "evidence_basis" when the prompt
+#      shifted from "explain why" to "cite specific input phrases."
+#      Old rows still carry "justification"; today's schema requires
+#      "evidence_basis" with extra=forbid, so the bare key has to be
+#      renamed in-place.
+#   2. SourceOfInspirationOutput: top-level "source_evidence" and
+#      "lineage_evidence" reasoning fields were dropped from the schema.
+#      Old rows still carry them; today's schema rejects them under
+#      extra=forbid, so they have to be stripped.
+#
+# Add new migrations by appending more branches here — keep them
+# defensive (no-op if the legacy key isn't present) so re-applying to
+# already-normalized payloads is safe.
+def normalize_legacy_metadata_payload(
+    payload: object,
+    schema_class: type[BaseModel],
+) -> object:
+    """Normalize known legacy metadata shapes into the current schema.
+
+    Returns the payload unchanged when it's not a dict or when no
+    legacy shape applies to ``schema_class``. Safe to call on
+    already-normalized payloads — each branch checks for the legacy
+    key before touching anything.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    if schema_class in {NarrativeTechniquesOutput, WatchContextOutput}:
+        normalized_payload = dict(payload)
+        for key, value in normalized_payload.items():
+            if not isinstance(value, dict):
+                continue
+            if "justification" in value and "evidence_basis" not in value:
+                section = dict(value)
+                section["evidence_basis"] = section.pop("justification")
+                normalized_payload[key] = section
+        payload = normalized_payload
+
+    if schema_class is SourceOfInspirationOutput:
+        normalized_payload = dict(payload)
+        normalized_payload.pop("source_evidence", None)
+        normalized_payload.pop("lineage_evidence", None)
+        payload = normalized_payload
+
+    return payload

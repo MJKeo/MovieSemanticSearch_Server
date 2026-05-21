@@ -11,6 +11,10 @@ Utilities:
     - build_custom_id / parse_custom_id — batch request ID formatting
     - load_wave1_outputs — load Wave 1 outputs from tracker DB
     - load_plot_analysis_output — load plot analysis output from tracker DB
+    - load_narrative_techniques_output — load NT output from tracker DB
+    - load_viewer_experience_output — load VE output from tracker DB
+    - extract_narrative_technique_terms — strip justifications from 7 NT
+      sections used by concept_tags
 
 Constants:
     - WAVE1_TYPES, WAVE_INDEPENDENT_TYPES, WAVE2_TYPES, ALL_GENERATION_TYPES
@@ -19,6 +23,7 @@ Constants:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -157,6 +162,11 @@ class Wave1Outputs:
     All fields default to None — callers pick whichever subset they need.
     A single DB query populates all fields, so there's no cost to loading
     fields that a particular Wave 2 generator doesn't use.
+
+    Note: craft_observations is loaded by load_wave1_outputs and consumed
+    by concept_tags (where reviewer craft language is the primary signal
+    for NONLINEAR_TIMELINE, PLOT_TWIST nuance, UNRELIABLE_NARRATOR, and
+    BREAKING_FOURTH_WALL).
     """
     # From plot_events
     plot_summary: str | None = None
@@ -234,8 +244,14 @@ def load_plot_analysis_output(
     Single DB query for the plot_analysis JSON column, parsed into the
     existing schema model. Returns None when plot_analysis wasn't
     generated or can't be parsed.
+
+    Routes the raw JSON through normalize_legacy_metadata_payload so any
+    pre-existing schema migration applies to PlotAnalysisOutput too. No
+    PlotAnalysisOutput-specific legacy shape exists today, so this is a
+    no-op for current data — kept for parity with the NT loader and to
+    stay safe against future renames.
     """
-    from schemas.metadata import PlotAnalysisOutput
+    from schemas.metadata import PlotAnalysisOutput, normalize_legacy_metadata_payload
 
     with sqlite3.connect(str(tracker_db_path)) as db:
         row = db.execute(
@@ -247,7 +263,9 @@ def load_plot_analysis_output(
         return None
 
     try:
-        return PlotAnalysisOutput.model_validate_json(row[0])
+        payload = json.loads(row[0])
+        normalized = normalize_legacy_metadata_payload(payload, PlotAnalysisOutput)
+        return PlotAnalysisOutput.model_validate(normalized)
     except Exception:
         return None
 
@@ -265,8 +283,14 @@ def load_narrative_techniques_output(
     Single DB query for the narrative_techniques JSON column, parsed into
     the existing schema model. Returns None when narrative_techniques wasn't
     generated or can't be parsed.
+
+    Routes the raw JSON through normalize_legacy_metadata_payload so older
+    rows that still carry the "justification" key (renamed to
+    "evidence_basis" in a later schema change) are rewritten in-memory
+    before validation. Without this, every legacy row silently fails to
+    parse and concept_tags loses its NT input signal.
     """
-    from schemas.metadata import NarrativeTechniquesOutput
+    from schemas.metadata import NarrativeTechniquesOutput, normalize_legacy_metadata_payload
 
     with sqlite3.connect(str(tracker_db_path)) as db:
         row = db.execute(
@@ -278,7 +302,9 @@ def load_narrative_techniques_output(
         return None
 
     try:
-        return NarrativeTechniquesOutput.model_validate_json(row[0])
+        payload = json.loads(row[0])
+        normalized = normalize_legacy_metadata_payload(payload, NarrativeTechniquesOutput)
+        return NarrativeTechniquesOutput.model_validate(normalized)
     except Exception:
         return None
 
@@ -286,15 +312,21 @@ def load_narrative_techniques_output(
 def extract_narrative_technique_terms(
     nt,
 ) -> dict[str, list[str]]:
-    """Extract terms (no justifications) from the 6 NT sections concept tags need.
+    """Extract terms (no justifications) from the 7 NT sections concept tags need.
 
     Returns a dict mapping section name -> list of term strings. Sections
     with empty term lists are included with empty lists so the caller can
     distinguish "section had no terms" from "section wasn't available."
 
-    The 3 excluded sections (characterization_methods, character_arcs,
-    conflict_stakes_design) don't carry signal for any of the 27 concept
-    tags — character arcs come from plot_analysis instead.
+    character_arcs is included because its film-language arc labels
+    ("redemption arc", "fall from grace", "moral awakening") disambiguate
+    ANTI_HERO. PlotAnalysis's character_arcs are a different abstraction
+    (thematic transformations); both signals are kept and labeled
+    distinctly in the prompt.
+
+    The 2 excluded sections (characterization_methods,
+    conflict_stakes_design) don't carry signal for any of the 25 concept
+    tags as of this baseline.
 
     Args:
         nt: A NarrativeTechniquesOutput instance. Type hint omitted to
@@ -307,4 +339,44 @@ def extract_narrative_technique_terms(
         "information_control": list(nt.information_control.terms),
         "audience_character_perception": list(nt.audience_character_perception.terms),
         "additional_narrative_devices": list(nt.additional_narrative_devices.terms),
+        "character_arcs": list(nt.character_arcs.terms),
     }
+
+
+# ---------------------------------------------------------------------------
+# Viewer experience output loading for downstream Wave 2 consumers
+# ---------------------------------------------------------------------------
+
+def load_viewer_experience_output(
+    tmdb_id: int,
+    tracker_db_path: Path = _DEFAULT_TRACKER_DB,
+):
+    """Load the parsed viewer_experience output for a movie.
+
+    Single DB query for the viewer_experience JSON column, parsed into
+    the existing schema model. Returns None when viewer_experience wasn't
+    generated or can't be parsed.
+
+    Concept_tags uses this loader to access `ending_aftertaste` — the
+    purpose-built signal for which ending tag (happy / sad / bittersweet /
+    no_clear_choice) the audience actually experiences. Other VE sections
+    are loaded for free as part of the same row but only ending_aftertaste
+    is currently routed into the concept_tags prompt.
+    """
+    from schemas.metadata import ViewerExperienceOutput, normalize_legacy_metadata_payload
+
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        row = db.execute(
+            "SELECT viewer_experience FROM generated_metadata WHERE tmdb_id = ?",
+            (tmdb_id,),
+        ).fetchone()
+
+    if row is None or not row[0]:
+        return None
+
+    try:
+        payload = json.loads(row[0])
+        normalized = normalize_legacy_metadata_payload(payload, ViewerExperienceOutput)
+        return ViewerExperienceOutput.model_validate(normalized)
+    except Exception:
+        return None

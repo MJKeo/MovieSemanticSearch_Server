@@ -1,0 +1,131 @@
+{
+  "title": "Catch Me If You Can",
+  "year": 2002,
+  "tmdb_id": 640,
+  "merged": {
+    "narrative_structure": {
+      "tags": [
+        "nonlinear_timeline"
+      ]
+    },
+    "plot_archetypes": {
+      "tags": [
+        "con_artist"
+      ]
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": [
+        "anti_hero"
+      ]
+    },
+    "endings": {
+      "tag": "happy_ending"
+    },
+    "experiential": {
+      "tags": [
+        "feel_good"
+      ]
+    },
+    "content_flags": {
+      "tags": []
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": [
+          "nonlinear_timeline"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": [
+          "con_artist"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "nonlinear_timeline"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": [
+          "con_artist"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "nonlinear_timeline"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": [
+          "con_artist"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    }
+  ]
+}

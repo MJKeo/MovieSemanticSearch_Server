@@ -1,0 +1,119 @@
+{
+  "title": "Pulp Fiction",
+  "year": 1994,
+  "tmdb_id": 680,
+  "merged": {
+    "narrative_structure": {
+      "tags": [
+        "nonlinear_timeline"
+      ]
+    },
+    "plot_archetypes": {
+      "tags": []
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": [
+        "ensemble_cast",
+        "anti_hero"
+      ]
+    },
+    "endings": {
+      "tag": "no_clear_choice"
+    },
+    "experiential": {
+      "tags": []
+    },
+    "content_flags": {
+      "tags": []
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": [
+          "nonlinear_timeline"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "ensemble_cast",
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "no_clear_choice"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "nonlinear_timeline"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "ensemble_cast",
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "no_clear_choice"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "nonlinear_timeline"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "ensemble_cast",
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "no_clear_choice"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    }
+  ]
+}

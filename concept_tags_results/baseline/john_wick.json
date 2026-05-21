@@ -1,0 +1,123 @@
+{
+  "title": "John Wick",
+  "year": 2014,
+  "tmdb_id": 245891,
+  "merged": {
+    "narrative_structure": {
+      "tags": []
+    },
+    "plot_archetypes": {
+      "tags": [
+        "revenge"
+      ]
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": [
+        "anti_hero"
+      ]
+    },
+    "endings": {
+      "tag": "bittersweet_ending"
+    },
+    "experiential": {
+      "tags": []
+    },
+    "content_flags": {
+      "tags": [
+        "animal_death"
+      ]
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": [
+          "revenge"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": [
+          "revenge"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": [
+          "revenge"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": [
+          "animal_death"
+        ]
+      }
+    }
+  ]
+}

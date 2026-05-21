@@ -358,11 +358,10 @@ def _plan_step2_branches(
     branches: list[tuple[BranchKind, str, str]] = []
 
     # Slot 1 — original-query branch always comes first when the
-    # standard flow fires. Label falls back when Step 1 failed.
-    original_label = (
-        step1.original_query_label if step1 is not None else "Original Query"
-    )
-    branches.append(("original", raw_query, original_label))
+    # standard flow fires. Step 1 no longer emits a label for the
+    # raw query (its output is just the two spins), so the static
+    # "Original Query" string is used in all cases.
+    branches.append(("original", raw_query, "Original Query"))
 
     if step1 is None:
         return branches[:budget]

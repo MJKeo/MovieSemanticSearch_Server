@@ -1,0 +1,109 @@
+{
+  "title": "The Graduate",
+  "year": 1967,
+  "tmdb_id": 37247,
+  "merged": {
+    "narrative_structure": {
+      "tags": [
+        "open_ending"
+      ]
+    },
+    "plot_archetypes": {
+      "tags": []
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": []
+    },
+    "endings": {
+      "tag": "bittersweet_ending"
+    },
+    "experiential": {
+      "tags": []
+    },
+    "content_flags": {
+      "tags": []
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": [
+          "open_ending"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": [
+          "anti_hero"
+        ]
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "open_ending"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": [
+          "open_ending"
+        ]
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    }
+  ]
+}

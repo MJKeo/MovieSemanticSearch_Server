@@ -1,0 +1,115 @@
+{
+  "title": "Star Wars: A New Hope",
+  "year": 1977,
+  "tmdb_id": 11,
+  "merged": {
+    "narrative_structure": {
+      "tags": []
+    },
+    "plot_archetypes": {
+      "tags": [
+        "underdog"
+      ]
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": []
+    },
+    "endings": {
+      "tag": "happy_ending"
+    },
+    "experiential": {
+      "tags": [
+        "feel_good"
+      ]
+    },
+    "content_flags": {
+      "tags": []
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": [
+          "underdog"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": [
+          "underdog"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": [
+          "underdog"
+        ]
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "happy_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    }
+  ]
+}

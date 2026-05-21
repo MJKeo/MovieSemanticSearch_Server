@@ -1,0 +1,101 @@
+{
+  "title": "La La Land",
+  "year": 2016,
+  "tmdb_id": 313369,
+  "merged": {
+    "narrative_structure": {
+      "tags": []
+    },
+    "plot_archetypes": {
+      "tags": []
+    },
+    "settings": {
+      "tags": []
+    },
+    "characters": {
+      "tags": []
+    },
+    "endings": {
+      "tag": "bittersweet_ending"
+    },
+    "experiential": {
+      "tags": []
+    },
+    "content_flags": {
+      "tags": []
+    }
+  },
+  "individual_runs": [
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": []
+      },
+      "content_flags": {
+        "tags": []
+      }
+    },
+    {
+      "narrative_structure": {
+        "tags": []
+      },
+      "plot_archetypes": {
+        "tags": []
+      },
+      "settings": {
+        "tags": []
+      },
+      "characters": {
+        "tags": []
+      },
+      "endings": {
+        "tag": "bittersweet_ending"
+      },
+      "experiential": {
+        "tags": [
+          "feel_good"
+        ]
+      },
+      "content_flags": {
+        "tags": []
+      }
+    }
+  ]
+}

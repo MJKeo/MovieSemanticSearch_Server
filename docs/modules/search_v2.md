@@ -36,10 +36,18 @@ Step 0 (step_0.py): Flow routing
   → Observations-first schema. Runs parallel with Step 1.
 
 Step 1 (step_1.py): Spin generation (standard flow only)
-  → Step1Response: two distinct creative spins + UI labels
+  → Step1Response: an `exploration` scratchpad (2-3 telegraphic
+    sentences) followed by exactly two spins, each with `query` +
+    `ui_label`
   → Runs in parallel with Step 0 on the raw query
-  → Spin scope: narrowing / reinterpretation / adjacent-swap levers
-  → Hard commitments preserved verbatim in spin queries
+  → Freeform: no structured decomposition fields — the model
+    reasons visibly in the `exploration` field and commits to two
+    spins; hidden thinking is disabled (Gemini 3.5 Flash with
+    `thinking_level="minimal"`)
+  → Goal: each spin must produce a visibly different result set
+    from both the original query and the sibling spin; the model is
+    free to drop or replace original-query anchors when keeping them
+    would make every spin collapse onto the same result set
 
 Step 2 (step_2.py): Query analysis (combined holistic read + atomization)
   → QueryAnalysis.intent_exploration — faithful intent read (replaces
@@ -442,7 +450,7 @@ concurrently via `asyncio.gather`.
 | File | Purpose |
 |------|---------|
 | `step_0.py` | Flow routing. `run_step_0()` returns `Step0Response`. Routes to one of seven entity flows plus optional standard co-fire. SimilarityFlowData now carries `list[SimilarityReference]`. |
-| `step_1.py` | Spin generation. `run_step_1()` returns `Step1Response`. Always exactly two spins. |
+| `step_1.py` | Spin generation. `run_step_1()` returns `Step1Response` (an `exploration` scratchpad + `spins`: exactly two `Spin(query, ui_label)`). Gemini 3.5 Flash with `thinking_level="minimal"`. |
 | `step_2.py` | Query analysis. `run_step_2()` returns `QueryAnalysis` (intent_exploration + atoms + traits). Model hard-coded to Gemini Flash (no thinking, temperature 0.35). |
 | `step_3.py` | Trait decomposition. `run_step_3(trait, siblings=None)` returns `TraitDecomposition` (includes trait_restatement + combine_mode). |
 | `run_step_0.py` | CLI runner for step_0. Conditionally invokes entity-flow executors and prints results. |
