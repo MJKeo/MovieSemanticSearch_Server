@@ -62,6 +62,38 @@ SCHEMA_BY_TYPE: dict[MetadataType, type] = {
 }
 
 
+# Maps MetadataType to the ordered list of generated_metadata columns
+# that hold its results. Multi-run types list each column explicitly;
+# the result writer fills them left-to-right picking the first NULL
+# (the per-result run_index from the custom_id is NOT used here — the
+# column choice is purely based on which slots are still open).
+#
+# This map is duplicated from GENERATOR_REGISTRY.result_columns so the
+# result processor doesn't pull in generator modules (prompt builders,
+# LLM callers). Same rationale as SCHEMA_BY_TYPE above. The values must
+# stay in sync with the registry — there's a smoke test that asserts
+# this on import.
+
+COLUMNS_BY_TYPE: dict[MetadataType, list[str]] = {
+    MetadataType.PLOT_EVENTS: ["plot_events"],
+    MetadataType.RECEPTION: ["reception"],
+    MetadataType.PLOT_ANALYSIS: ["plot_analysis"],
+    MetadataType.NARRATIVE_TECHNIQUES: ["narrative_techniques"],
+    MetadataType.PRODUCTION_KEYWORDS: ["production_keywords"],
+    MetadataType.PRODUCTION_TECHNIQUES: ["production_techniques"],
+    MetadataType.FRANCHISE: ["franchise"],
+    MetadataType.SOURCE_OF_INSPIRATION: ["source_of_inspiration"],
+    MetadataType.SOURCE_MATERIAL_V2: ["source_material_v2"],
+    MetadataType.VIEWER_EXPERIENCE: ["viewer_experience"],
+    MetadataType.WATCH_CONTEXT: ["watch_context"],
+    MetadataType.CONCEPT_TAGS: [
+        "concept_tags",
+        "concept_tags_run_2",
+        "concept_tags_run_3",
+    ],
+}
+
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -117,7 +149,11 @@ def process_results(
         for result in results:
             custom_id = result.get("custom_id", "")
             try:
-                metadata_type, tmdb_id = parse_custom_id(custom_id)
+                # run_index is unused at write time — column choice is
+                # "first NULL among result_columns" regardless of which
+                # run produced this response. The index lives in the
+                # custom_id only for OpenAI uniqueness + debug traceability.
+                metadata_type, tmdb_id, _run_index = parse_custom_id(custom_id)
             except (ValueError, IndexError):
                 summary.failed += 1
                 continue
@@ -179,7 +215,7 @@ def process_error_file(
         for error_line in errors:
             custom_id = error_line.get("custom_id", "")
             try:
-                _, tmdb_id = parse_custom_id(custom_id)
+                _, tmdb_id, _ = parse_custom_id(custom_id)
             except (ValueError, IndexError):
                 continue
 
@@ -265,15 +301,57 @@ def _process_single_result(
     # deterministic fixups are persisted.
     content = validated.model_dump_json()
 
-    # Store the JSON content string to the type's column.
-    # Column name from MetadataType StrEnum — fixed values, not user input.
-    result_col = str(metadata_type)
+    # Pick the destination column: for single-result types this is the
+    # one column named after the type; for multi-run types it's the
+    # first NULL slot among the registered result columns. The read-
+    # then-write here is safe because process_results is sequential
+    # (single thread, single connection, single transaction) — see
+    # process_results' docstring.
+    columns = COLUMNS_BY_TYPE.get(metadata_type, [str(metadata_type)])
+    target_col = _pick_target_column(db, tmdb_id, columns)
+    if target_col is None:
+        _record_failure(
+            db, tmdb_id, metadata_type,
+            f"All result columns already filled for type '{metadata_type}': "
+            f"{columns}. Likely a duplicate or stale-batch result; dropped.",
+            batch_id,
+        )
+        summary.failed += 1
+        return False
+
     db.execute(
-        f"UPDATE generated_metadata SET {result_col} = ? WHERE tmdb_id = ?",
+        f"UPDATE generated_metadata SET {target_col} = ? WHERE tmdb_id = ?",
         (content, tmdb_id),
     )
     summary.succeeded += 1
     return True
+
+
+def _pick_target_column(
+    db: sqlite3.Connection,
+    tmdb_id: int,
+    columns: list[str],
+) -> str | None:
+    """Return the first column in `columns` that is currently NULL for tmdb_id.
+
+    Returns None if every column already has a value (caller treats that
+    as a duplicate / stale-batch overflow and drops the result). Column
+    names come from COLUMNS_BY_TYPE — a fixed whitelist, never user input.
+    """
+    row = db.execute(
+        f"SELECT {', '.join(columns)} FROM generated_metadata WHERE tmdb_id = ?",
+        (tmdb_id,),
+    ).fetchone()
+    if row is None:
+        # No generated_metadata row yet — fall back to the first column.
+        # _process_single_result's UPDATE won't actually write anything in
+        # this case (WHERE tmdb_id = ? matches no rows), but returning a
+        # valid column avoids a misleading "all slots full" error.
+        return columns[0]
+    for col, value in zip(columns, row):
+        if value is None:
+            return col
+    return None
 
 
 def _record_failure(

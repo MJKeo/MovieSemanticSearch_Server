@@ -371,3 +371,75 @@ Testing notes: re-ran the 23-movie eval as `concept_tags_results/animal_death_im
 - **Zero new false positives** across the other 19 movies — none had any animal-death plot evidence to trigger TIER 1.
 
 Run-to-run variance on the rest: 12 unrelated tag cells flipped between definition_revision and animal_death_improvement (≈7% of 161 non-animal-death cells), in both directions. These are sampling noise from gpt-5.4-mini @ reasoning_effort=none, not directional effects of the prompt change (which touched only the ANIMAL_DEATH literal). Side-effect-positive flips observed: Star Wars ANTI_HERO false-positive disappeared; The Mist regained SINGLE_LOCATION. Side-effect-negative flips observed: Paddington 2 lost PLOT_TWIST + TWIST_VILLAIN; Inception/Taken lost ANTI_HERO. None of these correlate with the edit.
+
+## Align concept_tags batch config with live generator (gpt-5.4-mini, reasoning_effort=none)
+Files: movie_ingestion/metadata_generation/batch_generation/generator_registry.py
+Why: the registry's CONCEPT_TAGS entry was still pointing at `gpt-5-mini` with `reasoning_effort="minimal"`, but the live generator (`generators/concept_tags.py`) and every recent eval run (gpt_54, pollution_removed, reasoning_fields, definition_revision, animal_death_improvement) have used `gpt-5.4-mini` with `reasoning_effort="none"`. Submitting a batch from this state would silently run a different model + reasoning level than what's been validated. Flipped the registry to match the generator so live and batch paths agree.
+
+## Add concept_tags_run_3 column + multi-run batch pipeline (3 requests per movie, first-NULL ingestion)
+Files: movie_ingestion/tracker.py, movie_ingestion/metadata_generation/inputs.py, movie_ingestion/metadata_generation/batch_generation/generator_registry.py, movie_ingestion/metadata_generation/batch_generation/request_builder.py, movie_ingestion/metadata_generation/batch_generation/result_processor.py, movie_ingestion/metadata_generation/batch_generation/run.py
+
+### Intent
+Make the batch pipeline submit 3 independent calls per movie for concept_tags (sampling-diversity play matching what the eval script has been doing), and store each completed result into the first NULL column among `concept_tags`, `concept_tags_run_2`, `concept_tags_run_3` at ingest time. The downstream consumer can then run `ConceptTagsOutput.majority_merge` across the three columns. Wiring stays generic — any future metadata type can opt in by setting `runs_per_movie > 1` plus an ordered `result_columns` list in its registry entry.
+
+### Key Decisions
+- **`runs_per_movie` + `result_columns` live on `GeneratorConfig`** with a `__post_init__` invariant that the list length must equal `runs_per_movie`. Single-run types default `result_columns = [str(metadata_type)]` so nothing needs to change for them.
+- **Custom_id encodes the run index for OpenAI uniqueness only** — format `{type}_{tmdb_id}_r{N}` for multi-run, legacy `{type}_{tmdb_id}` for single-run. `parse_custom_id` now returns a 3-tuple `(MetadataType, tmdb_id, run_index | None)`; the run_index is preserved through the pipeline but is NOT used to choose a target column. Column choice is purely "first NULL among result_columns" at write time — explicitly decouples submission-side identity from storage layout (matches the user's "save into the first null column available" framing).
+- **Pending-IDs query counts NULL slots per movie** rather than the old "any NULL" filter. SQL uses `SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END)` across the registered result columns and returns `(tmdb_id, n_needed)` pairs. A movie with 2 of 3 slots filled gets exactly 1 new request, not 3. Single-run types collapse to the same query shape with n_needed ∈ {0, 1}.
+- **Result writer reads-then-picks-first-NULL.** Adds `_pick_target_column()` in result_processor.py; on overflow (all slots full) logs to generation_failures and drops the result rather than overwriting. Sequentiality of `process_results` (single thread, single connection, single transaction with periodic commits) is preserved unchanged — this is the user's stated requirement to avoid races on the lookup.
+- **`COLUMNS_BY_TYPE` is duplicated from the registry** in result_processor.py, matching the existing `SCHEMA_BY_TYPE` pattern (rationale: keep result_processor free of generator-module imports / prompt builders / LLM clients). Smoke test asserts the two maps stay in sync.
+- **`metadata_batch_ids.{type}_batch_id` stays a single column.** With all 3 of a movie's requests landing in the same submission, the single-column gate ("is this movie in a pending batch") keeps working. If the 3 requests happen to straddle a batch boundary the latest batch_id wins; the `_clear_batch_id` flow handles this benignly (the "lost" batch_id leaves the gate set until the surviving batch clears, which still blocks duplicate submissions).
+- **`_record_batch_ids` dedupes tmdb_ids** before the executemany so we don't run N identical UPDATEs for each multi-run movie.
+
+### Schema change
+`generated_metadata.concept_tags_run_3 TEXT` column added (DDL + migration entry). Pre-existing `concept_tags` and `concept_tags_run_2` cleared to NULL across all 102,443 rows so the next submit pass produces a clean 3-run set per movie.
+
+### Testing Notes
+- Per project rule, no test files touched. Unit tests that pattern-matched `parse_custom_id` as a 2-tuple (`unit_tests/test_metadata_inputs.py`, `unit_tests/test_request_builder.py`) will need updates when the user runs the suite.
+- Smoke tests verified:
+  - custom_id round-trips for both single-run (`plot_events_12345`) and multi-run (`concept_tags_12345_r2`) shapes, including underscore-in-type-name cases (`source_of_inspiration_42_r3`).
+  - Registry `runs_per_movie`/`result_columns` populated for all 12 types; `COLUMNS_BY_TYPE` in sync with the registry.
+  - Pending-query returns 102,443 movies with n_needed=3 each for concept_tags after the column wipe; returns 0 for plot_events (control — all caught up).
+  - `_pick_target_column` correctly picks concept_tags → concept_tags_run_2 → concept_tags_run_3 → None as slots fill, and falls back to the first column when no row exists yet.
+  - All four batch-pipeline modules import cleanly.
+- Cost: a concept_tags batch run is now 3x its prior cost. Intended.
+- Downstream consumer (`movie_ingestion/final_ingestion/ingest_movie.py`) still reads only `concept_tags`; the majority-merge step across the three columns is the next piece of wiring needed before run-2/run-3 data flows through to Postgres. Flagged as a follow-up.
+
+## Concept tags prompt compression + model switch
+Files: schemas/enums.py, schemas/metadata.py, movie_ingestion/metadata_generation/prompts/concept_tags.py, movie_ingestion/metadata_generation/generators/concept_tags.py, movie_ingestion/metadata_generation/batch_generation/generator_registry.py
+
+### Intent
+Cut fixed per-request token overhead for concept_tags without losing classification detail, and switch to a model variant that does better on the 23-movie eval test set.
+
+### Key Decisions
+- **Prompt compression** rewrites `_TASK`/`_EVIDENCE`/`_INPUTS`/`_OUTPUT` plus all 25 `ConceptTag` enum members (description/selection_criteria/boundary_cases, FEMALE_LEAD long-form) plus the ENDINGS category `section_instructions`/`cross_tag_note`. Per-Field `description=` strings on the 7 Assessment classes in schemas/metadata.py were tightened to 1-2 sentences per the user's "every word costs me money" guidance, and the boilerplate `tags` Field description was extracted to a shared `_TAGS_FIELD_DESCRIPTION` constant so it serializes once into the schema JSON instead of six times.
+- **System prompt: 9,329 → 7,398 tokens (-21%). Schema JSON: 3,437 → 2,585 tokens (-25%). Combined fixed overhead per request: 12,766 → 9,983 (-22%).** Average visible output tokens also dropped 841 → 522 (-38%) under the same prompt as a side effect of the tightened reasoning-field descriptions.
+- **Model switch concept_tags `gpt-5.4-mini` reasoning_effort `none` → `gpt-5-mini` reasoning_effort `minimal`** in both the live generator and the batch registry. Decision driven by side-by-side eval on the 23-movie test set: 5.4-mini-none hit 33/41 required tags (80%), 5-mini-minimal hit 39/41 (95%), 5-mini-low hit 40/41 (98%). `minimal` chosen over `low` as the value-per-dollar inflection point — `low` only added 1 more tag at meaningfully higher reasoning-token cost. `gpt-5-mini` does NOT support `reasoning_effort="none"` (400 error: supported values `minimal | low | medium | high`); `none` is a 5.4-mini-only feature.
+- **Stale docstring at prompts/concept_tags.py:34** that still claimed `reasoning_effort: medium` was fixed as part of this change.
+
+### Planning Context
+Cost driver: user observed $130 for 60K requests on the prior config (20K movies × 3 runs). Anchored estimate for the upcoming 86K-movie pass (258K requests) is ~$525-575 on the new config (compressed prompt + 5-mini-minimal) vs ~$560 on the old config — accuracy gain at near-equivalent cost. Cache savings are not assumed; verifying cache hit rate via `prompt_tokens_details.cached_tokens` (currently dropped by [result_processor.py:258-260](movie_ingestion/metadata_generation/batch_generation/result_processor.py#L258-L260)) is the recommended next step before committing the 258K-request job.
+
+### Testing Notes
+- Eval results in `concept_tags_results/` (baseline_orig, compressed_v1, gpt5mini_minimal, gpt5mini_low) — single 3-run pass each, so the +6 / -0 / +0 per-movie diff at 5-mini-minimal vs 5.4-mini-none is suggestive but not statistically rock-solid; consider 2-3 reps before the full ingestion run.
+- Existing failure clusters resolved by the switch: Pulp Fiction ANTI_HERO + ENSEMBLE_CAST, Taken KIDNAPPING, Get Out TWIST_VILLAIN, Marley & Me ANIMAL_DEATH, 12 Angry Men ENSEMBLE_CAST, Kill Bill CLIFFHANGER_ENDING.
+- New minor over-tags at 5-mini-minimal: PLOT_TWIST on 12 Angry Men, ANTI_HERO on The Graduate; Frozen lost TWIST_VILLAIN; Inception ending flipped HAPPY → NO_CLEAR. Watch for these in the production run.
+- Other generators (production_techniques, franchise) intentionally left on `gpt-5.4-mini` — this change scoped to concept_tags only.
+
+## Backfill movie_card.concept_tag_ids from 3-way concept_tags merge
+Files: movie_ingestion/backfill/backfill_concept_tag_ids.py, movie_ingestion/metadata_generation/concept_tags_merge.py, run_concept_tags_generation.py
+
+Why: `generated_metadata` now holds three independent concept_tags runs per eligible movie; the existing `movie_card.concept_tag_ids` column was written from a single-run output during initial ingestion. ~101K eligible movies have all three runs populated and need their movie_card column rewritten from the majority-vote merge of those runs.
+
+Approach: extracted `majority_merge` + `LIST_CATEGORIES` + `_ASSESSMENT_BY_FIELD` out of `run_concept_tags_generation.py` into a new shared module `movie_ingestion/metadata_generation/concept_tags_merge.py` so the eval script and the new backfill share one source of truth. New backfill script reads the three JSON columns from the SQLite tracker (with an `--limit N` smoke-test flag and `--dry-run` preview), parses each into `ConceptTagsOutput`, merges via `majority_merge`, flattens via the existing `ConceptTagsOutput.all_concept_tag_ids()` helper (already filters NO_CLEAR_CHOICE id=-1), and bulk-writes via COPY-into-temp + UPDATE FROM on a single dedicated pool connection (one TEMP TABLE for the run, TRUNCATE between chunks). Modeled on `movie_ingestion/backfill/backfill_release_format.py` but with a per-row-distinct VALUES join instead of the `WHERE movie_id = ANY(%s)` bucketed pattern, since each movie's merged tag set differs.
+
+Design context: per the approved plan in `~/.claude/plans/write-a-new-python-effervescent-dream.md`. Sort-by-`concept_tag_id` in `majority_merge` + first-run-tiebreak for endings make the merge deterministic, so re-running the backfill on the same tracker state produces byte-identical `concept_tag_ids` arrays (only `updated_at` advances). Parse failures are logged and skipped — one malformed row should not abort 100K-scale work.
+
+Testing notes: smoke imports green via `uv run python -c …`. End-to-end verification: `--dry-run --limit 5` then live `--limit 5` then idempotency re-run, per the plan's verification section. Run `python run_concept_tags_generation.py --test-name post_extract_smoke` and diff against a pre-extraction run to confirm the eval script's output is byte-identical after the majority_merge extraction.
+
+Post-review revisions to the backfill script (per /review-code findings):
+- **Streaming pipeline.** Rewrote `run()` to stream SQLite via `cursor.fetchmany()` and flush a buffer of merged rows when it hits `--chunk-size`, replacing the prior three-phase "load all → merge all → write all" flow. Peak memory now scales with `chunk_size` rather than the full ~101K eligible corpus.
+- **`apply_deterministic_fixups()` on the merged result.** Re-applies the TWIST_VILLAIN → PLOT_TWIST implication + per-list dedup after `majority_merge`. Each individual run is fixed up at generation time, but if any stored run predates the fixup the majority threshold can drop the implied PLOT_TWIST; the call is idempotent and cheap, so we run it unconditionally to match the live generator's contract.
+- **Binary-format COPY.** Switched `COPY ... FROM STDIN` to `WITH (FORMAT BINARY)` so psycopg3's binary array adapter handles `list[int] → int4[]` directly without text-mode `{1,2,3}` literal encoding per row.
+- **`ORDER BY tmdb_id`** on the SQLite query so `--limit N` is reproducible across re-runs while metadata generation is still landing new rows.
+- **Style cleanups.** `Iterator` import moved from `typing` to `collections.abc` (PEP 585, Python 3.13 idiom); dropped the over-defensive `IF NOT EXISTS` on `CREATE TEMP TABLE` since a fresh pool connection never has one.

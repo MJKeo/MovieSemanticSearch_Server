@@ -35,7 +35,6 @@ from movie_ingestion.metadata_generation.inputs import (
     load_wave1_outputs,
     load_plot_analysis_output,
     load_narrative_techniques_output,
-    load_viewer_experience_output,
 )
 
 
@@ -58,6 +57,15 @@ class GeneratorConfig:
             The direct API call function for live/autopilot mode.
         model: OpenAI model name for batch requests.
         model_kwargs: Extra kwargs for batch requests (e.g. reasoning_effort).
+        runs_per_movie: How many independent batch requests to submit per
+            movie. Default 1. Set >1 for sampling-diversity types where
+            multiple independent runs are merged downstream (e.g.
+            concept_tags uses 3 + majority vote across runs).
+        result_columns: Ordered list of generated_metadata columns that
+            hold this type's results. Default [str(metadata_type)] (single
+            column matching the type name). Multi-run types list each
+            column explicitly; the result writer fills them left-to-right
+            picking the first NULL.
     """
     metadata_type: MetadataType
     schema_class: type[BaseModel]
@@ -66,6 +74,22 @@ class GeneratorConfig:
     live_generator: Callable[..., Awaitable[Any]]
     model: str
     model_kwargs: dict = field(default_factory=dict)
+    runs_per_movie: int = 1
+    result_columns: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Default result_columns to a single column named after the type
+        # so single-run types don't need to specify it explicitly.
+        if not self.result_columns:
+            self.result_columns = [str(self.metadata_type)]
+        # Invariant: a multi-run type must have one column per run.
+        if len(self.result_columns) != self.runs_per_movie:
+            raise ValueError(
+                f"GeneratorConfig for {self.metadata_type}: "
+                f"runs_per_movie={self.runs_per_movie} but "
+                f"result_columns has {len(self.result_columns)} entries; "
+                "they must match."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -408,11 +432,12 @@ def _concept_tags_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     """Adapter for concept_tags — loads Wave 1 + Wave 2 outputs and builds prompts.
 
     Loads plot_summary + emotional_observations + craft_observations from
-    Wave 1, plus narrative_techniques, plot_analysis, and viewer_experience
-    from Wave 2. craft_observations and viewer_experience.ending_aftertaste
-    were added post-baseline to address NONLINEAR_TIMELINE / craft-tag misses
-    and ending classification failures, respectively. Missing outputs are
-    passed as None — the generator handles "not available" formatting.
+    Wave 1, plus narrative_techniques and plot_analysis from Wave 2.
+    viewer_experience was removed after the reasoning-fields eval showed
+    its ending_aftertaste field contaminated BITTERSWEET classification
+    (see "Remove contaminated upstream inputs" DIFF_CONTEXT entry).
+    Missing outputs are passed as None — the generator handles
+    "not available" formatting.
     """
     from ..generators.concept_tags import build_concept_tags_user_prompt
     from ..prompts.concept_tags import SYSTEM_PROMPT
@@ -420,7 +445,6 @@ def _concept_tags_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     w1 = load_wave1_outputs(movie.tmdb_id)
     nt = load_narrative_techniques_output(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
-    ve = load_viewer_experience_output(movie.tmdb_id)
     return build_concept_tags_user_prompt(
         movie,
         w1.plot_summary,
@@ -428,7 +452,6 @@ def _concept_tags_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
         nt,
         pa,
         craft_observations=w1.craft_observations,
-        ve_output=ve,
     ), SYSTEM_PROMPT
 
 
@@ -439,7 +462,6 @@ async def _concept_tags_live_generator(movie: MovieInputData):
     w1 = load_wave1_outputs(movie.tmdb_id)
     nt = load_narrative_techniques_output(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
-    ve = load_viewer_experience_output(movie.tmdb_id)
     return await generate_concept_tags(
         movie,
         w1.plot_summary,
@@ -447,7 +469,6 @@ async def _concept_tags_live_generator(movie: MovieInputData):
         nt,
         pa,
         craft_observations=w1.craft_observations,
-        ve_output=ve,
     )
 
 
@@ -590,6 +611,14 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             live_generator=_concept_tags_live_generator,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+            # 3 independent runs per movie — sampling diversity feeds the
+            # downstream majority_merge across the three result columns.
+            runs_per_movie=3,
+            result_columns=[
+                "concept_tags",
+                "concept_tags_run_2",
+                "concept_tags_run_3",
+            ],
         ),
     }
 

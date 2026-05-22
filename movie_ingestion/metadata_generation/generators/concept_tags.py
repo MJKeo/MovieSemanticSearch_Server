@@ -44,7 +44,7 @@ Skip condition (enforced by pre_consolidation):
     - best_plot_fallback() >= 250 chars
     - plot_keywords >= 3
 
-Provider/model: OpenAI gpt-5.4-mini, reasoning_effort: none, verbosity: low.
+Provider/model: OpenAI gpt-5-mini, reasoning_effort: minimal, verbosity: low.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 GENERATION_TYPE = MetadataType.CONCEPT_TAGS
 
 _PROVIDER = LLMProvider.OPENAI
-_MODEL = "gpt-5.4-mini"
+_MODEL = "gpt-5-mini"
 
 
 def _format_narrative_technique_terms(
@@ -261,7 +261,7 @@ async def generate_concept_tags(
     calls the LLM with the binary classification prompt, and returns the
     parsed result alongside token usage.
 
-    Uses gpt-5.4-mini with reasoning effort 'none' and low verbosity.
+    Uses gpt-5-mini with reasoning effort 'minimal' and low verbosity.
 
     Args:
         movie: Raw movie input data from the ingestion pipeline.
@@ -277,7 +277,7 @@ async def generate_concept_tags(
             storytelling craft from Wave 1 reception. None when reception
             was skipped or had no craft content.
         timeout: Optional per-attempt LLM timeout in seconds. Concept
-            tags runs gpt-5.4-mini with reasoning effort 'none' over a
+            tags runs gpt-5-mini with reasoning effort 'minimal' over a
             heavy multi-section prompt, so wall time routinely exceeds
             the router default. Callers that fan out many concurrent
             runs (e.g. the eval script) should pass a higher value to
@@ -309,7 +309,7 @@ async def generate_concept_tags(
             system_prompt=SYSTEM_PROMPT,
             response_format=ConceptTagsOutput,
             model=_MODEL,
-            reasoning_effort="none",
+            reasoning_effort="minimal",
             verbosity="low",
             timeout=timeout,
         )

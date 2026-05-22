@@ -31,27 +31,19 @@ import json
 import re
 import sqlite3
 import time
-from collections import Counter
 from pathlib import Path
 
 from concept_tags_test_movies import CONCEPT_TAGS_TEST_MOVIES
+from movie_ingestion.metadata_generation.concept_tags_merge import majority_merge
 from movie_ingestion.metadata_generation.generators.concept_tags import (
     generate_concept_tags,
 )
-from schemas.enums import ConceptTagCategory, EndingTag
 from schemas.metadata import (
-    CharacterAssessment,
     ConceptTagsOutput,
-    ContentFlagAssessment,
-    EndingAssessment,
-    ExperientialAssessment,
-    NarrativeStructureAssessment,
     NarrativeTechniquesOutput,
     PlotAnalysisOutput,
-    PlotArchetypeAssessment,
     PlotEventsOutput,
     ReceptionOutput,
-    SettingAssessment,
     normalize_legacy_metadata_payload,
 )
 from schemas.movie_input import MovieInputData
@@ -70,27 +62,6 @@ NUM_RUNS_PER_MOVIE = 3
 # ceiling because fanning out ~24 movies × 3 runs = ~72 concurrent calls
 # inflates tail latency above the router default (25s).
 LLM_TIMEOUT_SECONDS = 60.0
-
-# (field_name, AssessmentCls) pairs for the list-typed categories.
-# Derived from ConceptTagCategory (the single source of truth for which
-# categories exist and which are multi-label vs one-of) — adding a new
-# multi-label category to that enum auto-propagates here. Endings is the
-# only one-of category and is excluded from this list; majority_merge()
-# handles it separately as a mode vote on a single tag value.
-_ASSESSMENT_BY_FIELD: dict[str, type] = {
-    "narrative_structure": NarrativeStructureAssessment,
-    "plot_archetypes":     PlotArchetypeAssessment,
-    "settings":            SettingAssessment,
-    "characters":          CharacterAssessment,
-    "experiential":        ExperientialAssessment,
-    "content_flags":       ContentFlagAssessment,
-}
-LIST_CATEGORIES: list[tuple[str, type]] = [
-    (cat.field_name, _ASSESSMENT_BY_FIELD[cat.field_name])
-    for cat in ConceptTagCategory
-    if cat.cardinality == "multi"
-]
-
 
 # ---------------------------------------------------------------------------
 # Single-query data loader
@@ -253,71 +224,6 @@ def fetch_all_movie_data(
         )
 
     return result
-
-
-# ---------------------------------------------------------------------------
-# Majority-vote merge
-# ---------------------------------------------------------------------------
-
-def majority_merge(outputs: list[ConceptTagsOutput]) -> ConceptTagsOutput:
-    """Merge N ConceptTagsOutputs via majority rules.
-
-    For each list-typed category, a tag joins the merged set iff at least
-    ceil(N/2 + epsilon) runs include it — i.e. a strict majority. For N=3
-    this is 2-of-3 (matches the user spec: include when 2 or 3 have it,
-    exclude when 2 or 3 do not).
-
-    For the single-value endings category, the merged tag is the mode of
-    the N votes; on a tie, the first run's vote wins (deterministic).
-    """
-    if not outputs:
-        raise ValueError("majority_merge requires at least one output")
-
-    threshold = (len(outputs) // 2) + 1  # strict majority: 2 of 3, 2 of 2, 3 of 5
-
-    merged_kwargs: dict = {}
-
-    # Helper: concatenate the per-run reasoning strings for a given
-    # category into a single audit-trail string. The merged assessment
-    # is a programmatic synthesis (majority vote), so its reasoning is
-    # the joined reasoning of the underlying runs — useful for debugging
-    # disagreements and visible in saved JSON.
-    def _join_reasoning(field_name: str) -> str:
-        parts = [
-            f"[Run {i + 1}] {getattr(out, field_name).reasoning}"
-            for i, out in enumerate(outputs)
-        ]
-        return "\n\n".join(parts)
-
-    # List-typed categories
-    for field_name, assessment_cls in LIST_CATEGORIES:
-        counter: Counter = Counter()
-        for out in outputs:
-            for tag in getattr(out, field_name).tags:
-                counter[tag] += 1
-        majority_tags = [tag for tag, count in counter.items() if count >= threshold]
-        # Sort by concept_tag_id for stable deterministic output
-        majority_tags.sort(key=lambda t: t.concept_tag_id)
-        merged_kwargs[field_name] = assessment_cls(
-            reasoning=_join_reasoning(field_name),
-            tags=majority_tags,
-        )
-
-    # Endings — mode vote, first-run tiebreaker
-    ending_counter = Counter(out.endings.tag for out in outputs)
-    max_count = max(ending_counter.values())
-    top_candidates = [tag for tag, count in ending_counter.items() if count == max_count]
-    if len(top_candidates) == 1:
-        chosen_ending = top_candidates[0]
-    else:
-        first_run_ending = outputs[0].endings.tag
-        chosen_ending = first_run_ending if first_run_ending in top_candidates else top_candidates[0]
-    merged_kwargs["endings"] = EndingAssessment(
-        reasoning=_join_reasoning("endings"),
-        tag=chosen_ending,
-    )
-
-    return ConceptTagsOutput(**merged_kwargs)
 
 
 # ---------------------------------------------------------------------------

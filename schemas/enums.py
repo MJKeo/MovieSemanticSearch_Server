@@ -292,19 +292,17 @@ class ConceptTagCategory(str, Enum):
         "NarrativeStructureTag",
         None,
         (
-            "OPEN_ENDING and CLIFFHANGER_ENDING describe HOW the story ends, "
-            "not how it FEELS. They coexist with the emotional ENDINGS tags "
-            "below. A cliffhanger that leaves the audience devastated still "
-            "gets a SAD_ENDING tag. An open ending that leaves audiences "
-            "feeling warm still gets a HAPPY_ENDING tag. Evaluate both this "
-            "section and the ENDINGS section independently."
+            "OPEN_ENDING and CLIFFHANGER_ENDING describe HOW the story ends, not how it FEELS — "
+            "they coexist with the emotional ENDINGS tags below. A devastating cliffhanger still "
+            "tags SAD_ENDING; a warm open ending still tags HAPPY_ENDING. Evaluate both sections "
+            "independently."
         ),
     )
     PLOT_ARCHETYPES = (
         "plot_archetypes",
         "PLOT ARCHETYPES",
-        "the central premise or driving force. A tag applies when the "
-        "concept IS the movie, not just an element in the plot",
+        "the central premise / driving force. Tag applies when the concept IS the movie, "
+        "not just an element in the plot",
         "multi",
         "plot_archetypes",
         "PlotArchetypeTag",
@@ -328,83 +326,53 @@ class ConceptTagCategory(str, Enum):
     ENDINGS = (
         "endings",
         "ENDINGS",
-        "how the audience FEELS when the credits roll. Exactly one tag "
-        "per movie (including no_clear_choice)",
+        "how the audience FEELS when credits roll. Exactly one tag (including no_clear_choice)",
         "one_of",
         "endings",
         "EndingTag",
         # section_instructions: the endings HOW-TO block, paraphrased.
         (
-            "HOW TO THINK THROUGH THIS CATEGORY — work through these steps "
-            "internally before selecting a tag:\n"
+            "HOW TO THINK THROUGH THIS CATEGORY — work the steps before selecting:\n"
             "\n"
-            "BASE RATES (apply BEFORE looking at evidence): HAPPY_ENDING is "
-            "the empirically dominant tag and the correct default for the "
-            "majority of narrative film, including films with substantial "
-            "cost-along-the-way. SAD_ENDING is common for tragedies and "
-            "downer endings. BITTERSWEET_ENDING is UNCOMMON — most films "
-            "with mixed elements still land clearly on HAPPY or SAD. "
-            "NO_CLEAR_CHOICE is reserved for genuinely contemplative or "
-            "existential endings that fit none of the three. Do not treat "
-            "the four tags as equal-probability options.\n"
+            "BASE RATES (apply FIRST): HAPPY is the empirically dominant default for most "
+            "narrative film including ones with substantial cost-along-the-way. SAD is common "
+            "for tragedies/downer endings. BITTERSWEET is UNCOMMON — mixed elements usually "
+            "still land clearly on HAPPY or SAD. NO_CLEAR_CHOICE is for genuinely contemplative/"
+            "existential endings that fit none. Not equal-probability options.\n"
             "\n"
-            "1. The CLOSING SCENE test (PRIMARY): Identify the literal "
-            "final scene before credits from plot_summary. If it is a "
-            "recognized celebration beat — a triumphant kiss, a family "
-            "reunion hug, a threat-defeated cheer, a platform-raise, a "
-            "mountaintop / sunrise / restored shot — tag HAPPY_ENDING "
-            "regardless of what was lost during the runtime. If it is a "
-            "beat of loss, defeat, or grief (a funeral, a destroyed home, "
-            "a protagonist alone in ruin) with no upswing → SAD_ENDING. "
-            "Bittersweet endings tend to close on a quiet, contemplative "
-            "beat (an unspoken moment, a long look, a what-might-have-been "
-            "montage) where joy and sorrow sit together unresolved.\n"
+            "1. CLOSING SCENE (PRIMARY): identify the literal final scene before credits from "
+            "plot_summary. Celebration beat (triumphant kiss, reunion hug, threat-defeated cheer, "
+            "platform-raise, mountaintop/sunrise/restored shot) → HAPPY regardless of runtime cost. "
+            "Loss/defeat/grief beat (funeral, destroyed home, protagonist alone in ruin) with no "
+            "upswing → SAD. Quiet contemplative beat (unspoken moment, long look, "
+            "what-might-have-been montage) with joy+sorrow unresolved → BITTERSWEET candidate.\n"
             "\n"
-            "2. emotional_observations (whole-movie audience reactions): "
-            "Filter for language about how audiences felt AS THE FILM "
-            "ENDS, not journey-level emotion. Map:\n"
-            "   - \"uplifting\", \"satisfying\", \"triumphant\", \"warm closure\", \"feel-good\", \"earned\", \"hard-won\", \"achievement at a cost\", \"sacrifice rewarded\" → HAPPY_ENDING. Cost-and-victory framing is HAPPY, not bittersweet.\n"
-            "   - \"devastating\", \"tragic\", \"heartbreaking\", \"bleak finale\", \"crushing\", \"unrelenting loss\" → SAD_ENDING.\n"
-            "   - explicit \"audiences leave with mixed feelings they cannot resolve\", \"a knot despite the win\", \"genuinely torn\", \"unable to celebrate fully\" → BITTERSWEET_ENDING. The bar is HIGH: audiences must affirmatively say they cannot land on HAPPY OR SAD.\n"
-            "   - \"ambiguous\", \"contemplative\", \"open to interpretation\", existential / philosophical reactions without clear valence → NO_CLEAR_CHOICE.\n"
-            "Filter out journey-level emotions (\"tense\", \"frightening\", \"dark\") that describe the runtime experience but not the ending.\n"
+            "2. emotional_observations — filter for ENDING language, not journey-level:\n"
+            "   - 'uplifting' / 'satisfying' / 'triumphant' / 'warm closure' / 'feel-good' / 'earned' / 'hard-won' / 'achievement at a cost' / 'sacrifice rewarded' → HAPPY (cost+victory IS happy, not bittersweet).\n"
+            "   - 'devastating' / 'tragic' / 'heartbreaking' / 'bleak finale' / 'crushing' / 'unrelenting loss' → SAD.\n"
+            "   - explicit 'mixed feelings audiences cannot resolve' / 'knot despite the win' / 'genuinely torn' / 'unable to celebrate fully' → BITTERSWEET (HIGH bar; must affirm cannot land on HAPPY or SAD).\n"
+            "   - 'ambiguous' / 'contemplative' / 'open to interpretation' / existential without valence → NO_CLEAR_CHOICE.\n"
+            "Discard runtime emotions ('tense', 'frightening', 'dark') that don't describe the ending.\n"
             "\n"
-            "3. Final state of affairs from plot_summary: where do the "
-            "characters stand at the close — what has been gained, lost, "
-            "or left unresolved? Treat this as factual evidence to be "
-            "reconciled with the closing-scene beat, NOT as a direct "
-            "emotion verdict. A protagonist who survived a horror movie "
-            "with the threat defeated is HAPPY even though they suffered.\n"
+            "3. Final state from plot_summary — what's gained/lost/unresolved? Factual evidence "
+            "to reconcile with closing scene, NOT a direct verdict. Horror survived + threat "
+            "defeated = HAPPY despite suffering.\n"
             "\n"
-            "4. Ending-related plot_keywords: any keywords that directly "
-            "signal ending type (\"happy ending\", \"tragic ending\", "
-            "\"twist ending\").\n"
+            "4. Ending plot_keywords ('happy ending', 'tragic ending', 'twist ending').\n"
             "\n"
-            "DEFAULT RULES: When the evidence is ambiguous between HAPPY "
-            "and BITTERSWEET, default to HAPPY — bittersweet has a higher "
-            "bar and requires that the audience genuinely cannot decide "
-            "between HAPPY and SAD. When the evidence is ambiguous between "
-            "SAD and BITTERSWEET, default to SAD for the same reason. Pick "
-            "BITTERSWEET only when you can affirmatively defend that "
-            "NEITHER HAPPY NOR SAD would be a reasonable alternative.\n"
+            "DEFAULTS: ambiguous HAPPY-vs-BITTERSWEET → HAPPY. ambiguous SAD-vs-BITTERSWEET → SAD. "
+            "Pick BITTERSWEET only when neither HAPPY nor SAD is a defensible alternative.\n"
             "\n"
-            "Structural ambiguity about WHAT happened (an ending where the "
-            "reality of events is left open) is NOT the same as emotional "
-            "ambiguity about HOW the audience felt — if the closing scene "
-            "is warm/positive, tag HAPPY_ENDING even when the plot leaves "
-            "a structural question open."
+            "Structural ambiguity about WHAT happened ≠ emotional ambiguity. Warm closing scene → "
+            "HAPPY even if the plot leaves a structural question open."
         ),
         # cross_tag_note: structural-vs-emotional independence note.
         (
-            "The ending tag captures the AUDIENCE'S emotional experience at the "
-            "end of the film — not a factual ledger of what went right vs wrong "
-            "in the plot. A protagonist who dies saving others may leave "
-            "audiences feeling devastated (sad), triumphant (happy), or "
-            "genuinely torn (bittersweet) — the plot outcome alone does not "
-            "determine the tag. These tags are independent of OPEN_ENDING and "
-            "CLIFFHANGER_ENDING above (which describe narrative structure, not "
-            "emotion). Always evaluate this section even when you tagged "
-            "OPEN_ENDING or CLIFFHANGER_ENDING."
+            "Captures the AUDIENCE'S emotional experience at credits, not a factual ledger of "
+            "plot outcomes. A protagonist dying to save others may leave audiences devastated "
+            "(sad), triumphant (happy), or torn (bittersweet) — outcome alone doesn't determine "
+            "the tag. Independent of OPEN_ENDING / CLIFFHANGER_ENDING above (structural, not "
+            "emotional); always evaluate even when you tagged those."
         ),
     )
     EXPERIENTIAL = (
@@ -423,6 +391,7 @@ class ConceptTagCategory(str, Enum):
         "content_flags",
         "ContentFlagTag",
     )
+    # (Already terse — no edits.)
 
 
 # Master concept tag enum — single source of truth for tag metadata.
@@ -478,217 +447,154 @@ class ConceptTag(str, Enum):
         "plot_twist",
         1,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "A surprise revelation recontextualizes events the audience has "
-        "already seen. The audience must have formed one understanding that "
-        "the reveal overturns.",
-        "Look at information_control narrative_technique_terms for twist / "
-        "reversal / hidden-truth labels; plot_keywords for \"surprise ending\" "
-        "or \"plot twist\"; plot_summary for explicit late reveals that reframe "
-        "prior scenes; craft_observations where reviewers describe twists, "
-        "rug-pulls, or third-act reveals.",
-        "Any surprise or unexpected event without recontextualization of prior "
-        "scenes; a late-act betrayal that the audience could see coming from "
-        "setup; new information that adds to the story but does not change "
-        "prior understanding; tragic irony at the ending where nothing earlier "
-        "in the film is reinterpreted; sequel-setup reveals that introduce new "
-        "questions rather than overturning past ones; structural ambiguity at "
-        "the end of the film about what is real (that is OPEN_ENDING, not a "
-        "recontextualizing twist).",
+        "A surprise revelation recontextualizes events the audience has already seen. "
+        "The audience must have formed an understanding the reveal overturns.",
+        "information_control NT terms (twist/reversal/hidden-truth); plot_keywords "
+        "'surprise ending'/'plot twist'; plot_summary explicit late reveals reframing prior "
+        "scenes; craft_observations describing twists/rug-pulls/third-act reveals.",
+        "Any surprise without recontextualization of prior scenes; foreshadowed late betrayal; "
+        "new info that adds but doesn't change prior understanding; final-act tragic irony "
+        "with nothing earlier reinterpreted; sequel-setup reveals raising new questions rather "
+        "than overturning past ones; end-of-film structural ambiguity about what's real "
+        "(→ OPEN_ENDING, not a recontextualizing twist).",
     )
 
     TWIST_VILLAIN = (
         "twist_villain",
         2,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "A character is presented to the audience as good, trustworthy, "
-        "neutral, or allied to the protagonist for a substantial portion of "
-        "the film, and is then revealed late to be the (or a) primary "
-        "antagonist. The moral category flip — good/ally to villain — is "
-        "the surprise; the audience's earlier belief in the character's "
-        "side is what gets overturned. Auto-implies PLOT_TWIST.",
-        "Look at information_control terms describing a hidden antagonist, "
-        "false ally, or betrayal reveal; plot_summary phrasings indicating "
-        "a character was revealed to have been the villain all along, was "
-        "secretly orchestrating events the protagonist was working against, "
-        "or was a hidden mastermind behind the conflict; craft_observations "
-        "where reviewers describe the antagonist reveal as the craft moment. "
-        "The signal must indicate that the audience's prior read of the "
-        "character was wrong about their alignment, not just about their "
-        "motives.",
-        "A character that the audience knew from the start was a villain, "
-        "even if the depth or true scope of their evil is revealed later "
-        "(motivation depth is not category flip); a villain whose plan is "
-        "more elaborate or surprising than expected, but whose villainy "
-        "itself was never in doubt; a character who is suspicious or "
-        "sinister-coded from the first act, even if confirmation comes "
-        "late; a protagonist's psychological alter-ego, split personality, "
-        "or hallucination revealed late (closer to UNRELIABLE_NARRATOR than "
-        "to category-flip villainy); a known antagonist whose true methods "
-        "are revealed later. The audience must have genuinely believed the "
-        "character was on the protagonist's side, neutral, or good — "
-        "surprising-evil-motivation alone is not enough.",
+        "A character presented as good/trustworthy/neutral/allied for a substantial portion of "
+        "the film is revealed late to be a primary antagonist. The moral-category FLIP (good/ally "
+        "→ villain) is the surprise. Auto-implies PLOT_TWIST.",
+        "information_control terms for hidden antagonist / false ally / betrayal reveal; "
+        "plot_summary phrasings like 'villain all along', 'secretly orchestrating', 'hidden "
+        "mastermind'; craft_observations citing the antagonist reveal as a craft moment. The "
+        "signal must overturn ALIGNMENT, not just motives.",
+        "Known villain whose evil's depth/scope is later revealed (motivation depth ≠ category "
+        "flip); villain whose plan is more elaborate than expected but whose villainy was never "
+        "in doubt; suspicious/sinister-coded from act one even if confirmation is late; "
+        "protagonist's psychological alter-ego / split-personality / hallucination revealed late "
+        "(→ UNRELIABLE_NARRATOR territory); known antagonist whose methods are revealed later. "
+        "Surprising-evil-motivation alone is not enough — the audience must have genuinely "
+        "believed the character was on the protagonist's side, neutral, or good.",
     )
 
     TIME_LOOP = (
         "time_loop",
         3,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "Characters relive the same time period repeatedly as the central "
-        "premise. Distinct from time travel.",
-        "Look at narrative_delivery terms for \"time loop\" or \"reliving\"; "
-        "plot_keywords for \"time loop\" directly; plot_summary for explicit "
-        "re-living language such as a character waking to the same day "
-        "repeatedly.",
-        "Time travel where the protagonist visits different periods (distinct "
-        "concept); a single repeated scene used as a flashback; dream "
-        "sequences that recur without claiming temporal repetition; cyclical "
-        "themes or visual repetition without literal relived time.",
+        "Characters relive the same time period repeatedly as the central premise. "
+        "Distinct from time travel.",
+        "narrative_delivery terms 'time loop'/'reliving'; plot_keywords 'time loop' directly; "
+        "plot_summary explicit re-living language (waking to the same day repeatedly).",
+        "Time travel visiting different periods (distinct concept); single repeated scene used "
+        "as flashback; recurring dream sequences without claimed temporal repetition; cyclical "
+        "themes / visual repetition without literally relived time.",
     )
 
     NONLINEAR_TIMELINE = (
         "nonlinear_timeline",
         4,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "Non-chronological structure is a defining identity of the film. The "
-        "audience reconstructs the timeline from deliberately scrambled "
-        "pieces.",
-        "Look at narrative_delivery terms for \"nonlinear\" or \"fragmented "
-        "timeline\"; plot_keywords for \"nonlinear timeline\"; plot_summary "
-        "structure showing deliberate chapter-shuffling; craft_observations "
-        "where reviewers describe the film as \"told in chapters\", \"moves "
-        "between timelines\", or \"non-linearly structured\".",
-        "Occasional flashbacks within an otherwise chronological main "
-        "narrative; a single framing device or prologue placed out of order; "
-        "a flash-forward cold open with the remainder of the film "
-        "chronological; epistolary or anthology structure that nonetheless "
-        "proceeds chronologically within and across segments.",
+        "Non-chronological structure is a DEFINING identity of the film. The audience "
+        "reconstructs the timeline from deliberately scrambled pieces.",
+        "narrative_delivery terms 'nonlinear'/'fragmented timeline'; plot_keywords 'nonlinear "
+        "timeline'; plot_summary structure showing deliberate chapter-shuffling; "
+        "craft_observations like 'told in chapters', 'moves between timelines', "
+        "'non-linearly structured'.",
+        "Occasional flashbacks inside an otherwise chronological narrative; single framing "
+        "device / prologue out of order; flash-forward cold open with the rest chronological; "
+        "epistolary / anthology structures that proceed chronologically within and across segments.",
     )
 
     UNRELIABLE_NARRATOR = (
         "unreliable_narrator",
         5,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "The narrator or POV character's account is later revealed to the "
-        "AUDIENCE as distorted or fabricated. Trust with the audience is "
-        "broken — not just between characters.",
-        "Look at pov_perspective terms for \"unreliable narrator\" or "
-        "\"subjective POV\"; plot_summary for explicit revelation that prior "
-        "shown material was distorted; craft_observations where reviewers "
-        "flag unreliable narration as a craft choice.",
-        "A character who lies to other characters but where the audience sees "
-        "the truth (that is deception, not unreliable narration); a character "
-        "who hallucinates unless the film presents the hallucinations as "
-        "reality to the audience and then reveals the distortion; flashbacks "
-        "shown from a character's biased perspective without an in-film "
-        "reveal that those flashbacks were wrong.",
+        "The narrator/POV character's account is later revealed to the AUDIENCE as distorted "
+        "or fabricated. Trust with the audience is broken — not just between characters.",
+        "pov_perspective terms 'unreliable narrator'/'subjective POV'; plot_summary explicit "
+        "revelation that prior shown material was distorted; craft_observations flagging "
+        "unreliable narration as a craft choice.",
+        "Character lies to other characters but the audience sees the truth (= deception, not "
+        "unreliable narration); hallucinations unless the film presents them as reality then "
+        "reveals the distortion; flashbacks shown from a biased perspective without an in-film "
+        "reveal that the flashbacks were wrong.",
     )
 
     OPEN_ENDING = (
         "open_ending",
         6,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "The story completes its narrative arc but deliberately leaves its "
-        "CENTRAL THEMATIC QUESTION — what the movie was about — ambiguous. "
-        "Discriminating question: did the film resolve the main conflict "
-        "it posed about its protagonists? If YES, do not tag OPEN_ENDING "
-        "regardless of any lingering side details or franchise hooks. "
-        "Audiences should be debating what the film MEANS, not what comes "
-        "next.",
-        "Look at plot_keywords for \"ambiguous ending\"; plot_summary for a "
-        "final beat that intentionally avoids resolution of the central "
-        "question; emotional_observations for \"ambiguous\", \"lingering "
-        "question\", \"audiences debate\"; craft_observations for "
-        "reviewer descriptions of intentional ambiguity at the close. "
-        "Apply the resolution test: name the central conflict the film "
-        "posed in act one (protagonist's goal, central mystery, central "
-        "relationship), then ask whether the film resolved it. Only tag "
-        "OPEN_ENDING when the answer is genuinely ambiguous.",
-        "A sequel setup with an unresolved main conflict (that is "
-        "CLIFFHANGER_ENDING, not OPEN); a franchise-hook coda, post-credits "
-        "tease, or universe-continues epilogue — if the central conflict "
-        "of THIS film is resolved, the tag does not apply regardless of "
-        "whether the franchise continues; a horror ending where the threat "
-        "is contained but evil-still-exists framing remains (the central "
-        "haunting/possession/menace was resolved); unanswered side "
-        "questions when the central conflict has been resolved; an ending "
-        "that is emotionally unsatisfying but narratively clear; an ending "
-        "where the protagonist's fate is uncertain in detail but the "
-        "film's main question has been answered.",
+        "Story completes its arc but deliberately leaves its CENTRAL THEMATIC QUESTION "
+        "ambiguous. Discriminating test: did the film resolve the main conflict it posed about "
+        "its protagonists? If YES, do not tag — regardless of side details or franchise hooks. "
+        "Audiences should debate what the film MEANS, not what comes next.",
+        "plot_keywords 'ambiguous ending'; plot_summary final beat that intentionally avoids "
+        "central-question resolution; emotional_observations 'ambiguous'/'lingering question'/"
+        "'audiences debate'; craft_observations describing intentional ambiguity at close. "
+        "Resolution test: name the act-one central conflict (goal/mystery/relationship), then "
+        "ask whether the film resolved it. Tag only when genuinely ambiguous.",
+        "Sequel setup with unresolved main conflict (→ CLIFFHANGER_ENDING); franchise-hook coda / "
+        "post-credits tease / universe-continues epilogue when THIS film's central conflict is "
+        "resolved (franchise continuation is irrelevant); horror ending where the central threat "
+        "is contained even if 'evil still exists' lingers (central haunting/possession resolved); "
+        "unanswered side questions with the central conflict resolved; ending that is emotionally "
+        "unsatisfying but narratively clear; protagonist's fate uncertain in detail but film's "
+        "main question answered.",
     )
 
     SINGLE_LOCATION = (
         "single_location",
         7,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "Nearly all action takes place in one physical location. The spatial "
-        "constraint is a defining feature of the film's identity.",
-        "Look at plot_summary to count distinct locations and assess whether "
-        "the spatial constraint is the film's identity; identity-level "
-        "descriptors such as \"bottle movie\" or \"one-room drama\" in "
-        "craft_observations or related fields.",
-        "A film set mostly in one building but with significant scenes "
-        "elsewhere; a film that uses one location heavily but also includes "
-        "another substantial setting; a haunted-location premise where "
-        "characters also travel elsewhere; episodic films that revisit the "
-        "same location across acts without committing to it as the entire "
-        "setting.",
+        "Nearly all action in one physical location. The spatial constraint is a defining "
+        "feature of the film's identity.",
+        "plot_summary — count distinct locations and judge whether the constraint is identity-"
+        "level; craft_observations descriptors like 'bottle movie' / 'one-room drama'.",
+        "Mostly one building but significant scenes elsewhere; one location used heavily plus "
+        "another substantial setting; haunted-location premise where characters also travel "
+        "elsewhere; episodic films revisiting the same location across acts without committing "
+        "to it as the entire setting.",
     )
 
     BREAKING_FOURTH_WALL = (
         "breaking_fourth_wall",
         8,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "Characters directly address the audience or acknowledge they are in "
-        "a movie. A notable, deliberate, recurring stylistic choice.",
-        "Look at additional_narrative_devices terms for \"fourth wall break\" "
-        "or \"direct address\"; plot_keywords for \"breaking the fourth wall\"; "
-        "craft_observations where reviewers single out direct camera address "
-        "as a craft choice.",
-        "Voiceover narration where the character tells their story without "
-        "acknowledging the audience or the camera; documentary-style "
-        "interviews; songs that comment on the action unless characters "
-        "explicitly address viewers; a single brief in-joke aside that is "
-        "not a recurring stylistic device.",
+        "Characters directly address the audience or acknowledge they're in a movie. A "
+        "notable, deliberate, recurring stylistic choice.",
+        "additional_narrative_devices terms 'fourth wall break'/'direct address'; plot_keywords "
+        "'breaking the fourth wall'; craft_observations singling out direct camera address as a "
+        "craft choice.",
+        "Voiceover narration without acknowledging audience or camera; documentary-style "
+        "interviews; songs commenting on action unless characters explicitly address viewers; "
+        "a single brief in-joke aside that is not recurring.",
     )
 
     CLIFFHANGER_ENDING = (
         "cliffhanger_ending",
         9,
         ConceptTagCategory.NARRATIVE_STRUCTURE,
-        "The central conflict is INTENTIONALLY unresolved at credits as "
-        "deliberate setup for a planned followup film — the story stops "
-        "mid-arc on purpose to leave the audience on the edge of their "
-        "seat between installments. Cliffhanger is about intentionality: "
-        "the film knowingly defers resolution to a next chapter that "
-        "audiences are expected to wait for. Distinct from OPEN_ENDING "
-        "(completed arc with thematic ambiguity) and from films that "
-        "happen to be part of a series but stand as complete arcs.",
-        "Look at plot_summary for a closing beat where the central "
-        "conflict is left unresolved AND continuation is signaled (an "
-        "antagonist mid-victory, a protagonist mid-action, an explicit "
-        "to-be-continued beat); plot_keywords for explicit cliffhanger "
-        "framings; emotional_observations and craft_observations / "
-        "reviewer commentary for how audiences and reviewers DESCRIBED "
-        "the ending — language about being left hanging, demanding the "
-        "next installment, deliberate sequel setup, or being left on "
-        "the edge of one's seat between films; release context where "
-        "the film is known to be one of a planned series AND reviewers "
-        "frame the ending as deliberate setup for that next "
-        "installment. The intentionality must be evident: the film must "
-        "have chosen to stop mid-arc as part of a planned continuation.",
-        "A satisfying resolution where a villain happens to survive or a "
-        "sequel later becomes possible (resolution is still achieved); "
-        "central conflict resolved even when side threads remain open; "
-        "thematic ambiguity at the end without an unresolved plot "
-        "question (that is OPEN_ENDING) — an ambiguous ending where the "
-        "audience debates what HAPPENED but the film itself does not "
-        "promise a continuation that answers it is NOT a cliffhanger; a "
-        "film that is part of a series but where the individual film "
-        "stands as a complete arc — being one of a series alone does "
-        "NOT qualify; a sequel that exists only because the first film "
-        "was successful but where the first film was written as "
-        "standalone; plot holes, structural ambiguity, or open "
-        "interpretations that are not deliberate sequel setup.",
+        "Central conflict INTENTIONALLY unresolved at credits as deliberate setup for a planned "
+        "followup — the film stops mid-arc on purpose, deferring resolution to a next chapter "
+        "audiences are expected to wait for. Intentionality is the test. Distinct from OPEN_ENDING "
+        "(completed arc + thematic ambiguity) and from series films that stand as complete arcs.",
+        "plot_summary closing beat where central conflict is unresolved AND continuation is "
+        "signaled (antagonist mid-victory, protagonist mid-action, explicit to-be-continued); "
+        "plot_keywords explicit cliffhanger framings; emotional_observations + craft_observations / "
+        "reviewer commentary describing 'left hanging' / 'demanding the next installment' / "
+        "'deliberate sequel setup' / 'edge of seat between films'; release context — known planned "
+        "series AND reviewers framing the ending as deliberate setup. Intentionality must be evident: "
+        "the film must have chosen to stop mid-arc as part of a planned continuation.",
+        "Satisfying resolution where a villain happens to survive or a sequel later becomes "
+        "possible (resolution still achieved); central conflict resolved with side threads open; "
+        "thematic ambiguity at the end without an unresolved plot question (→ OPEN_ENDING) — "
+        "audiences debating what HAPPENED without the film promising continuation isn't a "
+        "cliffhanger; part of a series but the individual film stands as a complete arc (series "
+        "membership alone doesn't qualify); sequel that exists only because the first film was "
+        "successful but the first was written standalone; plot holes / structural ambiguity / "
+        "open interpretations that are not deliberate sequel setup.",
     )
 
     # -- Plot Archetypes (IDs 11-14) -------------------------------------
@@ -697,102 +603,71 @@ class ConceptTag(str, Enum):
         "revenge",
         11,
         ConceptTagCategory.PLOT_ARCHETYPES,
-        "Vengeance is the primary narrative engine. The protagonist's central "
-        "goal throughout the film is to get revenge.",
-        "Look at plot_keywords for \"revenge\" directly; conflict_type for "
-        "vengeance-driven framings; plot_summary where the protagonist's "
-        "stated goal involves \"make them pay\"; elevator_pitch describing "
-        "the central plot engine; thematic_concepts naming \"vengeance\" or "
-        "\"retribution\" as central themes.",
-        "A rescue mission motivated by anger or loss (the goal is rescue, not "
-        "vengeance); a character seeking justice through legal means; a "
-        "subplot of retaliation within a different main plot; a single act "
-        "of revenge as the inciting incident for a story that then becomes "
-        "about something else.",
+        "Vengeance is the primary narrative engine; the protagonist's central goal throughout "
+        "is revenge.",
+        "plot_keywords 'revenge' directly; conflict_type vengeance-driven framings; plot_summary "
+        "where the protagonist's stated goal is 'make them pay'; thematic_concepts naming "
+        "'vengeance'/'retribution' as central.",
+        "Rescue mission motivated by anger/loss (goal is rescue, not vengeance); justice via "
+        "legal means; retaliation subplot inside a different main plot; one act of revenge as "
+        "inciting incident for a story that becomes about something else.",
     )
 
     UNDERDOG = (
         "underdog",
         12,
         ConceptTagCategory.PLOT_ARCHETYPES,
-        "A narrative where the protagonist — or the side or group they "
-        "belong to — is structurally weaker than the force they face "
-        "(in resources, numbers, status, ability, social power, or "
-        "perceived prospects), AND the central dramatic question the "
-        "film is built around is whether they can prevail against that "
-        "disadvantage. The improbable-victory question must be what the "
-        "story is asking. Setting-level asymmetry qualifies when the "
-        "protagonist belongs to the disadvantaged side and the film's "
-        "core arc is their improbable rise; setting-level asymmetry does "
-        "NOT qualify when the film is using that asymmetry as backdrop "
-        "for a different central question (escape, survival, "
-        "investigation, relationship, revelation).",
-        "Look at narrative_archetype terms describing an outmatched "
-        "protagonist rising, an against-the-odds story, or an improbable "
-        "triumph; plot_keywords naming the protagonist or their faction "
-        "as outclassed, outgunned, outnumbered, or improbable; "
-        "plot_summary framing where the structural disadvantage is "
-        "explicitly cited as the central dramatic stake (the weaker side "
-        "named as such and the film's tension hinging on whether they "
-        "can prevail); thematic_concepts describing rise-from-disadvantage "
-        "or David-vs-Goliath dynamics; conflict_type and "
-        "conflict_stakes_design framings that place asymmetric power at "
-        "the center of the conflict as the driving question. The "
-        "asymmetry must align with the film's central question being "
-        "'can the weaker side prevail?' — power imbalance present in the "
-        "world without being the film's central question does not "
-        "qualify.",
-        "A protagonist who faces a stronger adversary but whose competence "
-        "makes the outcome merely uncertain rather than improbable; a "
-        "story where the protagonist confronts a more powerful threat "
-        "but the central dramatic question is escape, survival, "
-        "revelation, recovery, or revenge — not 'can the weaker side "
-        "rise and win?'; a power asymmetry that exists as world-building "
-        "or backdrop but where the film's main story is something else "
-        "(an investigation, a relationship, a horror escape, an identity "
-        "reveal); a lone dissenter in an intellectual disagreement; any "
-        "conflict where one side has more power, unless the film frames "
-        "the improbable-victory question as the central story it is "
-        "telling.",
+        "Protagonist (or their side/group) is structurally weaker than the opposing force "
+        "(resources, numbers, status, ability, social power, perceived prospects) AND the "
+        "film's CENTRAL DRAMATIC QUESTION is whether they can prevail. Setting-level asymmetry "
+        "qualifies only when the protagonist belongs to the weaker side AND the film's core arc "
+        "is their improbable rise; it does NOT qualify when the asymmetry is backdrop for a "
+        "different central question (escape, survival, investigation, relationship, revelation).",
+        "narrative_archetype terms about outmatched-protagonist rising / against-the-odds / "
+        "improbable triumph; plot_keywords naming protagonist or faction as outclassed/outgunned/"
+        "outnumbered/improbable; plot_summary framing where the structural disadvantage is the "
+        "central dramatic stake (weaker side named as such; tension hinges on whether they prevail); "
+        "thematic_concepts describing rise-from-disadvantage / David-vs-Goliath; conflict_type + "
+        "conflict_stakes_design placing asymmetric power at the center of the conflict. The "
+        "asymmetry must align with 'can the weaker side prevail?' as the film's central question — "
+        "world-level power imbalance without that being the central question does not qualify.",
+        "Protagonist faces a stronger adversary but competence makes the outcome merely uncertain "
+        "rather than improbable; protagonist confronts a more powerful threat but the central "
+        "question is escape/survival/revelation/recovery/revenge (NOT 'can the weaker side rise?'); "
+        "power asymmetry as world-building/backdrop while the main story is an investigation, "
+        "relationship, horror escape, or identity reveal; lone dissenter in an intellectual "
+        "disagreement; any conflict with power imbalance unless the improbable-victory question "
+        "IS the central story.",
     )
 
     KIDNAPPING = (
         "kidnapping",
         13,
         ConceptTagCategory.PLOT_ARCHETYPES,
-        "A kidnapping or abduction IS the central plot. The movie is about "
-        "the abduction event itself and its direct consequences (rescue, "
-        "escape, ransom).",
-        "Look at plot_keywords for \"kidnapping\" or \"abduction\"; "
-        "plot_summary showing the kidnapping as both the inciting incident "
-        "AND an ongoing plot driver; parental_guide_items category "
-        "\"Abduction\" or \"Kidnapping\" at non-trivial severity "
-        "(corroborating, but only tag when plot_summary also centers the "
-        "abduction as the plot's engine).",
-        "Imprisonment as backstory motivating a different main plot (e.g. "
-        "revenge); captives serving as the premise for a different central "
-        "plot (a chase or escape that is itself the story) — the abduction "
-        "is incidental scaffolding; supernatural capture or imprisonment by "
-        "non-human forces; a brief capture that is one event among many in a "
-        "larger story; a kidnapping that occurs but is resolved early as "
-        "setup for a different central engine.",
+        "A kidnapping/abduction IS the central plot — the movie is about the abduction event "
+        "itself and its direct consequences (rescue, escape, ransom).",
+        "plot_keywords 'kidnapping'/'abduction'; plot_summary showing the kidnapping as BOTH the "
+        "inciting incident AND an ongoing plot driver; parental_guide_items 'Abduction'/"
+        "'Kidnapping' at non-trivial severity (corroborating, but only tag when plot_summary "
+        "centers the abduction as the engine).",
+        "Imprisonment as backstory motivating a different main plot (e.g. revenge); captives as "
+        "premise for a different central plot (a chase/escape that IS the story — abduction is "
+        "incidental scaffolding); supernatural capture or imprisonment by non-human forces; brief "
+        "capture as one event among many; kidnapping resolved early as setup for a different engine.",
     )
 
     CON_ARTIST = (
         "con_artist",
         14,
         ConceptTagCategory.PLOT_ARCHETYPES,
-        "The protagonist is a con artist, grifter, or scammer. The movie is "
-        "about deception as a craft. Distinct from heist (theft/robbery).",
-        "Look at plot_keywords for \"con artist\" or \"grifter\"; "
-        "plot_summary showing a deception-driven plot with con artistry as "
-        "the protagonist's mode; thematic_concepts naming \"deception as "
-        "craft\" or \"art of the con\" as central themes.",
-        "A character who lies or manipulates for personal revenge or "
-        "survival; a villain who deceives others while the protagonist plays "
-        "a different role; a character who runs a single con as part of a "
-        "larger non-con plot; a heist or theft story where the crime is "
-        "property-taking rather than identity-deception.",
+        "Protagonist is a con artist / grifter / scammer; the movie is about deception as a "
+        "craft. Distinct from heist (theft/robbery).",
+        "plot_keywords 'con artist'/'grifter'; plot_summary deception-driven plot with con "
+        "artistry as the protagonist's mode; thematic_concepts naming 'deception as craft' / "
+        "'art of the con' as central.",
+        "Character lies/manipulates for personal revenge or survival; villain deceives while "
+        "the protagonist plays a different role; single con inside a larger non-con plot; "
+        "heist/theft where the crime is property-taking rather than identity-deception.",
     )
 
     # -- Settings (IDs 21-23) --------------------------------------------
@@ -801,46 +676,38 @@ class ConceptTag(str, Enum):
         "post_apocalyptic",
         21,
         ConceptTagCategory.SETTINGS,
-        "Set after civilization's collapse. Society has fallen.",
-        "Look at plot_keywords for \"post apocalypse\"; plot_summary "
-        "establishing a collapsed-civilization setting as the world the "
-        "story operates in.",
-        "Dystopian settings where society is intact but oppressive (distinct "
-        "concept); science fiction set on other planets or in space that did "
-        "not arise from Earth's collapse; a localized disaster that has not "
-        "toppled civilization; near-future societies under stress but still "
-        "functioning.",
+        "Set after civilization's collapse — society has fallen.",
+        "plot_keywords 'post apocalypse'; plot_summary establishing a collapsed-civilization "
+        "setting as the world the story operates in.",
+        "Dystopia where society is intact-but-oppressive (distinct); sci-fi on other planets / "
+        "in space not arising from Earth's collapse; localized disaster that hasn't toppled "
+        "civilization; near-future stressed-but-functioning societies.",
     )
 
     HAUNTED_LOCATION = (
         "haunted_location",
         22,
         ConceptTagCategory.SETTINGS,
-        "The story centers on a supernaturally haunted location. That place "
-        "IS the anchor of the haunting.",
-        "Look at plot_keywords for \"haunted house\" or named haunted places; "
-        "plot_summary anchoring supernatural events to a specific location "
-        "as the locus of the haunting.",
-        "Broader supernatural horror involving possessions, curses, or mobile "
-        "ghosts that follow characters; a scary location that is not "
-        "supernaturally haunted; a place of historical suffering without "
-        "supernatural haunting tied to it; entities whose haunting moves "
-        "with characters rather than being tied to a place.",
+        "Story centers on a supernaturally haunted location — that place IS the haunting's anchor.",
+        "plot_keywords 'haunted house' or named haunted places; plot_summary anchoring "
+        "supernatural events to a specific location as the locus of the haunting.",
+        "Broader supernatural horror (possessions, curses, mobile ghosts following characters); "
+        "scary non-supernaturally-haunted location; place of historical suffering without "
+        "supernatural haunting tied to it; entities whose haunting moves with characters rather "
+        "than the place.",
     )
 
     SMALL_TOWN = (
         "small_town",
         23,
         ConceptTagCategory.SETTINGS,
-        "The small-town setting is central to the film's identity and "
-        "atmosphere. The story feels inseparable from its small-town context.",
-        "Look at plot_keywords for \"small town\" directly; plot_summary "
-        "explicitly naming the small-town setting and depending on it for "
-        "atmosphere, community dynamics, or thematic weight.",
-        "A film set in a rural area that is not a town; a film where the "
-        "small-town setting is incidental backdrop and the story could happen "
-        "anywhere; a city suburb; a film that mentions a town's name without "
-        "the town's character mattering to the plot.",
+        "Small-town setting is central to the film's identity and atmosphere — the story feels "
+        "inseparable from its small-town context.",
+        "plot_keywords 'small town' directly; plot_summary explicitly naming the small-town "
+        "setting and depending on it for atmosphere, community dynamics, or thematic weight.",
+        "Rural area that's not a town; small-town setting as incidental backdrop where the story "
+        "could happen anywhere; city suburb; mentions a town's name without the town's character "
+        "mattering to the plot.",
     )
 
     # -- Characters (IDs 31-33) ------------------------------------------
@@ -849,155 +716,95 @@ class ConceptTag(str, Enum):
         "female_lead",
         31,
         ConceptTagCategory.CHARACTERS,
-        "Every lead role in the film is held by a female character. This "
-        "covers both a single female sole protagonist AND an all-female "
-        "lead group (two female co-leads, a female trio, a female "
-        "ensemble). The disqualifier is the presence of any male "
-        "character in a lead role — a male sole protagonist, any "
-        "male-and-female co-lead pairing, or any ensemble that includes "
-        "male leads. Female supporting characters in a male-led story do "
-        "not qualify.",
-        "Identify the LEAD ROLE(S) of the film from plot_summary (whose "
-        "decisions drive the plot, whose arc(s) form the spine of the "
-        "story). Use top_billed_cast as corroborating evidence — the top "
-        "slots typically correspond to the lead role(s). Then determine "
-        "the gender of EACH lead role from named characters, pronouns in "
-        "plot_summary, plot_keywords, and elevator_pitch / "
-        "character_arcs[].reasoning where the lead(s) are named. Tag "
-        "FEMALE_LEAD when every lead role — whether one or many — is "
-        "held by a female character.",
-        "Any film where at least one lead role is held by a male "
-        "character: a male sole protagonist; a mixed-gender duo or trio "
-        "of co-leads; an ensemble that includes any male leads alongside "
-        "female ones; a male-led story with a prominent female "
-        "supporting character (love interest, family member, mentor, "
-        "sidekick, antagonist) who is not herself a lead; a female POV "
-        "character in a story whose decision-driving lead is male; any "
-        "case where the top-billed actor is male and the plot does not "
-        "unambiguously center a different all-female lead structure.",
+        "EVERY lead role in the film is held by a female character. Covers a single female sole "
+        "protagonist OR an all-female lead group (co-leads / trio / ensemble). Disqualifier: any "
+        "male character in a lead role — male sole protagonist, mixed-gender co-leads, ensemble "
+        "with any male leads. Female supporting characters in a male-led story do NOT qualify.",
+        "Identify lead role(s) from plot_summary (whose decisions drive the plot, whose arc(s) "
+        "form the spine). top_billed_cast corroborates — top slots typically = lead role(s). "
+        "Determine each lead's gender from named characters + pronouns in plot_summary, plus "
+        "plot_keywords. Tag only when EVERY lead — one or many — is female.",
+        "Any film with at least one male lead: male sole protagonist; mixed-gender duo/trio of "
+        "co-leads; ensemble including any male leads alongside female; male-led story with a "
+        "prominent female SUPPORTING character (love interest, family, mentor, sidekick, "
+        "antagonist) not herself a lead; female POV character whose decision-driving lead is "
+        "male; top-billed actor is male and plot doesn't unambiguously center a different "
+        "all-female lead structure.",
         # long_form_instructions: 3-step reasoning block.
-        "This tag covers TWO patterns: a single female protagonist, OR "
-        "an all-female lead group (two co-leads, a trio, a larger "
-        "ensemble of leads). The disqualifier is the presence of ANY "
-        "male character in a lead role. Reason through this tag in "
-        "three explicit steps:\n"
+        "Two patterns qualify: single female protagonist OR all-female lead group (co-leads / "
+        "trio / ensemble). Disqualifier: ANY male lead role.\n"
         "\n"
-        "STEP 1 — Identify the LEAD ROLE(S) of the movie.\n"
-        "Read the plot_summary and ask: whose decisions and "
-        "transformation drive the movie? Is there ONE single core "
-        "protagonist whose arc IS the story? Or are there TWO OR MORE "
-        "co-leads / ensemble members whose storylines together form the "
-        "spine of the film? Either pattern can qualify. Use "
-        "top_billed_cast as corroborating evidence — the top slots "
-        "typically correspond to the lead role(s), though plot_summary "
-        "is the primary source. Be explicit about exactly which "
-        "characters constitute the lead role(s).\n"
+        "STEP 1 — Identify lead role(s). From plot_summary: whose decisions and transformation "
+        "drive the movie? ONE core protagonist whose arc IS the story, OR 2+ co-leads/ensemble "
+        "members whose storylines together form the spine? Either qualifies. top_billed_cast "
+        "corroborates (top slots typically = lead roles) but plot_summary is primary. Name the "
+        "specific characters that constitute the lead role(s).\n"
         "\n"
-        "STEP 2 — Determine the gender of EACH lead role.\n"
-        "For each lead identified in step 1, determine their gender from "
-        "named characters and pronouns in plot_summary, plus "
-        "plot_keywords. State each lead and their gender explicitly.\n"
+        "STEP 2 — Determine each lead's gender from named characters, plot_summary pronouns, "
+        "and plot_keywords. State each lead + gender explicitly.\n"
         "\n"
-        "STEP 3 — Apply the all-female test.\n"
-        "If EVERY lead role is held by a female character (one woman "
-        "alone, two women as co-leads, three or more women as an "
-        "ensemble), tag FEMALE_LEAD. If ANY lead role is held by a male "
-        "character — a male sole protagonist, a mixed-gender duo or "
-        "trio, an ensemble that contains any male leads — do NOT tag, "
-        "even if a prominent female character is among the leads. If "
-        "gender cannot be determined with high confidence for any lead "
-        "role, do not tag.",
+        "STEP 3 — All-female test. If every lead is female (one alone, co-leads, or 3+ "
+        "ensemble), tag. If any lead is male — male sole protagonist, mixed-gender duo/trio, "
+        "ensemble containing any male leads — do NOT tag, even with a prominent female lead "
+        "among them. If any lead's gender can't be determined with high confidence, do not tag.",
     )
 
     ENSEMBLE_CAST = (
         "ensemble_cast",
         32,
         ConceptTagCategory.CHARACTERS,
-        "An ensemble film has NO SINGLE PROTAGONIST — the story IS the "
-        "group's collective arc, or an event the group all reacts to. "
-        "Three or more decision-driving protagonists share roughly equal "
-        "weight in screen time, plot agency, and arc development. "
-        "Discriminating question (apply BEFORE counting named characters): "
-        "if you removed any ONE of the candidates' storylines, would the "
-        "film still be a recognizable, complete movie? If yes → it is NOT "
-        "an ensemble; that character was support, not co-lead. Only tag "
-        "ENSEMBLE_CAST when removing any candidate would fundamentally "
-        "collapse the film.",
-        "Apply the removal test FIRST — name each candidate, then ask "
-        "whether the film survives their removal. Only after the removal "
-        "test passes, corroborate with: pov_perspective terms for "
-        "\"multiple POVs\" or \"rotating POV\"; plot_summary showing three "
-        "or more characters with independent intertwined arcs of "
-        "comparable importance; character_arcs[].reasoning naming multiple "
-        "developed protagonists; characterization_methods terms describing "
-        "ensemble work. A long top_billed_cast list is a WEAK signal — "
-        "five named slots is normal for any film with a developed "
-        "supporting cast; do not infer ensemble from cast size alone.",
-        "The HERO-WITH-ALLIES PATTERN — a single protagonist surrounded by "
-        "a developed supporting cast (mentor, romantic interest, comic "
-        "relief, sidekick, rival, antagonist) — is NOT ensemble even when "
-        "those supporting characters are individually beloved, "
-        "well-developed, and famously named. The protagonist's journey is "
-        "the film's spine; everyone else is in orbit. A protagonist with "
-        "several important supporting characters; parallel plotlines where "
-        "one character's arc is clearly primary; exactly two co-leads of "
-        "equal weight (ensemble requires three or more decision-driving "
-        "protagonists); a long character list with one clear lead. A long "
-        "plot_summary naming many characters does not by itself make the "
-        "film an ensemble — count whose DECISIONS drive the plot forward, "
-        "not how many are named.",
+        "NO single protagonist — the story IS the group's collective arc or an event the group "
+        "reacts to. 3+ decision-driving protagonists share roughly equal weight in screen time, "
+        "agency, and arc development. Discriminating test (apply FIRST): if you removed any ONE "
+        "candidate's storyline, would the film still be a recognizable complete movie? If yes → "
+        "NOT ensemble (that character was support). Only tag when removing any candidate would "
+        "fundamentally collapse the film.",
+        "Apply removal test FIRST — name each candidate, then ask whether the film survives their "
+        "removal. After passing, corroborate with: pov_perspective terms 'multiple POVs'/"
+        "'rotating POV'; plot_summary showing 3+ characters with independent intertwined arcs of "
+        "comparable importance; character_arcs[].reasoning naming multiple developed protagonists; "
+        "characterization_methods terms for ensemble work. Long top_billed_cast is a WEAK signal — "
+        "five slots is normal for any film with a developed supporting cast; do NOT infer ensemble "
+        "from cast size alone.",
+        "HERO-WITH-ALLIES — single protagonist surrounded by developed supporting cast (mentor, "
+        "love interest, comic relief, sidekick, rival, antagonist) — is NOT ensemble even when "
+        "supports are beloved, well-developed, and famously named. The protagonist's journey is "
+        "the spine; everyone else orbits. Protagonist with several important supports; parallel "
+        "plotlines with one clearly primary; exactly two co-leads of equal weight (ensemble needs "
+        "3+); long character list with one clear lead. A long plot_summary naming many characters "
+        "does NOT make a film ensemble — count whose DECISIONS drive the plot, not how many are named.",
     )
 
     ANTI_HERO = (
         "anti_hero",
         33,
         ConceptTagCategory.CHARACTERS,
-        "The protagonist is presented as operating outside conventional "
-        "morality as a defining character trait. Substantive moral "
-        "boundary-crossing — criminal acts, violence, exploitation, or "
-        "vigilantism — is or HAS BEEN their primary mode of operating for "
-        "a meaningful portion of the runtime, not a single extreme choice "
-        "made under duress. A redemption arc does NOT disqualify: a "
-        "character originally presented as an anti-hero who later finds "
-        "their way still counts — the original anti-heroism is what the "
-        "film is about. The discriminating question: if you described "
-        "this protagonist to someone in one sentence, would \"morally "
-        "compromised\", \"criminal\", or \"outlaw\" be central to that "
-        "sentence — either as their current mode, or as the starting "
-        "point the story departs from?",
-        "Derive ANTI_HERO from raw behavior described in plot_summary, "
-        "NOT from pre-classified upstream labels. Primary sources: "
-        "plot_summary (does the protagonist actually OPERATE as an "
-        "anti-hero for a substantive portion of the runtime — criminal "
-        "acts, exploitation, vigilantism as default mode at any point in "
-        "the story? Or principled action with rough edges throughout?); "
-        "character_arc_labels from plot_analysis (an arc transformation "
-        "FROM a morally compromised starting point INTO a moral end-state "
-        "still indicates the character WAS an anti-hero for a meaningful "
-        "portion of the runtime — redemption arcs still qualify); "
-        "conflict_type (is the protagonist's stance structurally outside "
-        "conventional morality, at least for a meaningful portion of the "
-        "story?); plot_keywords for explicit anti-hero framings. For "
-        "ENSEMBLE films with multiple decision-driving protagonists, "
-        "evaluate each storyline's protagonist independently — if ANY ONE "
-        "of them operates substantively as an anti-hero across a "
-        "meaningful portion of the runtime, the film qualifies.",
-        "A flawed but fundamentally moral character who does the right "
-        "thing throughout — being morally compromised must be a "
-        "substantive operating mode at some point in the film, not "
-        "merely a personality flaw or rough edges. A single act of "
-        "extreme moral consequence under impossible duress (a parent "
-        "making a tragic mercy choice, a survivor killing to save others "
-        "in a life-or-death situation, a non-criminal protagonist driven "
-        "to violence by an extraordinary event) does NOT make a "
-        "character an anti-hero if their operating mode across the rest "
-        "of the film is fundamentally moral. A parent on a rescue "
-        "mission acts morally regardless of methods; a character "
-        "described as \"rebellious\" or \"rule-breaking\" without "
-        "substantive moral transgression; a minor-rule-breaking teen or "
-        "adolescent. The test is whether substantive anti-heroic "
-        "operation occupies a meaningful portion of the runtime — "
-        "whether or not the arc ends in redemption.",
+        "Protagonist is presented as operating outside conventional morality as a DEFINING "
+        "trait. Substantive moral boundary-crossing — criminal acts, violence, exploitation, "
+        "vigilantism — is or HAS BEEN their primary mode for a meaningful portion of the "
+        "runtime, not a single extreme choice under duress. Redemption arcs do NOT disqualify "
+        "— original anti-heroism is what the film is about. Discriminating test: in a one-"
+        "sentence description, would 'morally compromised'/'criminal'/'outlaw' be central — "
+        "either current mode or starting point the story departs from?",
+        "Derive from raw behavior in plot_summary, NOT pre-classified upstream labels. Primary: "
+        "plot_summary (does the protagonist OPERATE as an anti-hero — criminal acts, "
+        "exploitation, vigilantism as default at any point — or principled action with rough "
+        "edges throughout?); character_arc_labels from plot_analysis (a transformation FROM a "
+        "morally compromised start INTO a moral end-state still indicates anti-hero earlier — "
+        "redemption arcs qualify); conflict_type (is the protagonist's stance structurally "
+        "outside conventional morality for a meaningful portion?); plot_keywords explicit "
+        "anti-hero framings. For ENSEMBLE films, evaluate each decision-driving protagonist "
+        "independently — if ANY ONE operates substantively as anti-hero across a meaningful "
+        "portion, the film qualifies.",
+        "Flawed-but-fundamentally-moral character who does the right thing throughout — moral "
+        "compromise must be a substantive operating mode at some point, not just rough edges. "
+        "A SINGLE act of extreme moral consequence under impossible duress (parent's tragic "
+        "mercy choice, survivor killing to save others, non-criminal driven to violence by an "
+        "extraordinary event) does NOT qualify if the rest of the runtime is fundamentally "
+        "moral. Parent on a rescue mission acts morally regardless of methods; character "
+        "described as 'rebellious'/'rule-breaking' without substantive moral transgression; "
+        "minor-rule-breaking teen. Test: does substantive anti-heroic operation occupy a "
+        "meaningful portion of the runtime — redemption arc or no.",
     )
 
     # -- Endings (IDs 41-43, plus classification-only NO_CLEAR_CHOICE=-1) -
@@ -1006,127 +813,89 @@ class ConceptTag(str, Enum):
         "happy_ending",
         41,
         ConceptTagCategory.ENDINGS,
-        "Audience leaves feeling positive — satisfaction, relief, triumph, "
-        "or warmth. This is the EMPIRICALLY DOMINANT ending type for "
-        "narrative film: most genre cinema (romance, action, adventure, "
-        "family, comedy, superhero, horror-with-survival, sports films) "
-        "lands here, including films whose protagonists pay substantial "
-        "costs along the way. A hard-won victory IS happy. Cost-along-the-"
-        "way is the standard structure of a satisfying happy ending, not "
-        "a disqualifier.",
-        "Look at the literal CLOSING SCENE in plot_summary — if it is a "
-        "recognized celebration beat (a triumphant kiss, a family reunion "
-        "hug, a threat-defeated cheer, a protagonist-restored shot, a "
-        "platform-raise / mountaintop moment, a smiling embrace), the "
-        "ending is HAPPY regardless of what was lost during the runtime. "
-        "Look at emotional_observations for \"uplifting\", \"satisfying\", "
-        "\"triumphant\", \"warm closure\", \"earned\", \"hard-won\", "
-        "\"achievement at a cost\" (this last phrase signals happy with "
-        "sacrifice, NOT bittersweet); plot_summary for the final beat at "
-        "credits and the characters' end-state; plot_keywords for \"happy "
-        "ending\". Surviving a horror story and defeating the threat is "
-        "happy when the protagonists are safe and the danger is over. "
-        "When evidence is ambiguous between HAPPY and BITTERSWEET, default "
-        "to HAPPY — bittersweet is the rarer, higher-bar tag.",
-        "Merely surviving a horrific ordeal without positive feeling — the "
-        "audience feels relief but not triumph or warmth; a victory that "
-        "feels hollow or Pyrrhic to the audience where the cost has "
-        "overwhelmed the win; a film with a positive plot outcome that "
-        "lands flat or empty because of accumulated grief; an ending where "
-        "the protagonists win on paper but the audience leaves devastated "
-        "(that is SAD, not happy).",
+        "Audience leaves feeling positive — satisfaction, relief, triumph, warmth. EMPIRICALLY "
+        "DOMINANT for narrative film: most genre cinema (romance, action, adventure, family, "
+        "comedy, superhero, horror-with-survival, sports) lands here, INCLUDING films whose "
+        "protagonists pay substantial costs along the way. A hard-won victory IS happy. "
+        "Cost-along-the-way is the standard structure of a satisfying happy ending, NOT a "
+        "disqualifier.",
+        "CLOSING SCENE in plot_summary — if it's a celebration beat (triumphant kiss, family "
+        "reunion hug, threat-defeated cheer, protagonist-restored shot, platform-raise/"
+        "mountaintop moment, smiling embrace), ending is HAPPY regardless of runtime cost. "
+        "emotional_observations 'uplifting'/'satisfying'/'triumphant'/'warm closure'/'earned'/"
+        "'hard-won'/'achievement at a cost' (the last = happy with sacrifice, NOT bittersweet); "
+        "plot_summary final beat + characters' end-state; plot_keywords 'happy ending'. Horror "
+        "survived + threat defeated = HAPPY when protagonists are safe and danger is over. "
+        "Ambiguous HAPPY-vs-BITTERSWEET → default HAPPY (bittersweet has the higher bar).",
+        "Merely surviving a horrific ordeal without positive feeling (relief without triumph/"
+        "warmth); victory that feels hollow or Pyrrhic where cost overwhelms the win; positive "
+        "plot outcome that lands flat/empty from accumulated grief; protagonists win on paper "
+        "but the audience leaves devastated (→ SAD, not happy).",
     )
 
     SAD_ENDING = (
         "sad_ending",
         42,
         ConceptTagCategory.ENDINGS,
-        "Audience leaves feeling predominantly sad — grief, devastation, "
-        "heartbreak. The lasting emotion is loss, failure, or defeat.",
-        "Look at emotional_observations for \"devastating\", \"tragic\", "
-        "\"heartbreaking\", \"bleak\", \"left me sobbing\", \"crushing\"; "
-        "plot_summary for an ending state defined by loss (a funeral, a "
-        "destroyed home, a protagonist alone in ruin, an unsaved life); "
-        "the literal closing scene as a beat of grief, defeat, or loss "
-        "with no recuperative upswing. A cliffhanger where the heroes "
-        "have lost and the villain remains at large IS sad — narrative "
-        "closure is not required.",
-        "A victory achieved at great cost where the audience still feels "
-        "the victory; an emotionally intense movie with a positive outcome; "
-        "a tragic journey that ends in redemption, peace, or thematic "
-        "uplift; a film with grim mid-story events but a recuperative "
-        "ending.",
+        "Audience leaves feeling predominantly sad — grief, devastation, heartbreak. Lasting "
+        "emotion is loss, failure, defeat.",
+        "emotional_observations 'devastating'/'tragic'/'heartbreaking'/'bleak'/'left me "
+        "sobbing'/'crushing'; plot_summary ending state defined by loss (funeral, destroyed "
+        "home, protagonist alone in ruin, unsaved life); closing scene is a grief/defeat/loss "
+        "beat with no recuperative upswing. Cliffhanger where heroes have lost and villain "
+        "remains at large IS sad — narrative closure not required.",
+        "Victory at great cost where audience still feels the victory; emotionally intense "
+        "movie with positive outcome; tragic journey ending in redemption, peace, or thematic "
+        "uplift; grim mid-story but recuperative ending.",
     )
 
     BITTERSWEET_ENDING = (
         "bittersweet_ending",
         43,
         ConceptTagCategory.ENDINGS,
-        "An uncommon ending type where the audience leaves with genuinely "
-        "unresolvable mixed feelings — they cannot comfortably say \"this "
-        "was a happy movie\" OR \"this was a sad movie\" and mean it. "
-        "Discriminating question: would a reasonable viewer feel something "
-        "is missing or wrong if you called the ending HAPPY? AND would they "
-        "feel the same way if you called it SAD? Only if BOTH are true does "
-        "BITTERSWEET apply. Films with mixed elements almost always still "
-        "land clearly on HAPPY or SAD — bittersweet is rare and is NOT a "
-        "fallback for endings that feel complicated.",
-        "Look at emotional_observations for language that *explicitly* "
-        "describes the AUDIENCE leaving with unresolved mixed feelings — "
-        "\"mixed feelings\", \"joy AND sorrow held in tension\", \"unable "
-        "to celebrate fully\", \"a knot in the stomach despite the win\", "
-        "\"genuinely torn\". Treat \"earned\", \"hard-won\", \"achievement "
-        "at a cost\", \"sacrifice for victory\" as HAPPY signals, NOT "
-        "bittersweet signals — they describe the standard structure of "
-        "satisfying happy endings. Look at the literal closing scene in "
-        "plot_summary: bittersweet endings tend to close on a quiet, "
-        "contemplative beat (a long look, an unspoken moment, a "
-        "what-might-have-been montage, a protagonist staring into the "
-        "distance with both achievement and loss visible) rather than "
-        "on a celebration beat. If the closing scene is a triumph kiss, "
-        "family reunion, threat-defeated cheer, or platform-raise "
-        "moment, the ending is HAPPY no matter what was lost along the "
-        "way.",
-        "Sacrifice along the journey followed by an unambiguous celebration "
-        "or triumph at the credits-roll moment — that is HAPPY, full stop. "
-        "Genre films (romance, action, family, horror-with-survival, "
-        "superhero) where the protagonists pay a price and then win — that "
-        "is the *default structure* of a happy ending, not bittersweet. A "
-        "tragic journey that ends in redemption, peace, or thematic uplift "
-        "— that is SAD or HAPPY depending on the lasting emotion, not "
-        "bittersweet. A film with grief mid-runtime but a recuperative "
-        "ending — that is HAPPY. Structural ambiguity about WHAT happened "
-        "(open or ambiguous endings) — narrative uncertainty is not "
-        "emotional ambiguity; route those to OPEN_ENDING above and pick "
-        "the emotional tag separately. \"This ending was complicated\" or "
-        "\"the audience had a lot to process\" is NOT enough — bittersweet "
-        "requires that neither HAPPY nor SAD would be a defensible "
-        "alternative. If you can defend HAPPY or SAD, pick that one.",
+        "UNCOMMON ending where the audience leaves with genuinely unresolvable mixed feelings — "
+        "cannot comfortably call it 'a happy movie' OR 'a sad movie' and mean it. Discriminating "
+        "test: would a reasonable viewer feel something is missing/wrong if you called the "
+        "ending HAPPY? AND the same way if you called it SAD? Tag only if BOTH are true. Films "
+        "with mixed elements almost always land clearly on HAPPY or SAD — bittersweet is rare "
+        "and NOT a fallback for 'complicated'.",
+        "emotional_observations that EXPLICITLY describe the AUDIENCE leaving unresolved — "
+        "'mixed feelings', 'joy AND sorrow held in tension', 'unable to celebrate fully', 'knot "
+        "in the stomach despite the win', 'genuinely torn'. Treat 'earned'/'hard-won'/"
+        "'achievement at a cost'/'sacrifice for victory' as HAPPY signals, NOT bittersweet "
+        "(standard structure of satisfying happy endings). Closing scene: bittersweet endings "
+        "tend toward a quiet contemplative beat (long look, unspoken moment, "
+        "what-might-have-been montage, protagonist staring into distance with achievement+loss "
+        "both visible) rather than celebration. Triumph kiss/family reunion/threat-defeated "
+        "cheer/platform-raise → HAPPY regardless of runtime cost.",
+        "Sacrifice along the journey followed by unambiguous celebration/triumph at credits → "
+        "HAPPY, full stop. Genre films (romance, action, family, horror-with-survival, "
+        "superhero) where protagonists pay a price then win = DEFAULT STRUCTURE of a happy "
+        "ending, not bittersweet. Tragic journey ending in redemption/peace/thematic uplift → "
+        "SAD or HAPPY by lasting emotion. Mid-runtime grief + recuperative ending → HAPPY. "
+        "Structural ambiguity about WHAT happened (open/ambiguous endings) ≠ emotional "
+        "ambiguity — route to OPEN_ENDING and pick the emotional tag separately. 'Complicated' "
+        "or 'audience had a lot to process' is NOT enough — bittersweet requires that neither "
+        "HAPPY nor SAD is a defensible alternative. If you can defend either, pick that one.",
     )
 
     NO_CLEAR_CHOICE = (
         "no_clear_choice",
         -1,
         ConceptTagCategory.ENDINGS,
-        "The evidence is ambiguous, insufficient, or the ending's emotion "
-        "does not clearly fit happy, sad, or bittersweet. Classification-"
-        "only; filtered out before storage.",
-        "Use when the extracted observations do not point clearly to one "
-        "of the above. Specifically: emotional_observations describe the "
-        "ending as \"ambiguous\", \"lingering\", \"contemplative\", "
-        "\"philosophical\", or \"open to interpretation\" without clear "
-        "positive/negative/mixed valence; the closing scene in "
-        "plot_summary is an existential beat (a long-held expression, a "
-        "cosmic-indifference image, an unresolved philosophical question) "
-        "that doesn't map to celebration / loss / mixed-feelings; "
-        "craft_observations describe the ending as deliberately "
-        "interpretive.",
-        "Endings that have some complexity but where one of the three primary "
-        "tags clearly applies (do not default to NO_CLEAR_CHOICE just because "
-        "the ending is not simple); endings with a clear emotional valence "
-        "even when the narrative is structurally ambiguous (the structural "
-        "openness goes to OPEN_ENDING above, the emotional valence to one of "
-        "HAPPY/SAD/BITTERSWEET here).",
+        "Evidence ambiguous/insufficient or ending's emotion doesn't fit happy/sad/bittersweet. "
+        "Classification-only; filtered out before storage.",
+        "Use when extracted observations don't point clearly to one of the above: "
+        "emotional_observations describe the ending as 'ambiguous'/'lingering'/'contemplative'/"
+        "'philosophical'/'open to interpretation' without clear positive/negative/mixed "
+        "valence; plot_summary closing scene is an existential beat (long-held expression, "
+        "cosmic-indifference image, unresolved philosophical question) that doesn't map to "
+        "celebration/loss/mixed-feelings; craft_observations describe the ending as "
+        "deliberately interpretive.",
+        "Endings with some complexity but where one of HAPPY/SAD/BITTERSWEET clearly applies "
+        "(don't default to NO_CLEAR_CHOICE just because the ending isn't simple); endings with "
+        "clear emotional valence even when narratively structurally ambiguous (structural "
+        "openness → OPEN_ENDING above; emotional valence → one of HAPPY/SAD/BITTERSWEET here).",
     )
 
     # -- Experiential (IDs 51-52) ----------------------------------------
@@ -1135,60 +904,40 @@ class ConceptTag(str, Enum):
         "feel_good",
         51,
         ConceptTagCategory.EXPERIENTIAL,
-        "The overall audience experience is warm and uplifting. The viewer "
-        "leaves feeling positive, hopeful, and lifted up. About emotional "
-        "WARMTH, not excitement or adrenaline.",
-        "PRIMARY source: emotional_observations. Read the full emotional "
-        "landscape described and apply a holistic test: is the dominant "
-        "tone OVERWHELMINGLY one of feel-good emotions — warmth, joy, "
-        "hope, uplift, charm, heartwarming connection? Does the "
-        "description make clear that the movie is meant to leave the "
-        "audience hopeful and emotionally lighter? Tag FEEL_GOOD only "
-        "when the warm/hopeful signal is overwhelming across the "
-        "described audience experience. A small amount of tension or "
-        "stakes during the journey does not disqualify warmth at the "
-        "destination — but a meaningful counterweight of heavy emotions "
-        "does.",
-        "A movie whose described emotional landscape contains a strong "
-        "presence of NON-feel-good emotions — grief, dread, devastation, "
-        "sustained dark tension, prolonged despair, heavy melancholy — "
-        "alongside its warmer beats. That is a MIXED experience, not "
-        "feel_good, even when the warmer beats are real. A heavy or "
-        "emotionally devastating movie that nonetheless has a "
-        "recuperative ending is not feel_good. A pure adrenaline "
-        "experience with no emotional warmth (action thrills, horror "
-        "scares); cathartic satisfaction from violent revenge; a "
-        "guilty-pleasure enjoyment of trashy or gory content. Do NOT "
-        "infer from genre alone. When the emotional landscape contains a "
-        "meaningful counterweight of heavy feelings, the film is not "
-        "feel_good — this tag is reserved for films whose warm, "
-        "hopeful, lifting tone is the overwhelming signal.",
+        "Overall experience is warm and uplifting — viewer leaves positive, hopeful, lifted up. "
+        "About emotional WARMTH, not excitement or adrenaline.",
+        "PRIMARY: emotional_observations. Holistic test on the full emotional landscape — is the "
+        "dominant tone OVERWHELMINGLY feel-good (warmth, joy, hope, uplift, charm, heartwarming "
+        "connection)? Does the description make clear the movie aims to leave audiences hopeful "
+        "and lighter? Tag only when warm/hopeful is overwhelming. A small amount of tension/"
+        "stakes doesn't disqualify warmth at the destination — a meaningful counterweight of "
+        "heavy emotions does.",
+        "Emotional landscape with strong presence of NON-feel-good emotions — grief, dread, "
+        "devastation, sustained dark tension, prolonged despair, heavy melancholy — alongside "
+        "warm beats = MIXED experience, not feel_good. Heavy/devastating movie with a "
+        "recuperative ending ≠ feel_good. Pure adrenaline (action thrills, horror scares); "
+        "cathartic satisfaction from violent revenge; guilty-pleasure trashy/gory content. Do "
+        "NOT infer from genre. When the landscape contains a meaningful heavy counterweight, "
+        "not feel_good — this tag is reserved for films whose warm/hopeful/lifting tone is the "
+        "overwhelming signal.",
     )
 
     TEARJERKER = (
         "tearjerker",
         52,
         ConceptTagCategory.EXPERIENTIAL,
-        "The movie makes audiences cry — and the available text directly "
-        "states that it does. This is a strict, literal test: tag only "
-        "when there is a direct statement that audiences cried, sobbed, "
-        "wept, or shed tears.",
-        "PRIMARY and AUTHORITATIVE source: emotional_observations. Apply "
-        "a single, literal test — is there a DIRECT, EXPLICIT statement "
-        "anywhere in the available text that the audience cried, sobbed, "
-        "wept, shed tears, or was reduced to tears? If YES, tag "
-        "TEARJERKER. If NO, do NOT tag. Do not derive this tag from any "
-        "other signal — not from plot sadness, not from genre, not from "
-        "emotional intensity, not from synonyms or near-equivalents.",
-        "Movies described as \"moving\", \"touching\", \"tugs at "
-        "heartstrings\", \"poignant\", \"devastating\", \"heartbreaking\", "
-        "\"emotionally wrecking\", or any similar language that does NOT "
-        "literally state audience crying. Plot-level sadness, tragic "
-        "events, character deaths, emotional intensity, or themes of "
-        "grief that the text does not explicitly connect to audience "
-        "crying. The bar is strict and literal: the available text must "
-        "directly describe audiences as having cried — synonyms for "
-        "emotional impact alone do not qualify.",
+        "Makes audiences cry — and the available text DIRECTLY STATES so. Strict literal test: "
+        "tag only on a direct statement that audiences cried, sobbed, wept, or shed tears.",
+        "PRIMARY/AUTHORITATIVE: emotional_observations. Single literal test — is there a "
+        "DIRECT, EXPLICIT statement that audiences cried/sobbed/wept/shed tears/were reduced to "
+        "tears? YES → tag. NO → do not tag. Do NOT derive from plot sadness, genre, emotional "
+        "intensity, synonyms, or near-equivalents.",
+        "Movies described as 'moving'/'touching'/'tugs at heartstrings'/'poignant'/"
+        "'devastating'/'heartbreaking'/'emotionally wrecking' or similar that doesn't literally "
+        "state audience crying. Plot sadness, tragic events, character deaths, emotional "
+        "intensity, or grief themes not explicitly connected to audience crying. The bar is "
+        "strict: text must directly describe audiences as having cried — synonyms for "
+        "emotional impact alone don't qualify.",
     )
 
     # -- Content Flags (ID 61) -------------------------------------------
@@ -1197,34 +946,22 @@ class ConceptTag(str, Enum):
         "animal_death",
         61,
         ConceptTagCategory.CONTENT_FLAGS,
-        "A non-human animal (dog, cat, horse, bird, etc.) dies on screen or "
-        "as a significant plot point. Exclusively about animals.",
-        "TIERED EVIDENCE — apply in order. TIER 1 (PRIMARY): "
-        "plot_summary and plot_keywords. Look for ANY evidence that a "
-        "non-human animal dies in the film — the death does not have to "
-        "be violent, severe, central, or extensively depicted. An "
-        "on-screen death, an off-screen death described as part of the "
-        "story, a pet euthanized, an animal killed by an antagonist, an "
-        "animal killed in passing as part of a beat — all qualify. If "
-        "plot_summary or plot_keywords contains any such evidence of an "
-        "animal dying, tag ANIMAL_DEATH. TIER 2 (FALLBACK, used only "
-        "when TIER 1 shows NO evidence of an animal death in the plot): "
-        "consult parental_guide_items. If parental_guide_items lists a "
-        "category like \"Violence Against Animals\" or \"Animal "
-        "cruelty\" at any severity, tag ANIMAL_DEATH. The fallback "
-        "exists to catch animal deaths that the plot text happens not "
-        "to mention; the presence of unrelated parental_guide entries "
-        "(violence against humans, profanity, frightening scenes) is "
-        "NOT a signal either way for animal_death — only an "
-        "animal-specific advisory counts.",
-        "Human deaths of any kind; violence against humans; the word "
-        "\"animal\" appearing in an unrelated context; creatures in "
-        "fantasy or sci-fi that are clearly not real animals; an animal "
-        "merely mentioned without dying (a pet that appears in a scene, "
-        "a working animal in the background, a meat-industry backdrop "
-        "where no on-screen or plot-described death occurs); a "
-        "parental_guide entry for human violence or general frightening "
-        "scenes with no animal-specific category.",
+        "A non-human animal (dog, cat, horse, bird, etc.) dies on screen or as a significant "
+        "plot point. Exclusively about animals.",
+        "TIERED EVIDENCE — apply in order. TIER 1 (PRIMARY): plot_summary + plot_keywords. Any "
+        "evidence that a non-human animal dies — death doesn't need to be violent, severe, "
+        "central, or extensively depicted. On-screen death, off-screen death described as part "
+        "of the story, pet euthanized, animal killed by antagonist, animal killed in passing as "
+        "part of a beat — all qualify; tag. TIER 2 (FALLBACK, only when TIER 1 shows NO "
+        "evidence): parental_guide_items. If listed at any severity as 'Violence Against "
+        "Animals'/'Animal cruelty', tag. Fallback catches animal deaths the plot text doesn't "
+        "mention; unrelated parental_guide entries (violence against humans, profanity, "
+        "frightening scenes) are NOT a signal either way — only an animal-specific advisory.",
+        "Human deaths of any kind; violence against humans; the word 'animal' in unrelated "
+        "context; fantasy/sci-fi creatures clearly not real animals; animal mentioned without "
+        "dying (pet appearing in scene, working animal in background, meat-industry backdrop "
+        "with no on-screen or plot-described death); parental_guide entry for human violence "
+        "or general frightening scenes with no animal-specific category.",
     )
 
 

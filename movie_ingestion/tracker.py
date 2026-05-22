@@ -261,6 +261,7 @@ CREATE TABLE IF NOT EXISTS generated_metadata (
     production_keywords                  TEXT,
     concept_tags                         TEXT,
     concept_tags_run_2                   TEXT,
+    concept_tags_run_3                   TEXT,
     production_techniques                TEXT,
     franchise                            TEXT,
     source_of_inspiration                TEXT,
@@ -359,6 +360,8 @@ def init_db() -> sqlite3.Connection:
         # Second concept_tags run — union of both runs improves recall.
         # Column is write-target only; not populated by the first run.
         "ALTER TABLE generated_metadata ADD COLUMN concept_tags_run_2 TEXT",
+        # Third concept_tags run — adds another independent run for majority-vote merging.
+        "ALTER TABLE generated_metadata ADD COLUMN concept_tags_run_3 TEXT",
     ]
     for stmt in _MIGRATIONS:
         try:

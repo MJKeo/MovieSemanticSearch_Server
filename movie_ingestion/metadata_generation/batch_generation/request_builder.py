@@ -53,10 +53,18 @@ def build_requests(
     """Build Batch API request dicts for eligible movies needing generation.
 
     Queries generated_metadata for movies with eligible_for_{type}=1 and
-    {type} IS NULL (no result yet). Loads movie data in chunks (each
-    MovieInputData holds full synopses/summaries/reviews, so loading all
-    ~109K at once would use 500MB+). Builds prompts via the type's
-    registered prompt builder and wraps each in the Batch API request format.
+    at least one NULL slot among the type's result_columns. Loads movie
+    data in chunks (each MovieInputData holds full synopses/summaries/
+    reviews, so loading all ~109K at once would use 500MB+). Builds
+    prompts via the type's registered prompt builder and wraps each in
+    the Batch API request format.
+
+    For multi-run types (config.runs_per_movie > 1), a movie with K NULL
+    slots receives K requests, each with a distinct custom_id suffix
+    (`_r{N}`). The run_index is purely a uniqueness token for OpenAI's
+    per-batch custom_id constraint and for debug traceability — the
+    result writer picks the next NULL column at ingest time, independent
+    of which run produced which response.
 
     Args:
         metadata_type: Which metadata type to build requests for.
@@ -73,19 +81,38 @@ def build_requests(
     """
     config = get_config(metadata_type)
 
-    # Find movies that are eligible but don't have a result yet
-    tmdb_ids = _get_pending_tmdb_ids(metadata_type, tracker_db_path)
-    if not tmdb_ids:
+    # Find eligible movies with at least one NULL result slot.
+    # Each tuple is (tmdb_id, n_runs_needed) — 1 for single-run types,
+    # 1..runs_per_movie for multi-run types.
+    pending = _get_pending_tmdb_ids(config, tracker_db_path)
+    if not pending:
         return []
 
     # Truncate early to avoid loading data for movies we won't submit.
+    # Multi-run movies vary in request cost, so accumulate until the
+    # request budget is reached rather than slicing by movie count.
     if max_batches is not None:
-        max_movies = max_batches * batch_size
-        if len(tmdb_ids) > max_movies:
-            print(f"  [{metadata_type}] {len(tmdb_ids)} eligible movies, limiting to {max_movies}.")
-            tmdb_ids = tmdb_ids[:max_movies]
+        max_requests = max_batches * batch_size
+        truncated: list[tuple[int, int]] = []
+        running = 0
+        for tmdb_id, n_needed in pending:
+            if running + n_needed > max_requests:
+                break
+            truncated.append((tmdb_id, n_needed))
+            running += n_needed
+        if len(truncated) < len(pending):
+            print(
+                f"  [{metadata_type}] {len(pending)} eligible movies "
+                f"({sum(n for _, n in pending)} requests), limiting to "
+                f"{len(truncated)} movies ({running} requests)."
+            )
+        pending = truncated
 
-    print(f"  [{metadata_type}] Building requests for {len(tmdb_ids)} movies...")
+    total_requests = sum(n for _, n in pending)
+    print(
+        f"  [{metadata_type}] Building {total_requests} requests for "
+        f"{len(pending)} movies (runs_per_movie={config.runs_per_movie})..."
+    )
 
     # Compute the JSON schema once for this type — identical for every request.
     json_schema = to_strict_json_schema(config.schema_class)
@@ -93,18 +120,25 @@ def build_requests(
     # Build request dicts in chunks to keep memory bounded.
     # MovieInputData holds full plot text, reviews, etc. — several KB each.
     all_requests: list[dict] = []
-    for chunk_start in range(0, len(tmdb_ids), _LOAD_CHUNK_SIZE):
-        chunk_ids = tmdb_ids[chunk_start : chunk_start + _LOAD_CHUNK_SIZE]
+    for chunk_start in range(0, len(pending), _LOAD_CHUNK_SIZE):
+        chunk = pending[chunk_start : chunk_start + _LOAD_CHUNK_SIZE]
+        chunk_ids = [tid for tid, _ in chunk]
         movies = load_movie_input_data(chunk_ids, tracker_db_path)
 
-        for tmdb_id in chunk_ids:
+        for tmdb_id, n_needed in chunk:
             movie = movies.get(tmdb_id)
             if movie is None:
                 # Movie data couldn't be loaded (missing from tmdb_data/imdb_data)
                 continue
 
-            request = _build_single_request(movie, config, json_schema)
-            all_requests.append(request)
+            # Emit one request per missing run. Single-run types pass
+            # run_index=None so the custom_id keeps its legacy
+            # `{type}_{tmdb_id}` shape; multi-run types pass 1..n_needed.
+            if config.runs_per_movie == 1:
+                all_requests.append(_build_single_request(movie, config, json_schema, run_index=None))
+            else:
+                for run_index in range(1, n_needed + 1):
+                    all_requests.append(_build_single_request(movie, config, json_schema, run_index=run_index))
 
     print(f"  [{metadata_type}] Built {len(all_requests)} requests.")
 
@@ -117,44 +151,68 @@ def build_requests(
 # ---------------------------------------------------------------------------
 
 def _get_pending_tmdb_ids(
-    metadata_type: MetadataType,
+    config: GeneratorConfig,
     tracker_db_path: Path,
-) -> list[int]:
-    """Query for movies eligible for a metadata type that don't have a result yet.
+) -> list[tuple[int, int]]:
+    """Query for movies eligible for a metadata type with at least one NULL slot.
 
-    Excludes movies that already have an active batch_id in metadata_batch_ids,
-    preventing duplicate submissions if submit is run before process completes.
+    Returns (tmdb_id, n_runs_needed) pairs. For single-run types
+    n_runs_needed is always 1; for multi-run types it equals the count
+    of NULL columns among config.result_columns (1..runs_per_movie).
 
-    Column names are interpolated from MetadataType (a StrEnum with fixed
-    values matching DB columns exactly — never from untrusted input).
+    Excludes movies that already have an active batch_id in
+    metadata_batch_ids, preventing duplicate submissions if submit is
+    run before process completes. The batch_id gate is per-type, so a
+    movie with a pending batch (regardless of how many slots are
+    actually mid-flight) is held until the batch finishes and the gate
+    clears.
+
+    Column names are interpolated from config.metadata_type (StrEnum
+    with fixed values matching DB columns exactly) and from
+    config.result_columns (whitelist defined in the registry) — never
+    from untrusted input.
     """
-    # Column names derived from the MetadataType StrEnum value.
+    metadata_type = config.metadata_type
     eligible_col = f"eligible_for_{metadata_type}"
-    result_col = str(metadata_type)
     batch_col = f"{metadata_type}_batch_id"
+
+    # Per-column "NULL = 1" terms summed into n_needed. Works for both
+    # single-run (one column, value 0 or 1) and multi-run (N columns,
+    # value 0..N) types with a single uniform query shape.
+    null_terms = " + ".join(
+        f"CASE WHEN gm.{col} IS NULL THEN 1 ELSE 0 END"
+        for col in config.result_columns
+    )
 
     with sqlite3.connect(str(tracker_db_path)) as db:
         rows = db.execute(
             f"""
-            SELECT gm.tmdb_id FROM generated_metadata gm
+            SELECT gm.tmdb_id, ({null_terms}) AS n_needed
+            FROM generated_metadata gm
             LEFT JOIN metadata_batch_ids mb ON gm.tmdb_id = mb.tmdb_id
             WHERE gm.{eligible_col} = 1
-              AND gm.{result_col} IS NULL
+              AND ({null_terms}) > 0
               AND (mb.{batch_col} IS NULL OR mb.tmdb_id IS NULL)
             """,
         ).fetchall()
 
-    return [row[0] for row in rows]
+    return [(row[0], row[1]) for row in rows]
 
 
 def _build_single_request(
     movie: MovieInputData,
     config: GeneratorConfig,
     json_schema: dict,
+    run_index: int | None = None,
 ) -> dict:
-    """Build one Batch API request dict for a single movie."""
+    """Build one Batch API request dict for a single movie.
+
+    For multi-run types, pass run_index 1..runs_per_movie so the
+    custom_id is unique within the batch. For single-run types, pass
+    None to keep the legacy `{type}_{tmdb_id}` custom_id shape.
+    """
     user_prompt, system_prompt = config.prompt_builder(movie)
-    custom_id = build_custom_id(movie.tmdb_id, config.metadata_type)
+    custom_id = build_custom_id(movie.tmdb_id, config.metadata_type, run_index=run_index)
 
     return {
         "custom_id": custom_id,

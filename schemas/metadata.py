@@ -1161,45 +1161,32 @@ class SourceMaterialV2Output(EmbeddableOutput):
 # evidence that justifies it.
 
 
+_TAGS_FIELD_DESCRIPTION = (
+    "Supported tags derived from the reasoning's conclusions. Reasoning is the SOURCE OF TRUTH — "
+    "emit a tag iff the conclusions support it; don't omit one the reasoning argues for. May "
+    "include tags logically implied by the conclusions even if not literally named. Empty is "
+    "correct when the reasoning concludes no tags apply."
+)
+
+
 class NarrativeStructureAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reasoning: str = Field(
         ...,
         description=(
-            "Walk through the evidence BEFORE deciding which tags apply. "
-            "Primary sources for narrative structure: craft_observations "
-            "(reviewer descriptions of how the story is told — twists, "
-            "nonlinearity, narration style, fourth-wall, ending shape) "
-            "and the narrative_technique_terms sections narrative_delivery, "
-            "information_control, additional_narrative_devices, and "
-            "pov_perspective. NOTE: those NT terms may use vocabulary "
-            "that overlaps with concept-tag names (e.g. \"intercut "
-            "flashback structure\", \"evidence-driven reversal\") — treat "
-            "them as descriptive shorthand to investigate, not as direct "
-            "labels. For cliffhanger_ending, additionally consult the "
-            "closing scene in plot_summary and emotional_observations "
-            "language about unresolved endings. Quote or name the "
-            "specific signals you observe, then state what each implies "
-            "for the candidate tags. EVIDENCE FIRST, conclusion second — "
-            "never state the conclusion and then write the evidence that "
-            "justifies it."
+            "1-2 tight sentences citing specific signals BEFORE concluding. Primary: "
+            "craft_observations (twists, nonlinearity, narration style, fourth-wall, ending shape) "
+            "+ NT sections narrative_delivery / information_control / additional_narrative_devices / "
+            "pov_perspective (treat NT term vocabulary as shorthand to investigate, not labels). "
+            "For cliffhanger_ending also use plot_summary closing scene + emotional_observations. "
+            "Evidence first; never conclusion-then-justification."
         ),
     )
 
     tags: list[NarrativeStructureTag] = Field(
         default_factory=list,
-        description=(
-            "Supported tags, derived from the conclusions in the reasoning "
-            "field above. The reasoning field is the SOURCE OF TRUTH for "
-            "this output — only emit a tag when the reasoning's conclusions "
-            "support it, and do not omit a tag the reasoning argues for. "
-            "You may include a tag when the reasoning's conclusions "
-            "logically imply it (the reasoning does not need to literally "
-            "name the tag), but the inclusion must follow from your "
-            "reasoning, not from re-examined evidence. Empty list is "
-            "correct when the reasoning concludes no tags apply."
-        ),
+        description=_TAGS_FIELD_DESCRIPTION,
     )
 
 
@@ -1209,33 +1196,17 @@ class PlotArchetypeAssessment(BaseModel):
     reasoning: str = Field(
         ...,
         description=(
-            "Walk through the evidence BEFORE deciding which tags apply. "
-            "Plot archetype tags answer 'is THIS the central premise of "
-            "the movie?' — not 'does the movie contain this element'. "
-            "Primary sources: plot_keywords, plot_summary or plot_text "
-            "(the narrative itself), conflict_type (the central "
-            "conflict), and character_arc_labels (the protagonist's "
-            "thematic transformation). For each candidate tag, ask: "
-            "would removing this concept collapse the plot? Cite the "
-            "specific signal from the inputs, then state what it implies. "
-            "EVIDENCE FIRST, conclusion second — never state the "
-            "conclusion and then write the evidence that justifies it."
+            "1-2 tight sentences citing specific signals BEFORE concluding. Archetype tags answer "
+            "'is this the CENTRAL PREMISE?' not 'does the movie contain this element'. Primary: "
+            "plot_keywords + plot_summary/plot_text + conflict_type + character_arc_labels. For "
+            "each candidate ask: would removing this concept collapse the plot? Evidence first; "
+            "never conclusion-then-justification."
         ),
     )
 
     tags: list[PlotArchetypeTag] = Field(
         default_factory=list,
-        description=(
-            "Supported tags, derived from the conclusions in the reasoning "
-            "field above. The reasoning field is the SOURCE OF TRUTH for "
-            "this output — only emit a tag when the reasoning's conclusions "
-            "support it, and do not omit a tag the reasoning argues for. "
-            "You may include a tag when the reasoning's conclusions "
-            "logically imply it (the reasoning does not need to literally "
-            "name the tag), but the inclusion must follow from your "
-            "reasoning, not from re-examined evidence. Empty list is "
-            "correct when the reasoning concludes no tags apply."
-        ),
+        description=_TAGS_FIELD_DESCRIPTION,
     )
 
 
@@ -1245,32 +1216,16 @@ class SettingAssessment(BaseModel):
     reasoning: str = Field(
         ...,
         description=(
-            "Walk through the evidence BEFORE deciding which tags apply. "
-            "A setting tag fires only when the setting is a DEFINING "
-            "characteristic of the movie's identity, not incidental "
-            "backdrop. Primary sources: plot_keywords, plot_summary or "
-            "plot_text (where the action occurs and how central the "
-            "setting is), and title/release_year for temporal context. "
-            "Cite the specific signal that names or strongly implies the "
-            "setting, then state whether it is defining or merely "
-            "incidental. EVIDENCE FIRST, conclusion second — never state "
-            "the conclusion and then write the evidence that justifies it."
+            "1-2 tight sentences citing specific signals BEFORE concluding. Tag only when the "
+            "setting is DEFINING, not incidental backdrop. Primary: plot_keywords + plot_summary/"
+            "plot_text (where action occurs, how central) + title/release_year for temporal "
+            "context. Evidence first; never conclusion-then-justification."
         ),
     )
 
     tags: list[SettingTag] = Field(
         default_factory=list,
-        description=(
-            "Supported tags, derived from the conclusions in the reasoning "
-            "field above. The reasoning field is the SOURCE OF TRUTH for "
-            "this output — only emit a tag when the reasoning's conclusions "
-            "support it, and do not omit a tag the reasoning argues for. "
-            "You may include a tag when the reasoning's conclusions "
-            "logically imply it (the reasoning does not need to literally "
-            "name the tag), but the inclusion must follow from your "
-            "reasoning, not from re-examined evidence. Empty list is "
-            "correct when the reasoning concludes no tags apply."
-        ),
+        description=_TAGS_FIELD_DESCRIPTION,
     )
 
 
@@ -1280,46 +1235,22 @@ class CharacterAssessment(BaseModel):
     reasoning: str = Field(
         ...,
         description=(
-            "Walk through the evidence BEFORE deciding which tags apply. "
-            "Character tags classify the lead role(s) or cast structure. "
-            "Primary sources: plot_summary or plot_text (who drives the "
-            "story, how many leads there are, and how each protagonist "
-            "actually behaves across the runtime), top_billed_cast "
-            "(prominence ranking — corroborating evidence for who fills "
-            "the lead role(s)), character_arc_labels from plot_analysis "
-            "(thematic arc transformations such as \"impostor to "
-            "reconciled contributor\" — these describe what the arc IS, "
-            "but a redemption arc does NOT by itself disqualify any "
-            "character tag), and conflict_type (whether the "
-            "protagonist's stance is structurally outside conventional "
-            "morality). DO NOT derive ANTI_HERO from upstream-labeled "
-            "terms — derive it from what the protagonist actually does "
-            "in plot_summary. For FEMALE_LEAD identify EVERY lead role "
-            "and check whether every one is female. For ENSEMBLE_CAST "
-            "apply the removal test: would removing any one storyline "
-            "collapse the movie? For ANTI_HERO ask: is morally "
-            "compromised behavior a substantive operating mode for a "
-            "meaningful portion of the runtime, or one extreme choice "
-            "under duress? Cite the specific cross-referenced signals "
-            "you see, then state what they imply. EVIDENCE FIRST, "
-            "conclusion second — never state the conclusion and then "
-            "write the evidence that justifies it."
+            "1-2 tight sentences citing specific cross-referenced signals BEFORE concluding. "
+            "Primary: plot_summary/plot_text (who drives the story, how many leads, how each "
+            "protagonist behaves), top_billed_cast (prominence — corroborating), "
+            "character_arc_labels (thematic transformations; a redemption arc does NOT by itself "
+            "disqualify), conflict_type (structurally outside conventional morality?). DO NOT "
+            "derive ANTI_HERO from upstream labels — derive it from plot_summary behavior. "
+            "FEMALE_LEAD: identify EVERY lead, check every one is female. ENSEMBLE_CAST: removal "
+            "test — would removing any one storyline collapse the film? ANTI_HERO: is morally "
+            "compromised behavior a substantive operating mode for a meaningful runtime portion, "
+            "or one extreme choice under duress? Evidence first; never conclusion-then-justification."
         ),
     )
 
     tags: list[CharacterTag] = Field(
         default_factory=list,
-        description=(
-            "Supported tags, derived from the conclusions in the reasoning "
-            "field above. The reasoning field is the SOURCE OF TRUTH for "
-            "this output — only emit a tag when the reasoning's conclusions "
-            "support it, and do not omit a tag the reasoning argues for. "
-            "You may include a tag when the reasoning's conclusions "
-            "logically imply it (the reasoning does not need to literally "
-            "name the tag), but the inclusion must follow from your "
-            "reasoning, not from re-examined evidence. Empty list is "
-            "correct when the reasoning concludes no tags apply."
-        ),
+        description=_TAGS_FIELD_DESCRIPTION,
     )
 
 
@@ -1329,53 +1260,32 @@ class EndingAssessment(BaseModel):
     reasoning: str = Field(
         ...,
         description=(
-            "Walk through the evidence BEFORE deciding the tag. NO "
-            "pre-labeled ending field is provided — you must derive the "
-            "audience's ending feeling from raw evidence. Process: "
-            "(1) CLOSING SCENE TEST (PRIMARY) — identify the literal "
-            "final scene before credits from plot_summary. A "
-            "celebration/reunion/kiss/cheer/platform-raise beat → HAPPY "
-            "regardless of what was lost during the runtime. A "
-            "funeral/destruction/loss beat with no recuperative upswing "
-            "→ SAD. A quiet, contemplative beat (long look, unspoken "
-            "moment, what-might-have-been montage, protagonist staring "
-            "into the distance with both achievement and loss visible) → "
-            "BITTERSWEET candidate, but verify with step 2. An existential / "
-            "cosmic-indifference beat without clear valence → "
-            "NO_CLEAR_CHOICE candidate. (2) emotional_observations — "
-            "filter for language describing how audiences felt LEAVING "
-            "the theater: celebration/triumph language ('uplifting', "
-            "'satisfying', 'triumphant', 'earned', 'hard-won', "
-            "'achievement at a cost') are HAPPY signals, NOT bittersweet; "
-            "explicit unresolved language ('mixed feelings the audience "
-            "cannot resolve', 'knot despite the win', 'unable to "
-            "celebrate fully', 'genuinely torn') are BITTERSWEET signals; "
-            "'devastating', 'crushing', 'heartbreaking' are SAD signals; "
-            "'ambiguous', 'philosophical', 'contemplative' without "
-            "valence are NO_CLEAR_CHOICE signals. Filter out journey-"
-            "level emotions ('tense', 'frightening', 'dark') that "
-            "describe the runtime, not the ending. (3) Final state of "
-            "affairs from plot_summary — what is gained, lost, or "
-            "unresolved? Reconcile with the closing-scene beat. "
-            "(4) BASE RATES — HAPPY is empirically dominant; BITTERSWEET "
-            "is uncommon. When ambiguous between HAPPY and BITTERSWEET "
-            "→ HAPPY. When ambiguous between SAD and BITTERSWEET → SAD. "
-            "BITTERSWEET requires that NEITHER HAPPY nor SAD would be a "
-            "defensible alternative. EVIDENCE FIRST, conclusion second — "
-            "never state the tag and then write the evidence that "
-            "justifies it."
+            "1-2 tight sentences citing the specific closing-scene beat and ending-language "
+            "signals BEFORE selecting. Derive from raw evidence — no pre-labeled ending field. "
+            "(1) CLOSING SCENE (PRIMARY, plot_summary): celebration/reunion/kiss/cheer/"
+            "platform-raise → HAPPY regardless of runtime cost; funeral/destruction/loss with "
+            "no upswing → SAD; quiet contemplative beat (long look, unspoken moment, "
+            "what-might-have-been, achievement+loss visible) → BITTERSWEET candidate; "
+            "existential/cosmic-indifference without valence → NO_CLEAR_CHOICE candidate. "
+            "(2) emotional_observations filtered to ENDING language: 'uplifting'/'satisfying'/"
+            "'triumphant'/'earned'/'hard-won'/'achievement at a cost' → HAPPY (NOT bittersweet); "
+            "'mixed feelings audiences cannot resolve'/'knot despite the win'/'genuinely torn' → "
+            "BITTERSWEET; 'devastating'/'crushing'/'heartbreaking' → SAD; 'ambiguous'/"
+            "'philosophical'/'contemplative' without valence → NO_CLEAR_CHOICE. Discard runtime "
+            "emotions ('tense', 'frightening', 'dark'). (3) Reconcile final state from "
+            "plot_summary with closing scene. (4) BASE RATES: HAPPY dominant; BITTERSWEET "
+            "uncommon. Ambiguous HAPPY-vs-BITTERSWEET → HAPPY; SAD-vs-BITTERSWEET → SAD. "
+            "BITTERSWEET needs neither HAPPY nor SAD to be defensible. Evidence first; never "
+            "tag-then-justification."
         ),
     )
 
     tag: EndingTag = Field(
         ...,
         description=(
-            "Exactly one ending classification, derived from the "
-            "conclusion in the reasoning field above. The reasoning field "
-            "is the SOURCE OF TRUTH — the chosen tag must follow from "
-            "what the reasoning concludes. Use no_clear_choice when the "
-            "reasoning concludes the evidence is ambiguous, insufficient, "
-            "or the ending's emotion does not fit happy/sad/bittersweet."
+            "Exactly one ending classification derived from the reasoning's conclusion. "
+            "Reasoning is the SOURCE OF TRUTH. Use no_clear_choice when the reasoning concludes "
+            "evidence is ambiguous/insufficient or the ending doesn't fit happy/sad/bittersweet."
         ),
     )
 
@@ -1386,34 +1296,17 @@ class ExperientialAssessment(BaseModel):
     reasoning: str = Field(
         ...,
         description=(
-            "Walk through the evidence BEFORE deciding which tags apply. "
-            "Experiential tags (feel_good, tearjerker) describe how "
-            "audiences actually FELT, not what happened in the plot. "
-            "PRIMARY and AUTHORITATIVE source: emotional_observations "
-            "(reviewer reports of audience emotional response). "
-            "plot_keywords is a weak supporting signal only. Quote the "
-            "specific emotional language from emotional_observations, "
-            "then state what it implies for each candidate tag. A movie "
-            "can be heavy or sad without being a tearjerker; a movie can "
-            "be pleasant without being feel_good. EVIDENCE FIRST, "
-            "conclusion second — never state the conclusion and then "
-            "write the evidence that justifies it."
+            "1-2 tight sentences quoting specific emotional_observations language BEFORE "
+            "concluding. Experiential tags (feel_good, tearjerker) are about how audiences "
+            "FELT, not plot events. PRIMARY/AUTHORITATIVE: emotional_observations; plot_keywords "
+            "is a weak supporting signal. A heavy/sad movie ≠ tearjerker; a pleasant movie ≠ "
+            "feel_good. Evidence first; never conclusion-then-justification."
         ),
     )
 
     tags: list[ExperientialTag] = Field(
         default_factory=list,
-        description=(
-            "Supported tags, derived from the conclusions in the reasoning "
-            "field above. The reasoning field is the SOURCE OF TRUTH for "
-            "this output — only emit a tag when the reasoning's conclusions "
-            "support it, and do not omit a tag the reasoning argues for. "
-            "You may include a tag when the reasoning's conclusions "
-            "logically imply it (the reasoning does not need to literally "
-            "name the tag), but the inclusion must follow from your "
-            "reasoning, not from re-examined evidence. Empty list is "
-            "correct when the reasoning concludes no tags apply."
-        ),
+        description=_TAGS_FIELD_DESCRIPTION,
     )
 
 
@@ -1423,36 +1316,18 @@ class ContentFlagAssessment(BaseModel):
     reasoning: str = Field(
         ...,
         description=(
-            "Walk through the evidence BEFORE deciding which tags apply. "
-            "Content flag tags identify content users specifically search "
-            "to AVOID (severe violence, sexual content, animal death, "
-            "suicide depiction). PRIMARY source: parental_guide_items "
-            "(IMDB content-advisory categories with severity ratings "
-            "like 'Violence Against Animals (severe)' or 'Suicide "
-            "(mild)'). Supporting: plot_keywords and plot_summary or "
-            "plot_text. A tag fires only when the content is genuinely "
-            "present at meaningful severity — not when a similar word "
-            "merely appears in a plot summary. Quote the specific "
-            "parental_guide_items line items you see and their severity, "
-            "then state what each implies for the candidate tags. "
-            "EVIDENCE FIRST, conclusion second — never state the "
-            "conclusion and then write the evidence that justifies it."
+            "1-2 tight sentences quoting specific parental_guide_items lines + severity BEFORE "
+            "concluding. PRIMARY: parental_guide_items ('Violence Against Animals (severe)', "
+            "'Suicide (mild)', etc.). Supporting: plot_keywords + plot_summary/plot_text. Tag "
+            "only when content is genuinely present at meaningful severity — not when a similar "
+            "word merely appears in a plot summary. Evidence first; never conclusion-then-"
+            "justification."
         ),
     )
 
     tags: list[ContentFlagTag] = Field(
         default_factory=list,
-        description=(
-            "Supported tags, derived from the conclusions in the reasoning "
-            "field above. The reasoning field is the SOURCE OF TRUTH for "
-            "this output — only emit a tag when the reasoning's conclusions "
-            "support it, and do not omit a tag the reasoning argues for. "
-            "You may include a tag when the reasoning's conclusions "
-            "logically imply it (the reasoning does not need to literally "
-            "name the tag), but the inclusion must follow from your "
-            "reasoning, not from re-examined evidence. Empty list is "
-            "correct when the reasoning concludes no tags apply."
-        ),
+        description=_TAGS_FIELD_DESCRIPTION,
     )
 
 
@@ -1476,54 +1351,34 @@ class ConceptTagsOutput(BaseModel):
 
     narrative_structure: NarrativeStructureAssessment = Field(
         ...,
-        description=(
-            "Structural choices in how the story is told. Include "
-            "only tags supported by input evidence."
-        ),
+        description="Structural choices in how the story is told.",
     )
     plot_archetypes: PlotArchetypeAssessment = Field(
         ...,
-        description=(
-            "The central premise or driving force of the movie. "
-            "Tag applies when the concept IS the movie, not just "
-            "an element in the plot."
-        ),
+        description="The central premise — tag applies when the concept IS the movie.",
     )
     settings: SettingAssessment = Field(
         ...,
-        description=(
-            "Settings that define the movie's identity. The setting "
-            "must be a defining characteristic, not incidental."
-        ),
+        description="Settings that DEFINE the movie's identity, not incidental.",
     )
     characters: CharacterAssessment = Field(
         ...,
-        description=(
-            "Character-level classifications about the protagonist "
-            "or cast structure."
-        ),
+        description="Lead role(s) or cast-structure classifications.",
     )
     endings: EndingAssessment = Field(
         ...,
         description=(
-            "How the audience feels when the credits roll. Exactly "
-            "one classification (including no_clear_choice). "
-            "Independent of open/cliffhanger structure tags."
+            "How the audience feels at credits. Exactly one tag (incl. no_clear_choice); "
+            "independent of open/cliffhanger structure tags."
         ),
     )
     experiential: ExperientialAssessment = Field(
         ...,
-        description=(
-            "Binary experiential qualities that users treat as "
-            "deal-breakers when choosing what to watch."
-        ),
+        description="Binary experiential deal-breaker qualities.",
     )
     content_flags: ContentFlagAssessment = Field(
         ...,
-        description=(
-            "Content that users specifically search to avoid. "
-            "Strong avoidance deal-breakers."
-        ),
+        description="Content users specifically search to AVOID.",
     )
 
     def _deduplicate_tags(self) -> "ConceptTagsOutput":

@@ -59,35 +59,60 @@ ALL_GENERATION_TYPES = WAVE1_TYPES | WAVE_INDEPENDENT_TYPES | WAVE2_TYPES
 # ---------------------------------------------------------------------------
 
 @overload
-def build_custom_id(tmdb_id: int, metadata_type: MetadataType) -> str: ...
+def build_custom_id(tmdb_id: int, metadata_type: MetadataType, run_index: int | None = None) -> str: ...
 
 @overload
-def build_custom_id(movie: MovieInputData, metadata_type: MetadataType) -> str: ...
+def build_custom_id(movie: MovieInputData, metadata_type: MetadataType, run_index: int | None = None) -> str: ...
 
-def build_custom_id(tmdb_id_or_movie: int | MovieInputData, metadata_type: MetadataType) -> str:
-    """Build a batch request custom_id in the format '{metadata_type}_{tmdb_id}'.
+def build_custom_id(
+    tmdb_id_or_movie: int | MovieInputData,
+    metadata_type: MetadataType,
+    run_index: int | None = None,
+) -> str:
+    """Build a batch request custom_id.
 
-    Accepts either a raw tmdb_id (int) or a MovieInputData instance.
+    Default format: '{metadata_type}_{tmdb_id}' (single-run types).
+    Multi-run format: '{metadata_type}_{tmdb_id}_r{N}' when run_index is set
+    (e.g. concept_tags emits 3 requests per movie with run_index 1..3 so
+    OpenAI's per-batch custom_id uniqueness requirement is met).
+
     Used by request building (to set custom_id in JSONL) and result
     processing (to map results back to movies). The format is
-    deterministic so the same movie+type always produces the same ID.
+    deterministic so the same (movie, type, run_index) always produces
+    the same ID.
     """
     tmdb_id = tmdb_id_or_movie.tmdb_id if isinstance(tmdb_id_or_movie, MovieInputData) else tmdb_id_or_movie
-    return f"{metadata_type}_{tmdb_id}"
+    if run_index is None:
+        return f"{metadata_type}_{tmdb_id}"
+    return f"{metadata_type}_{tmdb_id}_r{run_index}"
 
 
-def parse_custom_id(custom_id: str) -> tuple[MetadataType, int]:
-    """Parse a batch custom_id back into (metadata_type, tmdb_id).
+def parse_custom_id(custom_id: str) -> tuple[MetadataType, int, int | None]:
+    """Parse a batch custom_id back into (metadata_type, tmdb_id, run_index).
 
-    Inverse of build_custom_id(). Splits on the last underscore —
-    safe because tmdb_id is always a pure integer (no underscores),
-    so 'plot_events_12345' correctly splits into (MetadataType.PLOT_EVENTS, 12345).
+    Inverse of build_custom_id(). Accepts both single-run format
+    ('plot_events_12345' → run_index=None) and multi-run format
+    ('concept_tags_12345_r2' → run_index=2).
+
+    The multi-run suffix is detected as a trailing token matching '_r<int>'.
+    The remaining string is split on the last underscore to separate the
+    metadata type from the tmdb_id — safe because tmdb_id is always a pure
+    integer (no underscores).
 
     Raises ValueError if the metadata_type portion is not a valid MetadataType.
     """
-    type_str, tmdb_id_str = custom_id.rsplit("_", 1)
+    # Detect optional '_r<N>' suffix.
+    run_index: int | None = None
+    head = custom_id
+    if "_r" in custom_id:
+        prefix, _, maybe_run = custom_id.rpartition("_r")
+        if maybe_run.isdigit():
+            run_index = int(maybe_run)
+            head = prefix
+
+    type_str, tmdb_id_str = head.rsplit("_", 1)
     metadata_type = MetadataType(type_str)  # raises ValueError if invalid
-    return metadata_type, int(tmdb_id_str)
+    return metadata_type, int(tmdb_id_str), run_index
 
 
 # ---------------------------------------------------------------------------

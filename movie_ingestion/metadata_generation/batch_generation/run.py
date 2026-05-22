@@ -629,10 +629,17 @@ def _record_batch_ids(
     # Column name from MetadataType StrEnum — fixed values, not user input.
     batch_col = f"{metadata_type}_batch_id"
 
-    # Extract tmdb_ids from custom_ids in the request dicts
-    tmdb_ids = []
+    # Extract tmdb_ids from custom_ids in the request dicts and dedupe.
+    # Multi-run types (e.g. concept_tags) emit N requests per movie with
+    # distinct custom_id suffixes; without dedup we'd run identical
+    # UPDATEs N times against the same row.
+    tmdb_ids: list[int] = []
+    seen: set[int] = set()
     for req in batch_requests:
-        _, tmdb_id = parse_custom_id(req["custom_id"])
+        _, tmdb_id, _run_index = parse_custom_id(req["custom_id"])
+        if tmdb_id in seen:
+            continue
+        seen.add(tmdb_id)
         tmdb_ids.append(tmdb_id)
 
     # Ensure rows exist
