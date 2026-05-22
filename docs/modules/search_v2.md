@@ -63,7 +63,7 @@ Step 2 (step_2.py): Query analysis (combined holistic read + atomization)
     (required/elevated/neutral/supporting/diminished), contextualized_phrase,
     relationship_role (INDEPENDENT/POSITIONING_REFERENCE/POSITIONING_QUALIFIER),
     replaces_axis, axes_replaced_by_siblings
-  → Model hard-coded to Gemini Flash (no thinking, temperature 0.35)
+  → Model: `gemini-3.5-flash` with `thinking_level="minimal"`, temperature 0.35
   → QueryAnalysis.traits is the closed set of explicit user intent Step 3 consumes
 
 Step 3 (step_3.py): Trait → category-call decomposition (per-trait LLM call)
@@ -83,6 +83,9 @@ Step 3 (step_3.py): Trait → category-call decomposition (per-trait LLM call)
   → Step 3 is polarity-agnostic; every call describes presence of the attribute
   → Siblings list passed to _build_user_prompt so POSITIONING_REFERENCE traits
     can honor cross-trait scope replacement
+  → Model: `gemini-3.5-flash` with `thinking_level="minimal"`, temperature 0.15.
+    `category_candidates` has a schema floor of `min_length=5`; the prompt
+    explicitly asks the model to prune fillers during `routing_exploration`.
 
 Full pipeline orchestrator (full_pipeline_orchestrator.py):
   → run_full_pipeline(query, *, skip_bypass_steps_0_1=False)
@@ -228,11 +231,16 @@ Each `CategoryName` member declares a `combine_type` (in
   the picture; strict — any 0 zeros the category)
 - `ALTERNATIVES` — max across calls (each call is an alternative way
   of finding the trait; matching any one is sufficient)
+- `CONSENSUS` — geometric mean across committed calls (same `_CONSENSUS_FOLD_FLOOR
+  = 0.1` as FACETS but within one category rather than across categories).
+  Used for `SENSITIVE_CONTENT` to require multi-endpoint agreement and prevent
+  a single endpoint spike from over-promoting. A [0.95, 0.05, 0.05] commit
+  drops from 0.95 (ALTERNATIVES max) to ~0.21 (CONSENSUS geomean).
 - `NO_OP` — category never fires (e.g. `BELOW_THE_LINE_CREATOR`'s
   `EXPLICIT_NO_OP` bucket); skipped by across-category max
 
 The 43-member assignment is locked in `schemas/trait_category.py`:
-27 SINGLE, 11 ADDITIVE, 4 ALTERNATIVES, 1 NO_OP. Rationale per
+27 SINGLE, 11 ADDITIVE, 3 ALTERNATIVES, 1 CONSENSUS, 1 NO_OP. Rationale per
 category lives in `search_improvement_planning/rescore_overhaul.md`.
 
 Phase D additionally skips categories whose handler emitted zero
@@ -429,8 +437,8 @@ Stage 3 (endpoint_fetching/): Endpoint translation + execution
   │                                   routes via deterministic phrase-matcher
   │                                   in category_handlers/media_type_router.py;
   │                                   no LLM handler)
-  └── chronological_query_execution.py  (pending wiring; spec flows through
-                                         HandlerResult.preference_specs;
+  └── chronological_query_execution.py  (wired via endpoint_executors.py;
+                                         spec flows through HandlerResult.preference_specs;
                                          ChronologicalQuerySpec is a bespoke
                                          EndpointParameters subclass)
   All executors return EndpointResult (list[ScoredCandidate]).
@@ -451,13 +459,15 @@ concurrently via `asyncio.gather`.
 |------|---------|
 | `step_0.py` | Flow routing. `run_step_0()` returns `Step0Response`. Routes to one of seven entity flows plus optional standard co-fire. SimilarityFlowData now carries `list[SimilarityReference]`. |
 | `step_1.py` | Spin generation. `run_step_1()` returns `Step1Response` (an `exploration` scratchpad + `spins`: exactly two `Spin(query, ui_label)`). Gemini 3.5 Flash with `thinking_level="minimal"`. |
-| `step_2.py` | Query analysis. `run_step_2()` returns `QueryAnalysis` (intent_exploration + atoms + traits). Model hard-coded to Gemini Flash (no thinking, temperature 0.35). |
-| `step_3.py` | Trait decomposition. `run_step_3(trait, siblings=None)` returns `TraitDecomposition` (includes trait_restatement + combine_mode). |
+| `step_2.py` | Query analysis. `run_step_2()` returns `QueryAnalysis` (intent_exploration + atoms + traits). Model: `gemini-3.5-flash` with `thinking_level="minimal"`, temperature 0.35. |
+| `step_3.py` | Trait decomposition. `run_step_3(trait, siblings=None)` returns `TraitDecomposition` (includes trait_restatement + combine_mode). `gemini-3.5-flash` with `thinking_level="minimal"`, temperature 0.15. |
 | `run_step_0.py` | CLI runner for step_0. Conditionally invokes entity-flow executors and prints results. |
+| `run_step_1.py` | Smoke-test runner for Step 1. Default query exercises the dominant-anchor path. |
 | `run_step_0_batch.py` | Batch runner; writes per-query files to `step_0_results/`. |
 | `run_test_queries.py` | Batch runner for Step 2+3 over test_queries.md queries with asyncio.Semaphore concurrency. |
 | `run_specs.py` | Diagnostic runner: Step 2→3→handler-LLM end-to-end, outputs combine_mode / combine_type / fired endpoints / keyword commits. |
 | `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline()` runs Steps 0+1→Step 2→Step 3→handler-LLM→Stage 4. |
+| `streaming_orchestrator.py` | **Production HTTP API entry point.** `stream_full_pipeline()` wraps `full_pipeline_orchestrator.run_full_pipeline()` and emits Server-Sent Events to the FastAPI route in `api/main.py`. |
 | `stage_4_execution.py` | Stage 4 execution + ranking. 5-phase pipeline. |
 | `exact_title_search.py` | Exact-title entity-flow executor. 6-tier scoring. |
 | `similar_movies.py` | Similarity entity-flow executor. V3.4+ lane architecture. |
@@ -537,9 +547,11 @@ Step 3's key discipline rules:
 rationale live in `search_improvement_planning/query_categories.md`.
 
 Notable taxonomy changes since ADR-078:
-- `TARGET_AUDIENCE` and `SENSITIVE_CONTENT` flipped to
-  `CategoryCombineType.ALTERNATIVES` (was ADDITIVE) so a single
-  endpoint score suffices rather than requiring KW × META × SEM product.
+- `TARGET_AUDIENCE` flipped to `CategoryCombineType.ALTERNATIVES` (was ADDITIVE)
+  so a single endpoint score suffices rather than requiring KW × META × SEM product.
+- `SENSITIVE_CONTENT` switched to `CategoryCombineType.CONSENSUS` (geometric
+  mean over committed endpoints) to require multi-endpoint agreement and prevent
+  a single SEMANTIC spike from over-promoting content-flagged movies.
 - `EMOTIONAL_EXPERIENTIAL`, `SEASONAL_HOLIDAY`, `SPECIFIC_PRAISE_CRITICISM`
   re-bucketed to `SINGLE_NON_METADATA_ENDPOINT` with semantic-only endpoint
   (was SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT + KEYWORD).
@@ -564,6 +576,12 @@ separate route/wrapper) and applies three pre-dispatch gates:
 1. POOL_RERANKER + falsy restrict → empty result
 2. params is None → log warning + empty result
 3. CANDIDATE_GENERATOR → locally rebind restrict=None
+
+**TRENDING special-case in `_dispatch_call`**: when `spec.route is
+EndpointRoute.TRENDING`, `_dispatch_call` calls `execute_trending_query`
+directly instead of routing through `build_endpoint_coroutine` (which
+rejects params=None). Mirrors the same special-case in
+`category_handlers.handler._dispatch_one_spec`.
 
 ## Dealbreaker Score Floor
 
@@ -602,6 +620,25 @@ allow the implicit-prior post-rerank to use the same curves.
   fallback when popularity is inactive (not 50/50 sum).
 - **Shorts promotion**: `ingest_movie.py` forces `release_format=SHORT`
   when `runtime_minutes <= 40`, regardless of IMDB title-type.
+
+## Hard Filters
+
+`MetadataFilters` (from `implementation/classes/schemas.py`) is threaded
+through every V2 pipeline primitive at retrieval time:
+
+- **Applied at primitive, not pre-resolved IDs.** Each Postgres and Qdrant
+  primitive folds conditions into its own WHERE / payload-Filter.
+- **Similarity branch excluded by design.** Anchor-based searches are not
+  filter-relevant; the orchestrator marks this branch with a comment.
+- **Shorts subtraction not filtered.** Shorts are a blocklist; applying the
+  filter to them would let out-of-range shorts survive as candidates.
+- **Semantic elbow probe filtered.** `_run_corpus_topn` accepts the filter
+  so the calibrated score threshold uses the filtered distribution.
+- **Trending via Postgres round-trip.** `execute_trending_query` calls
+  `fetch_movie_ids_matching_filters` to intersect the Redis hash against
+  an eligible-movie-card scan in one Postgres round-trip.
+- **No-filter regression.** When filters is None, helpers return `("", [])`
+  and the query plan is byte-identical to pre-filter behavior.
 
 ## Interactions
 
@@ -649,8 +686,8 @@ allow the implicit-prior post-rerank to use the same curves.
   category (`PERSON_CREDIT`, `NAMED_CHARACTER`, `TITLE_TEXT`) now
   emits its narrowed spec directly.
 - **`ChronologicalQuerySpec` uses bespoke `EndpointRoute.CHRONOLOGICAL`.**
-  Executor wiring is pending; specs flow through `preference_specs` but
-  no downstream executor reads them yet.
+  Executor is fully wired via `endpoint_executors.py` (`execute_chronological_query`);
+  spec flows through `preference_specs` and is dispatched by route.
 - **Stoplist asymmetry for awards**: ingest writes every token; query
   drops `AWARD_QUERY_STOPLIST`. Intentional — lets the droplist be
   revised without re-ingesting.

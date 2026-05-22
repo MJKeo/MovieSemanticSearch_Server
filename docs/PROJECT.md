@@ -65,7 +65,7 @@ Processes TMDB daily exports through a multi-stage funnel:
 2. TMDB detail fetching (~800K movies)
 3. Quality scoring and filtering (~800K → ~100K)
 4. IMDB scraping via GraphQL (~100K enriched)
-5. IMDB quality filtering (combined TMDB+IMDB quality scorer; score is the sole filter)
+5. IMDB quality filtering (combined TMDB+IMDB quality scorer, supplemented by two hard gates: title-type and missing-text)
 6. LLM metadata generation (operational — gpt-5-mini selected after multi-candidate evaluation, multi-type batch pipeline running via generator registry; see ADR-039, ADR-043, ADR-044)
 7. Vector text generation (`movie_ingestion/final_ingestion/vector_text.py`) — generates the text that gets embedded for each of 8 vector spaces
 8. Database ingestion into Postgres and Qdrant (implemented) — embedding is integrated into Stage 8 inside `movie_ingestion/final_ingestion/ingest_movie.py` via `generate_vector_embedding()`. Vector text generation lives in `movie_ingestion/final_ingestion/vector_text.py`.
@@ -85,7 +85,7 @@ All stages are operational, crash-safe, and idempotent.
 | api/ | FastAPI application | docs/modules/api.md |
 | schemas/ | Shared Pydantic models, enums, V2 translation schemas | docs/modules/schemas.md |
 | search_v2/ | V2 search pipeline (Steps 0–2 + Stage 3/4) | docs/modules/search_v2.md |
-| unit_tests/ | pytest suite (76 files) | — |
+| unit_tests/ | pytest suite (77 files) | — |
 
 Module docs in docs/modules/ provide concise summaries with
 boundaries, interactions, and gotchas. Decision records in

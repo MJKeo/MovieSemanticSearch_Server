@@ -85,6 +85,6 @@ from the search-time LLM DAG:
 - `MaturityRating` enum includes `maturity_rank` property for
   ordinal comparison (G=1, PG=2, PG-13=3, R=4, NC-17=5).
 - Watch provider keys encode both provider and access method in
-  a single uint32: `provider_id << 2 | method_id`.
+  a single uint32: `provider_id << 4 | method_id`.
 - `VectorCollectionName` docstring references Qdrant (not ChromaDB,
   which was the previous vector store).

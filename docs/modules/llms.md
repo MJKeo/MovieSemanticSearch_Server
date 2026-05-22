@@ -28,7 +28,7 @@ lives in `movie_ingestion/metadata_generation/`. See
 |------|---------|
 | `generic_methods.py` | LLM client initialization, all provider-specific generation functions, `LLMProvider` enum, and `generate_llm_response_async` unified router. Seven providers: OpenAI, Kimi, Gemini, Groq, Alibaba, Anthropic, WHAM. Embeddings via OpenAI `text-embedding-3-large` (3072 dims) per ADR-066. |
 | `query_understanding_methods.py` | **V1 search path only** — search-time DAG: 5 async functions that run in parallel with dependency management. Uses Kimi for all QU calls. Redis caching planned but not yet implemented (key format: `qu:v{N}:{hash}`, TTL 1 day). The V2 search pipeline (`search_v2/step_0.py`, `step_1.py`, `step_2.py`) does NOT use this DAG — V2 calls Gemini directly via `generate_llm_response_async`. |
-| `vector_metadata_generation_methods.py` | Legacy ingestion-time generation functions. Superseded by `movie_ingestion/metadata_generation/generators/`. Provides `TokenUsage` NamedTuple which is actively imported by all 10 generators — do not delete this module. |
+| `vector_metadata_generation_methods.py` | Legacy ingestion-time generation functions. Superseded by `movie_ingestion/metadata_generation/generators/`. Provides `TokenUsage` NamedTuple which is actively imported by all 12 generators — do not delete this module. |
 
 ## Boundaries
 
@@ -39,8 +39,7 @@ lives in `movie_ingestion/metadata_generation/`. See
   `movie_ingestion/metadata_generation/generators/`), system prompts
   (live in `movie_ingestion/metadata_generation/prompts/` for ingestion
   and `implementation/prompts/` for search), output schemas (live in
-  `implementation/classes/schemas.py` and
-  `movie_ingestion/metadata_generation/schemas.py`).
+  `implementation/classes/schemas.py` and `schemas/metadata.py`).
 
 ## LLM Provider Architecture
 
@@ -64,7 +63,7 @@ string. Provider-specific kwargs (e.g. `reasoning_effort` for OpenAI,
 `enable_thinking` for Kimi, `temperature` for Gemini/Groq/Alibaba)
 are passed through unchanged. `verbosity` is accepted by the OpenAI
 provider (passed through to the API) and popped by the WHAM provider
-before forwarding; all 10 generators pass `verbosity="low"`. Errors
+before forwarding; all 12 generators pass `verbosity="low"`. Errors
 propagate without wrapping.
 
 All provider methods return `Tuple[BaseModel, int, int]` (parsed

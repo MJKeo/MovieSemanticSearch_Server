@@ -22,11 +22,11 @@ Defines canonical types for:
 |------|---------|
 | `metadata.py` | `EmbeddableOutput` base class + 10 embeddable `*Output` schema classes + `FranchiseOutput` and `ConceptTagsOutput` / `TagEvidence` (non-embeddable franchise/concept-tag classification). Each `EmbeddableOutput` subclass implements `embedding_text()` returning normalized text for vector embedding. `ConceptTagsOutput` produces integer concept_tag_ids via `all_concept_tag_ids()`, not embedding text. Legacy `__str__()` methods are retained for backward compatibility. Class docstrings are written as `#` comment blocks above each class — not as Python docstrings — to prevent them from leaking into the JSON schema payload sent to the LLM via `model_json_schema()`. |
 | `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` single-movie loader and `Movie.from_tmdb_ids()` batch loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns fully typed objects with parsed metadata, including `franchise_metadata: FranchiseOutput | None`. |
-| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `BoxOfficeStatus` StrEnum (`HIT`, `FLOP`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), concept-tag enums grouped by category, `AwardCeremony` (12 members — IMDB event.text string as value, stable `ceremony_id` int for Postgres), `AwardOutcome` StrEnum (`WINNER`/`NOMINEE`, each with stable `outcome_id`), `LineagePosition` enum (sequel/prequel/remake/reboot). **Search-side enums**: `SearchFlow` (exact_title/similarity/standard/browse), `EndpointRoute` (9 values — entity/studio/metadata/awards/franchise_structure/keyword/semantic/trending/media_type), `DealbreakDirection` (inclusion/exclusion), `AwardScoringMode` (FLOOR/THRESHOLD), `ScoringMethod` (ANY/ALL shared by keyword, metadata, and studio endpoint schemas), `HandlerBucket` (eight query-generation instruction buckets documented in `search_improvement_planning/query_buckets.md`), `MatchMode` (filter/trait — replaces the deleted `ActionRole`), `Polarity` (POSITIVE/NEGATIVE). **Note**: `CategoryName` was moved to `schemas/trait_category.py`; `AmbiguousLean` is in this file adjacent to `SearchFlow`. |
+| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `BoxOfficeStatus` StrEnum (`HIT`, `FLOP`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), `AwardCeremony` (12 members — IMDB event.text string as value, stable `ceremony_id` int for Postgres), `AwardOutcome` StrEnum (`WINNER`/`NOMINEE`, each with stable `outcome_id`), `LineagePosition` enum (sequel/prequel/remake/reboot). **ConceptTag master enum** (`str, Enum` with `__new__` carrying `concept_tag_id`, `category`, `description`, `selection_criteria`, `boundary_cases`, `long_form_instructions` per member — 25 members). **ConceptTagCategory** enum (7 members, one per assessment category; carries `display_label`, `intro_text`, `cardinality`, `field_name`, `enum_class_name`, `section_instructions`, `cross_tag_note`). The 7 per-category enums (`NarrativeStructureTag` etc.) are built dynamically via `_build_category_enum` and remain the Pydantic-level constraint for structured output. **CategoryCombineType** includes `SINGLE`, `ADDITIVE`, `ALTERNATIVES`, `CONSENSUS` (geometric mean over committed calls, `_CONSENSUS_FOLD_FLOOR=0.1`), and `NO_OP`. `SENSITIVE_CONTENT` uses `CONSENSUS`; `TARGET_AUDIENCE` uses `ALTERNATIVES`. **Search-side enums**: `SearchFlow` (exact_title/similarity/standard/browse), `EndpointRoute` (11 values — entity/studio/metadata/awards/franchise_structure/keyword/semantic/trending/media_type/neutral_seed/chronological), `DealbreakDirection` (inclusion/exclusion), `AwardScoringMode` (FLOOR/THRESHOLD), `ScoringMethod` (ANY/ALL shared by keyword, metadata, and studio endpoint schemas), `HandlerBucket` (eight query-generation instruction buckets documented in `search_improvement_planning/query_buckets.md`), `MatchMode` (filter/trait — supersedes `ActionRole`, which is retained in `schemas/query_understanding.py` for the legacy reranking path), `Polarity` (POSITIVE/NEGATIVE). **Note**: `CategoryName` was moved to `schemas/trait_category.py`; `AmbiguousLean` is in this file adjacent to `SearchFlow`. |
 | `data_types.py` | `MultiLineList` — a constrained list type used in generation schemas. |
 | `imdb_models.py` | Shared IMDB sub-models: `AwardNomination`, `FeaturedReview`, `ParentalGuideItem`, `ReviewTheme`. Moved from `movie_ingestion/imdb_scraping/models.py` so `db/` and `api/` containers can import them without mounting `movie_ingestion/`. |
 | `movie_input.py` | `MovieInputData` dataclass + `load_movie_input_data()` — loads raw tracker data into the form consumed by generator prompt builders. |
-| `flow_routing.py` | **Legacy Stage 1** output schema (pre-step-0 redesign). `FlowRoutingResponse` contains `primary_intent`, `alternative_intents`, `creative_alternatives`. Still used by `search_v2/stage_1.py` if that path is active; the new step-0/1 path uses `step_0_flow_routing.py` and `schemas/step_1.py`. |
+| `flow_routing.py` | **Legacy Stage 1** output schema (pre-step-0 redesign). `FlowRoutingResponse` contains `primary_intent`, `alternative_intents`, `creative_alternatives`. Dead code — no live module imports it; the active path uses `step_0_flow_routing.py` and `schemas/step_1.py`. |
 | `step_0_flow_routing.py` | **Search V2 Step 0** output schema. `Step0Response` with `titles_observed`, `qualifiers`, `ambiguous_title_phrases` (observation fields), plus `exact_title_flow`, `similarity_flow`, `standard_flow` decision fields, and `primary_flow` enum. Three Pydantic validators enforce: ≥1 flow fires, primary_flow matches a firing flow, non-null titles are non-empty. |
 | `step_2.py` | **Search V2 Step 2 (Query Analysis)** output schema. `QueryAnalysis` with `holistic_read: str` and `atoms: list[Atom]`. Each `Atom` carries `surface_text` (verbatim user words for the criterion), `modifying_signals: list[ModifyingSignal]` (unified list of every signal in the query shaping this criterion's evaluation, regardless of where in surface order it sits), `evaluative_intent: str` (consolidated 1-2 sentence prose statement of what scoring on this criterion actually means once context is integrated), and optional `candidate_internal_split`. `ModifyingSignal` has `surface_phrase: str` (verbatim user text for the signal — adjacent qualifier or connecting language + reference) and `effect: str` (freeform concise description of what the signal does to the atom's evaluation; modal-language vocabulary SOFTENS / HARDENS / FLIPS POLARITY / CONTRASTS recommended for those cases but no longer enum-enforced). |
 | `trait_category.py` | **Category taxonomy for Step 2 grounding**. `CategoryName` enum — 43 active members (gaps at 43 and 45 preserved for cross-reference). Each member carries: `description`, `boundary`, `edge_cases`, `good_examples`, `bad_examples`, `endpoints` tuple, `bucket` (`HandlerBucket`). Built programmatically from the planning doc in `search_improvement_planning/query_categories.md`. |
@@ -40,12 +40,14 @@ Defines canonical types for:
 | `entity_translation.py` | **Search V2 Step 3 entity endpoint** output schema. |
 | `keyword_translation.py` | **Search V2 Step 3 keyword endpoint** output schema. Uses `UnifiedClassification` as the selection type and `scoring_method: ScoringMethod` for ANY/ALL aggregation across finalized members. |
 | `semantic_translation.py` | **Search V2 Step 3 semantic endpoint** schema. `SemanticParameters` (single unified shape — replaces deleted `SemanticDealbreakerSpec` / `SemanticPreferenceSpec`) with `space_queries` list and retrospective `primary_vector` field. |
+| `chronological_translation.py` | **Search V2 Step 3 chronological endpoint** schema. `ChronologicalQuerySpec` (direction + is_top_n_active + top_n) and `ChronologicalDirection` enum. Bespoke `EndpointParameters` subclass routed via `EndpointRoute.CHRONOLOGICAL`. Consumed by `db/chronological_scoring.py` and `search_v2/endpoint_fetching/chronological_query_execution.py`. |
 | `semantic_bodies.py` | Helper bodies / per-vector-space query body builders for the semantic endpoint. |
 | `studio_translation.py` | **Search V2 Step 3 studio endpoint** output schema for the brand/production-company surface. Uses `scoring_method: ScoringMethod` for ANY/ALL aggregation across named studio refs. |
 | `award_surface_forms.py` | Surface-form normalization helpers for the awards endpoint (LLM-emitted strings → token lookups). |
 | `production_brand_surface_forms.py` | Surface-form normalization helpers for the studio endpoint, paired with `production_brands.py`. |
 | `unified_classification.py` | `UnifiedClassification` StrEnum — merges `OverallKeyword` (225), `SourceMaterialType` (10), and all `ConceptTag` values (25) into one vocabulary for the Step 3 keyword LLM. Built dynamically at import time. `CLASSIFICATION_ENTRIES` registry maps each name to `(display, definition, source, source_id, backing_column)`. `entry_for(member)` is the lookup entry point. `OverallKeyword` takes precedence on name collisions. `Genre` is excluded (fully subsumed by `OverallKeyword`). |
 | `production_brands.py` | 31-brand registry with identity-test curation principle: a label belongs in a brand's roster only if a casual viewer typing `<brand> movies` would expect its films. Docstring updated to document the new principle; `_build_and_validate_registry()` import-time assertions still run. |
+| *(ingestion-side)* `movie_ingestion/metadata_generation/prompts/concept_tags_assembly.py` | Programmatic system-prompt assembly for the concept_tags generator. `build_system_prompt()` constructs the TAG DEFINITIONS section from `ConceptTag` and `ConceptTagCategory` enum attributes; `concept_tags.py` re-exports `SYSTEM_PROMPT = build_system_prompt()` so external import paths are unchanged. Keeps schema pure-data and prompt-format concerns separate from taxonomy content. |
 
 ## Boundaries
 
@@ -103,20 +105,34 @@ production-vector input.
 `embedding_text()` output to base variant).
 
 **`ConceptTagsOutput`** (`metadata.py`): Multi-label binary classification
-of concept tags by category. Contains 7 category fields: `narrative_structure`,
-`plot_archetypes`, `settings`, `characters`, `experiential`, `content_flags`
-(each a `list[TagEvidence]`), and `endings` (a single required `EndingAssessment`
-with a `tag: EndingTag` field — not a list). The `endings` field uses a single
-required enum rather than a list; `EndingTag` includes `NO_CLEAR_CHOICE` (id=-1)
-as an explicit affirmative classification when evidence is ambiguous. A
-`validate_tag_categories` model validator ensures each list category only
-contains tags from its allowed set (defined in `CONCEPT_TAG_CATEGORIES`).
-`all_concept_tag_ids()` extracts a sorted, deduplicated `list[int]` for
-storage in `movie_card.concept_tag_ids`, filtering out id=-1 values.
+of concept tags by category. Contains 7 Assessment fields: `narrative_structure`,
+`plot_archetypes`, `settings`, `characters`, `experiential`, `content_flags`,
+and `endings`. Each Assessment has a **required `reasoning: str` field
+positionally before its `tags`/`tag` field** (Pydantic v2 preserves declaration
+order in `model_json_schema`, so OpenAI structured outputs emit `reasoning` before
+the tag selection — forcing evidence-before-conclusion at the token level). The
+`endings` field uses `EndingAssessment` with a single required `EndingTag`
+(not a list); `EndingTag` includes `NO_CLEAR_CHOICE` (id=-1) as an explicit
+affirmative classification when evidence is ambiguous. `all_concept_tag_ids()`
+extracts a sorted, deduplicated `list[int]` for storage in
+`movie_card.concept_tag_ids`, filtering out id=-1. `majority_merge()` class
+method takes a list of `ConceptTagsOutput` instances and produces a merged
+result using per-category majority vote; the merged Assessment's `reasoning`
+field concatenates per-run reasonings as `[Run 1] ... [Run 2] ...` for
+audit. Generated metadata stores 3 independent runs (`concept_tags`,
+`concept_tags_run_2`, `concept_tags_run_3` columns) for majority-merge
+downstream via `concept_tags_merge.py`.
 
-**`ConceptTag`** (`enums.py`): IntEnum with a `concept_tag_id` attribute
-per member. Grouped into 7 categories via `CONCEPT_TAG_CATEGORIES` dict
-(maps category field name → frozenset of allowed `ConceptTag` values).
+**`ConceptTag`** (`enums.py`): Master `(str, Enum)` with per-member
+attributes `concept_tag_id`, `category`, `description`, `selection_criteria`,
+`boundary_cases`, and `long_form_instructions`. 25 members. Grouped via
+`CONCEPT_TAG_CATEGORIES` dict (maps category field name → frozenset of
+allowed `ConceptTag` values). The 7 per-category enums (`NarrativeStructureTag`
+etc.) are derived dynamically — slug values and numeric IDs are byte-identical
+to the original per-category enums for Postgres and tracker.db compatibility.
+**`ConceptTagCategory`**: companion enum carrying section-level metadata
+(`display_label`, `intro_text`, `cardinality`, `field_name`, `section_instructions`,
+`cross_tag_note`); used by `concept_tags_assembly.py` to build the prompt.
 
 `SourceMaterialV2Output` outputs a `list[SourceMaterialType]`. An empty
 list signals original screenplay — no enum value is assigned for that case.
@@ -143,8 +159,12 @@ narrative position axis (`lineage_position` enum, `is_spinoff` bool,
 includes shared-universe team-up films. `validate_and_fix()` enforces
 internal consistency after parsing (partial null-propagation, launches_subgroup
 coupling, launched_franchise coherence). `FranchiseRole` enum is deleted.
-Also includes `concept_tags_metadata` and `concept_tags_run_2_metadata` fields
-for both generation runs; `concept_tag_ids()` merges both via set union.
+Also includes `concept_tags_metadata` field; `concept_tag_ids()` reads from
+that single field. The three independent generation runs are persisted in
+tracker.db columns (`concept_tags`, `concept_tags_run_2`, `concept_tags_run_3`)
+but `Movie` only exposes the merged result via `concept_tags_metadata`; the
+majority merge is performed out-of-band by `concept_tags_merge.py` plus the
+backfill script, not by `Movie`.
 Includes helper methods:
 - `maturity_text_short()` — IMDB reasoning prose or MPA description fallback
 - `deduplicated_genres()` — genre_signatures + IMDB genres, substring-deduped
@@ -168,7 +188,7 @@ interface for the ingestion pipeline):
 - `audio_language_ids()` — list of integer language IDs
 - `source_material_type_ids()` — sorted list of `SourceMaterialType` IDs from `source_material_v2_metadata`
 - `keyword_ids()` — sorted list of `OverallKeyword` IDs from `imdb_data.overall_keywords`
-- `concept_tag_ids()` — sorted deduplicated list merging both `concept_tags_metadata` and `concept_tags_run_2_metadata` generation runs; id=-1 values filtered out
+- `concept_tag_ids()` — sorted deduplicated list of concept_tag_ids from the merged `concept_tags_metadata` field; id=-1 values filtered out
 - `award_ceremony_win_ids()` — sorted list of `AwardCeremony.ceremony_id` values for ceremonies where the movie won at least one award
 
 `Movie.from_tmdb_ids(tmdb_ids, tracker_db_path?)` is the batch loader: executes

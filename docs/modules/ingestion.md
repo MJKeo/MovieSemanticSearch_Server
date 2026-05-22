@@ -49,7 +49,7 @@ database ingestion) live in `final_ingestion/` within this module.
 | `metadata_generation/errors.py` | Custom exception classes (`MetadataGenerationError`, `MetadataGenerationEmptyResponseError`) imported by all generators. |
 | `metadata_generation/helper_scripts/report_bucket_axis_performance.py` | Diagnostic CLI: reads `*_evaluation.json` files and prints per-bucket tables of average candidate performance per scoring axis. Supports both bucket file shapes. |
 | `metadata_generation/helper_scripts/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
-| `metadata_generation/generators/` | 12 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All are locked (provider/model are module constants, no caller params). Current production-vector input comes from `production_techniques.py` (gpt-5.4-mini, reasoning_effort=low, `ProductionTechniquesOutput` schema); `production_keywords.py` is retained as the older broader keyword filter. The full set also includes `plot_events.py`, `reception.py`, `plot_analysis.py`, `viewer_experience.py`, `narrative_techniques.py`, `watch_context.py`, `franchise.py`, `source_of_inspiration.py`, `source_material_v2.py`, and `concept_tags.py`. |
+| `metadata_generation/generators/` | 12 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All are locked (provider/model are module constants, no caller params). Current production-vector input comes from `production_techniques.py` (gpt-5.4-mini, reasoning_effort=low, `ProductionTechniquesOutput` schema); `production_keywords.py` is retained as the older broader keyword filter. The full set also includes `plot_events.py`, `reception.py`, `plot_analysis.py`, `viewer_experience.py`, `narrative_techniques.py`, `watch_context.py`, `franchise.py`, `source_of_inspiration.py`, `source_material_v2.py`, and `concept_tags.py`. `concept_tags.py` uses `gpt-5-mini` with `reasoning_effort=minimal`. |
 | `metadata_generation/prompts/` | 12 prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant unless the task uses a named variant (`plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS`). `production_techniques.py` is the active narrowed production-vector prompt; `production_keywords.py` remains only as the older broader prompt and still exports `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation-notebook backward compatibility. `source_of_inspiration.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_REASONING` for potential future evaluation. |
 | `final_ingestion/vector_text.py` | Generates the text for each of the 8 vector spaces from a `Movie` object. One function per space (e.g. `create_plot_events_vector_text`, `create_reception_vector_text`). All functions accept `Movie` and return `str | None` (None when required metadata is absent). Synopsis-first fallback hierarchy for plot_events; labeled fields and per-term `normalize_string()` for plot_analysis, narrative_techniques, viewer_experience, watch_context, and reception. The production vector is now a lean two-line shape only: `filming_locations:` plus `production_techniques:`, with empty lines omitted and `None` returned when both are absent. Narrative techniques now emits fixed-order labeled multiline section lines for `narrative_archetype`, `narrative_delivery`, `pov_perspective`, `characterization_methods`, `character_arcs`, `audience_character_perception`, `information_control`, `conflict_stakes_design`, and `additional_narrative_devices`. Viewer experience now emits fixed-order labeled multiline text with separate `*_negations:` lines. Watch context now emits fixed-order labeled multiline section lines for `self_experience_motivations`, `external_motivations`, `key_movie_feature_draws`, and `watch_scenarios`. The reception vector appends deterministic `major_award_wins` ceremony text from scraped award data (wins only, distinct ceremonies, no nominations, no Razzie). Token-limit fallback is wired into `create_plot_events_vector_text()` automatically — callers do not need to handle it. Two-tier check: cheap 15K-char gate first, tiktoken only on the ~0.5% that exceed it. |
 | `final_ingestion/ingest_movie.py` | Stage 8: Upserts final movie data into Postgres (movie_card, movie_awards, `movie_franchise_metadata`, role-specific lexical postings: `lex.inv_actor_postings` with billing_position/cast_size, `lex.inv_director_postings`, `lex.inv_writer_postings`, `lex.inv_producer_postings`, plus `lex.inv_franchise_postings`) and Qdrant (8 named vectors + hard-filter payload). The `movie_card` upsert now persists both `budget_bucket` and `box_office_bucket` as nullable text buckets derived from `Movie` helpers. All functions accept `Movie` exclusively (BaseMovie fully removed). Includes CLI entry point (`cmd_ingest`) for orchestrated batch ingestion: parallel Postgres + Qdrant via `asyncio.gather`, Postgres sub-batches with SAVEPOINTs for per-movie error isolation. Assumes the Postgres schema has already been initialized from `db/init/01_create_postgres_tables.sql`. Returns `BatchIngestionResult` (succeeded_ids, failed_ids, filtered_ids, errors). `MissingRequiredAttributeError` routes movies with unrecoverable missing fields to `filtered_out` rather than the retryable `ingestion_failed` status. `_mark_ingested` uses `json_each()` for a single UPDATE statement avoiding SQLITE_MAX_VARIABLE_NUMBER limits. `ingest_lexical_data` now expands hyphen variants for each actor/character name (via `expand_hyphen_variants`), computes cast_size denominators from distinct normalized names before expansion, and stamps `award_name_entry_id` on every `movie_awards` upsert row. |
@@ -57,6 +57,8 @@ database ingestion) live in `final_ingestion/` within this module.
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 | `backfill/rebuild_lexical_postings.py` | Backfill script: schema migration (ALTER + DROP + indexes for `title_normalized` column) -> TRUNCATE role posting tables -> per-movie rebuild from `movie_card` rows. Reuses `ingest_lexical_data(movie, conn)` verbatim so backfill and main ingest paths cannot drift. CLI flags: `--schema-only`, `--dry-run`, `--max-movies N`. Run after the title_normalized + hyphen-variant changeset lands. |
 | `final_ingestion/rebuild_production_brand_postings.py` | Backfill script: TRUNCATE `lex.inv_production_brand_postings`, SELECT `(tmdb_id, production_companies, release_date)` from tracker for `status=INGESTED`, rerun `resolve_brands_for_movie` and `batch_insert_brand_postings`. Commit every 500 movies. Use after brand registry retuning to refresh postings without full re-ingestion. |
+| `metadata_generation/concept_tags_merge.py` | Shared module for concept_tags post-processing: `majority_merge()`, `LIST_CATEGORIES`, `_ASSESSMENT_BY_FIELD`. Extracted from `run_concept_tags_generation.py` so the eval script and `backfill_concept_tag_ids.py` share one implementation. |
+| `backfill/backfill_concept_tag_ids.py` | Backfill script: reads all three concept_tags JSON columns from tracker.db, runs `majority_merge`, flattens via `all_concept_tag_ids()`, bulk-writes to `movie_card.concept_tag_ids` via COPY-into-temp + UPDATE FROM. Streaming pipeline (fetchmany chunks) to bound peak memory. Flags: `--limit N`, `--dry-run`, `--chunk-size`. |
 
 ## Boundaries
 
@@ -361,6 +363,11 @@ batch pipeline CLI (`run.py`).
 All generators are locked: provider/model are module-level constants
 (`_PROVIDER`, `_MODEL`), not caller params.
 See ADR-026, ADR-039, ADR-042, ADR-043, ADR-048, ADR-049, ADR-053, ADR-054.
+**Per-call LLM timeout override**: `generate_llm_response_async` accepts an
+optional `timeout: float | None` kwarg that overrides the module-default
+`LLM_PER_ATTEMPT_TIMEOUT_SECONDS=25.0` for generators that exceed it
+(concept_tags at medium reasoning effort typically completes in 25-40s).
+Callers pass `timeout=` explicitly; the global default is unchanged.
 
 **Locking finalized generators**: When a generator's evaluation is
 complete, remove all configurable model parameters from its production
@@ -715,20 +722,22 @@ Each serves a distinct purpose with minimal overlap.
 | `title_with_year` | ~5-10 | Parametric knowledge tiebreaker for well-known films | All (confirmation) |
 | `plot_keywords` | ~30-150 | Direct community tags — highest signal when present | 15+ tags with strong keyword frequencies |
 | `plot_summary` (Wave 1) | ~200-800 | Plot events, character arcs, ending, setting | Fallback for all; primary for TWIST_VILLAIN, SINGLE_LOCATION, CON_ARTIST, KIDNAPPING, ANIMAL_DEATH, endings |
-| `emotional_observations` (Wave 1) | ~30-80 | Reviewer reports of audience emotional response | FEEL_GOOD, TEARJERKER (primary), HAPPY_ENDING, SAD_ENDING (confirmation) |
+| `emotional_observations` (Wave 1) | ~30-80 | Reviewer reports of audience emotional response | FEEL_GOOD, TEARJERKER (primary), HAPPY_ENDING/SAD_ENDING (support) |
+| `plot_summary closing scene` | parsed from plot_summary | Literal closing scene beat (celebration/loss/quiet/existential) | endings PRIMARY (replaces ending_aftertaste) |
 | `narrative_techniques` terms (Wave 2) | ~30-60 | Pre-classified structural/craft labels from 6 sections | PLOT_TWIST, UNRELIABLE_NARRATOR, UNDERDOG, NONLINEAR_TIMELINE, ANTI_HERO, BREAKING_FOURTH_WALL, ENSEMBLE_CAST |
 | `plot_analysis` fields (Wave 2) | ~15-35 | Pre-classified arc labels and conflict types | HAPPY/SAD_ENDING (arc direction), REVENGE, UNDERDOG (confirmation) |
 
 **Total input: ~310-1140 tokens.** plot_summary is 50-70% of the budget
 and is the only large unstructured input.
 
-**Narrative techniques terms used** (6 of 9 sections, terms only — no
-justifications):
+**Narrative techniques terms used** (5 of 9 sections — terms only, no
+justifications; `character_arcs.terms` and `audience_character_perception.terms`
+removed because they emitted literal tag-name labels like "antihero maturation arc"
+that drove false positives):
 - `narrative_archetype` → UNDERDOG
 - `narrative_delivery` → NONLINEAR_TIMELINE, TIME_LOOP
 - `pov_perspective` → UNRELIABLE_NARRATOR, ENSEMBLE_CAST
 - `information_control` → PLOT_TWIST, TWIST_VILLAIN
-- `audience_character_perception` → ANTI_HERO
 - `additional_narrative_devices` → BREAKING_FOURTH_WALL
 
 **Plot analysis fields used** (2 of 6):
@@ -742,7 +751,8 @@ justifications):
 | `overall_keywords` | Disambiguation already served by plot_summary + plot_keywords together. Marginal improvement not worth token cost. |
 | `craft_observations` (Wave 1) | Already distilled into narrative_techniques terms. Raw prose adds tokens without new signal. |
 | `thematic_observations` (Wave 1) | Already distilled into plot_analysis fields. Same redundancy issue. |
-| `viewer_experience` (Wave 2) | emotional_observations captures the audience response signal needed for FEEL_GOOD/TEARJERKER. Dropping this eliminates the Wave 2 dependency. |
+| `viewer_experience` / `ending_aftertaste` (Wave 2) | `ending_aftertaste` was the primary ending signal but contained the literal word "bittersweet", causing the model to label movies BITTERSWEET_ENDING regardless of the actual closing scene. Removed; replaced by plot_summary closing-scene detection as the primary ending signal with `emotional_observations` as support. |
+| `character_arcs.terms` + `audience_character_perception.terms` (NT sections) | Emitted literal tag-name labels ("antihero maturation arc", "sympathetic antihero") causing ANTI_HERO false positives. Removed. The remaining 5 NT sections are kept with a vocabulary-overlap warning in the prompt. |
 
 ### Coverage analysis by signal source
 
@@ -779,10 +789,22 @@ empty-list completion pressure that caused bittersweet_ending false positives
 at 14% precision. `NO_CLEAR_CHOICE` is filtered out of `all_concept_tag_ids()`
 and never reaches storage or search.
 
-**Two-run generation:** `generated_metadata` stores both `concept_tags` and
-`concept_tags_run_2` columns. Running generation twice and taking the union of
-both runs improves recall without schema changes. `concept_tag_ids()` on `Movie`
-merges both columns via set union before returning sorted IDs.
+**Required `reasoning` field on every Assessment:** Each per-category
+Assessment declares `reasoning: str` before its `tags`/`tag` field.
+Positioning it first in the class declaration forces the model to emit
+evidence before the tag selection (OpenAI structured outputs respect
+Pydantic v2 property declaration order). This closes the pattern-6 failure
+mode where the model would write plausible reasoning after already emitting
+its tag conclusion. Per-category `reasoning` descriptions name the specific
+evidence sources the model should examine for that section.
+
+**Three-run generation:** `generated_metadata` stores `concept_tags`,
+`concept_tags_run_2`, and `concept_tags_run_3` columns. Running generation
+three times and taking a majority vote per category improves precision and
+recall. `concept_tags_merge.py` provides the canonical `majority_merge()`
+implementation. Downstream consumers merge via majority vote;
+`movie_card.concept_tag_ids` is backfilled from the merge via
+`backfill_concept_tag_ids.py`.
 
 **Classification boundary — plot_twist:** A twist must recontextualize
 events the audience has already processed under a different assumption.
@@ -794,7 +816,7 @@ twists.
 
 - Tag definitions organized by category matching the output schema
   (recognition-level prompting, not pure recall)
-- Model: gpt-5-mini, reasoning effort medium, verbosity low
+- Model: gpt-5-mini, reasoning effort minimal. Prompt compressed to ~7,400 system tokens + ~2,600 schema tokens (-22% vs prior). System prompt assembled programmatically from `ConceptTag` and `ConceptTagCategory` enum attributes via `concept_tags_assembly.py`.
 - Single LLM call per movie (inputs overlap heavily; splitting by category
   repeats context for net token increase)
 - Only split into multiple calls if evaluation shows the model struggling

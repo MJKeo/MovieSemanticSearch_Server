@@ -46,7 +46,7 @@
 # Per-trait LLM call. The orchestrator (run_step_3.py) fans out across
 # a query's traits in parallel.
 #
-# Model: Gemini 3.5 Flash with `thinking_level="low"` (minimal
+# Model: Gemini 3.5 Flash with `thinking_level="minimal"` (minimal
 # thinking enabled — distinct from `thinking_budget=0` which
 # disables thinking entirely). Low temperature for routing
 # stability. The run function does not accept a model parameter —
@@ -1348,7 +1348,7 @@ SYSTEM_PROMPT = (
 # ===============================================================
 #
 # Model is finalized to Gemini 3.5 Flash with minimal thinking
-# enabled (`thinking_level="low"`) and a low temperature. Callers
+# enabled (`thinking_level="minimal"`) and a low temperature. Callers
 # cannot override — this keeps the step reproducible and makes
 # cost/latency predictable end-to-end.
 

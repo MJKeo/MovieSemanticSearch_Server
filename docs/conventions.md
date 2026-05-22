@@ -240,7 +240,7 @@ These rules apply everywhere and are not negotiable:
 - **Redis keys**: Colon-delimited namespaces —
   `emb:{model}:{hash}`, `qu:v{N}:{hash}`,
   `trending:current`, `tmdb:movie:{id}`
-- **Watch provider keys**: Encoded as `provider_id << 2 | method_id`
+- **Watch provider keys**: Encoded as `provider_id << 4 | method_id`
   (packed uint32). The `create_watch_provider_offering_key()`
   helper in `implementation/misc/helpers.py` handles encoding.
 - **Ingestion statuses**: Progress through pipeline stages —

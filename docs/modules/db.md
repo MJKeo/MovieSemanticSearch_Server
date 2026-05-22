@@ -21,10 +21,11 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
 | `vector_scoring.py` | 5-stage pipeline converting raw Qdrant scores → single [0,1] score. Stages: execution flags → blend (80/20) → normalize (exp decay, k=3.0) → weight → sum. |
 | `lexical_search.py` | Entity-based search via Postgres inverted indexes. Resolves actors/directors/franchises/characters to term IDs, computes F-score (beta=2.0). |
 | `metadata_scoring.py` | Scores candidates against LLM-extracted metadata preferences (genres, date, providers, language, maturity, reception, trending, popularity, budget_size). Weighted average, weights are static. |
+| `chronological_scoring.py` | Pure helper for the chronological query executor. `score_chronological(release_ts_by_movie, direction)` returns a percentile-rank curve over unique release dates in the pool (POOL_RERANKER semantics). `OLDEST_FIRST` scores oldest=1.0; `NEWEST_FIRST` scores newest=1.0. Missing release_ts → 0.0. Consumes `ChronologicalDirection` from `schemas/chronological_translation.py`. |
 | `reranking.py` | Quality-prior reranking: bucket by relevance score (precision=2), sort within buckets by reception score. |
-| `postgres.py` | Async connection pool, all SQL operations, posting list queries (role-specific people tables: actor/director/writer/producer/composer, plus character), and movie card bulk fetch/upsert. `movie_card` persists nullable text buckets for both `budget_bucket` and `box_office_bucket` alongside the canonical scalar/array metadata used by reranking and downstream filtering. Also owns: franchise upsert helpers for `movie_franchise_metadata` + the franchise token index (`lex.franchise_entry`, `lex.franchise_token`, `fetch_franchise_entry_ids_for_tokens`, `fetch_franchise_movie_ids` — the latter branches on spec shape to pick its driving table); studio read helpers for the v2 studio endpoint (`fetch_movie_ids_by_brand`, `fetch_company_ids_for_tokens`, `fetch_movie_ids_by_production_company_ids`); awards helpers for `movie_awards` including award name token index (`fetch_award_name_entry_ids_for_tokens`, `fetch_award_row_counts` — takes `award_name_entry_ids: set[int]`, not raw strings). `PEOPLE_POSTING_TABLES` constant lists all 5 role-specific tables for search code that unions across roles. V1 title-token helpers (`batch_upsert_title_token_strings`, `batch_insert_title_token_postings`, `fetch_title_token_ids`, `fetch_title_token_ids_exact`, etc.) have been removed from `postgres.py`; stubs returning `{}` are left in `db/lexical_search.py` (lines 33–38) so v1 `lexical_search.py` still imports cleanly. |
+| `postgres.py` | Async connection pool, all SQL operations, posting list queries (role-specific people tables: actor/director/writer/producer/composer, plus character), and movie card bulk fetch/upsert. `movie_card` persists nullable text buckets for both `budget_bucket` and `box_office_bucket` alongside the canonical scalar/array metadata used by reranking and downstream filtering. Also owns: franchise upsert helpers for `movie_franchise_metadata` + the franchise token index (`lex.franchise_entry`, `lex.franchise_token`, `fetch_franchise_entry_ids_for_tokens`, `fetch_franchise_movie_ids` — the latter branches on spec shape to pick its driving table); studio read helpers for the v2 studio endpoint (`fetch_movie_ids_by_brand`, `fetch_company_ids_for_tokens`, `fetch_movie_ids_by_production_company_ids`); awards helpers for `movie_awards` including award name token index (`fetch_award_name_entry_ids_for_tokens`, `fetch_award_row_counts` — takes `award_name_entry_ids: set[int]`, not raw strings). Hard-filter helpers: `_build_movie_card_conditions` (centralizes per-column SQL fragment + params for both CTEs and inline clauses), `_build_inline_movie_card_filter_clause` (returns `" AND movie_id IN (SELECT movie_id FROM public.movie_card WHERE …)"` for posting-table queries), `_build_direct_movie_card_filter_clause` (returns `" AND <conds>"` for queries whose FROM is already `movie_card`). Both helpers return `("", [])` when `filters` is None/inactive, making the no-filter path byte-identical to pre-filter code. `fetch_movie_ids_matching_filters` resolves filters to a movie_id set for Redis-sourced candidates (trending) that have no Postgres table of their own. `PEOPLE_POSTING_TABLES` constant lists all 5 role-specific tables for search code that unions across roles. V1 title-token helpers have been removed from `postgres.py`; stubs returning `{}` are left in `db/lexical_search.py` (lines 33–38) so v1 `lexical_search.py` still imports cleanly. |
 | `qdrant.py` | Minimal Qdrant async client singleton. |
-| `redis.py` | Async Redis pool for all four cache namespaces. |
+| `redis.py` | Async Redis pool for all four cache namespaces. `redis_key()` resolves `REDIS_ENV` lazily at call time (not at import time) — fixes a boot-order foot-gun where `api/main.py` sets `REDIS_ENV` after module import, causing the trending key to use the wrong namespace prefix if the prefix were cached at import. |
 | `tmdb.py` | TMDB API client with adaptive token-bucket rate limiting. |
 | `trending_movies.py` | Compute trending scores (concave decay: `1 - (rank/500)^0.5`), update Redis atomically via staging key + RENAME. |
 | ~~`ingest_movie.py`~~ | Moved to `movie_ingestion/final_ingestion/ingest_movie.py`. |
@@ -64,6 +65,15 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
   via GIN `&&` overlap on `movie_card.franchise_name_entry_ids` or integer
   `award_name_entry_id`. Exact TEXT equality on raw stored strings is retired
   for both endpoints.
+- **Hard-filter threading strategy**: `MetadataFilters` is passed to each
+  Postgres and Qdrant primitive directly, not pre-resolved to an
+  eligible-id set. This preserves Qdrant payload index efficiency
+  (a `HasIdCondition` over ~100K IDs is much slower than payload
+  `Range`/`MatchAny`), avoids bloating request memory, and avoids
+  wasted work on loose filters. The semantic elbow-calibration probe
+  (`_run_corpus_topn`) also accepts the filter so the calibrated
+  threshold is computed on the filtered distribution, not the full
+  corpus.
 
 ## Scoring Pipeline Constants
 
@@ -129,3 +139,12 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
   an already-normalized string and returns `{with-hyphen, hyphen→space,
   hyphen→empty}` (deduped). Both ingest and query compose it with
   `normalize_string` symmetrically.
+- **`redis.py` ENV_PREFIX is resolved lazily.** Do not cache
+  `ENV_PREFIX` at module load time — `REDIS_ENV` may not be set yet
+  if `load_dotenv()` runs after import. `redis_key()` calls
+  `os.getenv("REDIS_ENV", "unknown_env")` on every invocation.
+- **Trending query requires Postgres round-trip for filter support.**
+  `execute_trending_query` intersects the Redis hash against an
+  eligible-movie-card scan (`fetch_movie_ids_matching_filters`) in one
+  Postgres round-trip when filters are active. When filters are None
+  it reads the Redis hash directly.
