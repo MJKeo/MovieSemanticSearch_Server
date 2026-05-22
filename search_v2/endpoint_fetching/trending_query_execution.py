@@ -26,7 +26,9 @@
 
 from __future__ import annotations
 
+from db.postgres import fetch_movie_ids_matching_filters
 from db.redis import read_trending_scores
+from implementation.classes.schemas import MetadataFilters
 from schemas.endpoint_result import EndpointResult
 from search_v2.endpoint_fetching.result_helpers import (
     build_endpoint_result,
@@ -37,6 +39,7 @@ from search_v2.endpoint_fetching.result_helpers import (
 async def execute_trending_query(
     *,
     restrict_to_movie_ids: set[int] | None = None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Read the precomputed trending hash from Redis and emit an EndpointResult.
 
@@ -71,6 +74,21 @@ async def execute_trending_query(
         return EndpointResult(scores=[])
 
     scores_by_movie = await read_trending_scores()
+
+    # Apply UI hard filters. Trending lives in Redis (no payload), so
+    # we filter via a single Postgres round-trip against movie_card.
+    # This is a pre-filter from the user's perspective: even though
+    # Redis returns the full trending set first, the filtered subset
+    # is what flows into ranking — top-K isn't computed against the
+    # unfiltered set, so the "all top results excluded" failure mode
+    # the user called out doesn't apply.
+    if metadata_filters is not None and metadata_filters.is_active and scores_by_movie:
+        eligible = await fetch_movie_ids_matching_filters(
+            scores_by_movie.keys(), metadata_filters,
+        )
+        scores_by_movie = {
+            mid: s for mid, s in scores_by_movie.items() if mid in eligible
+        }
 
     # Dealbreaker compression: every movie endorsed by the trending
     # dealbreaker must contribute at least 0.5 so the candidate pool's

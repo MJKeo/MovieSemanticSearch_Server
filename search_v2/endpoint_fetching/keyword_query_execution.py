@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 
 from db.postgres import fetch_keyword_hit_counts
+from implementation.classes.schemas import MetadataFilters
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import ScoringMethod
 from schemas.keyword_translation import KeywordQuerySpec
@@ -50,6 +51,7 @@ async def execute_keyword_query(
     spec: KeywordQuerySpec,
     *,
     restrict_to_movie_ids: set[int] | None = None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Execute one KeywordQuerySpec against movie_card and return scores.
 
@@ -115,6 +117,7 @@ async def execute_keyword_query(
                 source_material_source_ids=source_material_ids,
                 concept_tag_source_ids=concept_tag_ids,
                 restrict_movie_ids=restrict_to_movie_ids,
+                metadata_filters=metadata_filters,
             )
             break
         except Exception:

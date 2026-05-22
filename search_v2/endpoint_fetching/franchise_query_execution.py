@@ -62,6 +62,7 @@ from db.postgres import (
     fetch_franchise_entry_ids_for_tokens,
     fetch_franchise_movie_ids,
 )
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.franchise_text import tokenize_franchise_string
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import (
@@ -164,6 +165,7 @@ async def execute_franchise_query(
     spec: FranchiseQuerySpec,
     *,
     restrict_to_movie_ids: set[int] | None = None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Execute one FranchiseQuerySpec against the franchise token index.
 
@@ -247,6 +249,7 @@ async def execute_franchise_query(
                 launched_franchise=launched_franchise,
                 launched_subgroup=launched_subgroup,
                 restrict_movie_ids=restrict_to_movie_ids,
+                metadata_filters=metadata_filters,
             )
             break
         except Exception:

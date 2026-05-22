@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
 from implementation.classes.schemas import MetadataFilters
@@ -236,15 +236,20 @@ async def _execute_on_conn(
 # ===============================
 
 
-async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
+def _build_movie_card_conditions(
+    filters: MetadataFilters,
+) -> tuple[list[str], list]:
     """
-    Build the SQL fragment and parameter list for a MATERIALIZED eligible-set
-    CTE against public.movie_card.
+    Build the per-column WHERE conditions for filtering public.movie_card by
+    the user-supplied MetadataFilters. Returns ([cond_sql, ...], params).
 
-    Returns:
-        (cte_sql, params) where cte_sql is the full
-        ``eligible AS MATERIALIZED (...)`` block ready to prepend into a
-        WITH chain, and params is the ordered list of bind values.
+    Pure SQL fragments — no leading ``WHERE`` or ``AND``. Each entry in the
+    returned list is one self-contained condition; the caller joins them
+    with ``AND``. Empty list means "no conditions" (e.g. inactive filter).
+
+    Centralized so the WITH-chain helper (``_build_eligible_cte``) and the
+    inline AND-clause helper (``_build_inline_movie_card_filter_clause``)
+    share one source of truth for column-level translation.
     """
     conditions: list[str] = []
     params: list = []
@@ -269,6 +274,12 @@ async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
         conditions.append("runtime_minutes <= %s")
         params.append(filters.max_runtime)
 
+    # NOTE: maturity_rank range conditions exclude rows where
+    # maturity_rank IS NULL (UNRATED movies — see _build_qdrant_payload in
+    # movie_ingestion/final_ingestion/ingest_movie.py:1110-1113). This
+    # matches user intent — "at most PG-13" should not surface unrated
+    # content — and is symmetric with the Qdrant Range filter, which also
+    # excludes NULL payload values.
     if filters.min_maturity_rank is not None and filters.max_maturity_rank is not None:
         conditions.append("maturity_rank BETWEEN %s AND %s")
         params.extend((filters.min_maturity_rank, filters.max_maturity_rank))
@@ -295,6 +306,25 @@ async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
         conditions.append("watch_offer_keys && %s::int[]")
         params.append(filters.watch_offer_keys)
 
+    return conditions, params
+
+
+async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
+    """
+    Build the SQL fragment and parameter list for a MATERIALIZED eligible-set
+    CTE against public.movie_card.
+
+    Used by callers that want to inject ``WITH eligible AS MATERIALIZED (...)``
+    once and reuse the resolved movie_id set across multiple unions / scans
+    in the same statement (the canonical example is
+    ``execute_compound_lexical_search``).
+
+    Returns:
+        (cte_sql, params) where cte_sql is the full
+        ``eligible AS MATERIALIZED (...)`` block ready to prepend into a
+        WITH chain, and params is the ordered list of bind values.
+    """
+    conditions, params = _build_movie_card_conditions(filters)
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
 
     cte_sql = (
@@ -305,6 +335,77 @@ async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
         f"        )"
     )
     return cte_sql, params
+
+
+def _build_inline_movie_card_filter_clause(
+    filters: Optional[MetadataFilters],
+    *,
+    movie_id_column: str = "movie_id",
+) -> tuple[str, list]:
+    """
+    Build an inline ``AND <col> IN (SELECT movie_id FROM public.movie_card
+    WHERE ...)`` fragment for primitives that issue a single-statement
+    query without a WITH chain.
+
+    The fragment includes its own leading ``AND`` so it can be concatenated
+    directly onto an existing WHERE clause. Returns ("", []) when no filter
+    is active so callers can splice unconditionally and the query stays
+    byte-identical to today when filters are unset (no extra subquery cost).
+
+    Args:
+        filters: User filters, or None for "no filter".
+        movie_id_column: Qualified column name on the outer query that holds
+            the candidate's movie_id (default ``movie_id``; use
+            ``<alias>.movie_id`` if the outer query is aliased).
+
+    Returns:
+        (clause_sql, params) where clause_sql is either the empty string
+        (no-op) or `" AND <col> IN (SELECT movie_id FROM public.movie_card
+        WHERE <conds>)"`, and params lines up with the ``%s`` placeholders
+        inside.
+    """
+    if filters is None or not filters.is_active:
+        return "", []
+
+    conditions, params = _build_movie_card_conditions(filters)
+    if not conditions:
+        # is_active was True but every field collapsed to empty (e.g. an
+        # empty genres list). Treat as inactive.
+        return "", []
+
+    where_clause = " AND ".join(conditions)
+    clause = (
+        f" AND {movie_id_column} IN ("
+        f"SELECT movie_id FROM public.movie_card WHERE {where_clause})"
+    )
+    return clause, params
+
+
+def _build_direct_movie_card_filter_clause(
+    filters: Optional[MetadataFilters],
+) -> tuple[str, list]:
+    """
+    Build a direct ``AND <conds>`` fragment for primitives whose primary
+    FROM table is already ``public.movie_card`` — in that case the columns
+    referenced by ``MetadataFilters`` are already in scope, so a self-IN
+    subquery is wasteful. Compose conditions inline instead.
+
+    Returns ("", []) when filters is None / inactive so the caller can
+    splice unconditionally without any extra runtime cost when filters
+    are unset.
+
+    Returns:
+        (clause_sql, params) where clause_sql is either the empty string
+        or `" AND <cond_1> AND <cond_2> ..."` (with leading space + AND).
+    """
+    if filters is None or not filters.is_active:
+        return "", []
+
+    conditions, params = _build_movie_card_conditions(filters)
+    if not conditions:
+        return "", []
+
+    return " AND " + " AND ".join(conditions), params
 
 
 
@@ -1921,24 +2022,66 @@ async def fetch_reception_scores(movie_ids: list[int]) -> dict[int, float | None
     return {row[0]: row[1] for row in rows}
 
 
+async def fetch_movie_ids_matching_filters(
+    movie_ids: Iterable[int],
+    metadata_filters: MetadataFilters,
+) -> set[int]:
+    """Return the subset of ``movie_ids`` whose movie_card row satisfies
+    the active MetadataFilters.
+
+    Helper for fetch paths that pull candidate movie_ids from a source
+    other than Postgres (e.g. Redis-backed trending) and need to apply
+    the user hard filter as a separate round trip. Single statement,
+    no per-candidate calls.
+
+    Returns an empty set if filters is inactive *and* the caller passed
+    an empty list — callers that hold a non-empty list with an inactive
+    filter should skip this helper entirely (it would return every input
+    id, which is the no-op outcome).
+    """
+    ids_list = [int(m) for m in movie_ids]
+    if not ids_list:
+        return set()
+    if not metadata_filters.is_active:
+        return set(ids_list)
+    conditions, params = _build_movie_card_conditions(metadata_filters)
+    where_clause = " AND ".join(conditions) if conditions else "TRUE"
+    query = f"""
+        SELECT movie_id
+        FROM public.movie_card
+        WHERE movie_id = ANY(%s::bigint[]) AND {where_clause}
+    """
+    rows = await _execute_read(query, (ids_list, *params))
+    return {row[0] for row in rows}
+
+
 async def fetch_browse_seed_ids(
     *,
     limit: int,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> list[int]:
-    """Top `limit` movie_ids ordered by the temporary browse fallback."""
-    query = """
+    """Top `limit` movie_ids ordered by the temporary browse fallback.
+
+    This is the trending-endpoint fetch path (no candidate-generating
+    LLM call). When the UI supplies hard filters, they're folded into
+    the WHERE clause so the popularity-ordered seed respects them.
+    """
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    query = f"""
         SELECT movie_id
         FROM public.movie_card
+        WHERE TRUE{filter_clause}
         ORDER BY popularity_score DESC NULLS LAST, movie_id DESC
         LIMIT %s
     """
-    rows = await _execute_read(query, (limit,))
+    rows = await _execute_read(query, (*filter_params, limit))
     return [row[0] for row in rows]
 
 
 async def fetch_quality_popularity_seed(
     *,
     limit: int,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> list[int]:
     """Top `limit` movie_ids ordered by popularity * reception product.
 
@@ -1954,22 +2097,29 @@ async def fetch_quality_popularity_seed(
     NULL handling: COALESCE both signals to 0 so movies with one
     missing signal sort to the bottom rather than out of the result
     set entirely.
+
+    UI hard filters fold into the WHERE clause when supplied — this
+    is one of the no-LLM fallback paths so the filter must apply
+    here, not later via post-filtering.
     """
-    query = """
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    query = f"""
         SELECT movie_id
         FROM public.movie_card
+        WHERE TRUE{filter_clause}
         ORDER BY (COALESCE(popularity_score, 0)
                   * COALESCE(reception_score, 0)) DESC,
                  movie_id DESC
         LIMIT %s
     """
-    rows = await _execute_read(query, (limit,))
+    rows = await _execute_read(query, (*filter_params, limit))
     return [row[0] for row in rows]
 
 
 async def fetch_neutral_reranker_seed_ids(
     *,
     limit: int = NEUTRAL_RERANKER_SEED_LIMIT,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> list[int]:
     """Top `limit` movie_ids for reranker-only fallback seeding.
 
@@ -1983,10 +2133,17 @@ async def fetch_neutral_reranker_seed_ids(
     `popularity_score` is already stored on a [0, 1] scale.
     `reception_score` is stored on a 0-100 scale, so normalize by
     dividing by 100 and clamp both components defensively.
+
+    This is the **no-LLM fallback path** the user explicitly called
+    out — when zero candidate generators fire, this seed is the only
+    pool downstream rerankers see. The hard filter must apply here
+    or filters get silently bypassed on this path.
     """
-    query = """
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    query = f"""
         SELECT movie_id
         FROM public.movie_card
+        WHERE TRUE{filter_clause}
         ORDER BY (
             %s * COALESCE(
                 LEAST(1.0, GREATEST(0.0, popularity_score)),
@@ -2004,6 +2161,7 @@ async def fetch_neutral_reranker_seed_ids(
     rows = await _execute_read(
         query,
         (
+            *filter_params,
             NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT,
             NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT,
             limit,
@@ -2532,22 +2690,31 @@ async def fetch_trait_idfs(
 
 async def fetch_movie_ids_by_overall_keywords(
     keyword_ids: list[int],
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """Movie IDs whose `keyword_ids` array overlaps the supplied set.
 
     Used by the V2 single-anchor selective rare-medium retrieval lane so
     e.g. a stop-motion anchor surfaces other stop-motion films even when
     the centroid-driven shape lane misses them.
+
+    Args:
+        keyword_ids: Keyword IDs to overlap against ``movie_card.keyword_ids``.
+        metadata_filters: Optional user-supplied hard filters. When active,
+            the conditions are AND-folded into the same WHERE clause (no
+            self-IN subquery — the FROM is already movie_card).
     """
     if not keyword_ids:
         return set()
 
-    query = """
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    query = f"""
         SELECT movie_id
         FROM public.movie_card
-        WHERE keyword_ids && %s::int[]
+        WHERE keyword_ids && %s::int[]{filter_clause}
     """
-    rows = await _execute_read(query, (list(keyword_ids),))
+    rows = await _execute_read(query, (list(keyword_ids), *filter_params))
     return {row[0] for row in rows}
 
 
@@ -2559,6 +2726,7 @@ async def fetch_movie_ids_by_themes_recall(
     single_idf_threshold: float = 0.55,
     combo_sum_threshold: float = 0.50,
     combo_sum_min_idf: float = 0.30,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """V3.2 themes-recall: movie IDs whose shared anchor traits qualify
     by single-trait rarity OR combined moderate+high tier IDF sum.
@@ -2632,6 +2800,11 @@ async def fetch_movie_ids_by_themes_recall(
         params.append(list(genre_ids))
 
     union_clause = " UNION ALL ".join(legs)
+    # User hard-filter applied as a WHERE on the `shared` projection,
+    # before GROUP BY — keeps the aggregation tight when the filter is
+    # active, and is a no-op (empty string) when inactive so the query
+    # plan is byte-identical to today on unfiltered calls.
+    filter_clause, filter_params = _build_inline_movie_card_filter_clause(metadata_filters)
     # V3.2: SUM is filtered to traits at moderate+high tier
     # (idf >= combo_sum_min_idf, default 0.30) so common-tag
     # accumulation can't drag low-quality candidates into the pool.
@@ -2640,10 +2813,12 @@ async def fetch_movie_ids_by_themes_recall(
         WITH shared AS ({union_clause})
         SELECT movie_id
         FROM shared
+        WHERE TRUE{filter_clause}
         GROUP BY movie_id
         HAVING SUM(idf) FILTER (WHERE idf >= %s) >= %s
             OR MAX(idf) >= %s
     """
+    params.extend(filter_params)
     params.extend([combo_sum_min_idf, combo_sum_threshold, single_idf_threshold])
     rows = await _execute_read(query, tuple(params))
     return {row[0] for row in rows}
@@ -2710,6 +2885,8 @@ async def fetch_similarity_award_category_tags(
 async def fetch_movie_ids_by_term_ids(
     table: PostingTable,
     term_ids: list[int],
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """
     Resolve posting term IDs into excluded movie IDs for one posting table.
@@ -2721,6 +2898,10 @@ async def fetch_movie_ids_by_term_ids(
     Args:
         table: Posting table to resolve against.
         term_ids: Posting term IDs for one EXCLUDE bucket.
+        metadata_filters: Optional user-supplied hard filters. Posting tables
+            don't carry movie_card columns directly, so the filter is applied
+            via an inline ``movie_id IN (SELECT movie_id FROM public.movie_card
+            WHERE ...)`` subquery. No-op when filters is None / inactive.
 
     Returns:
         Set of movie IDs that contain at least one provided term ID.
@@ -2728,12 +2909,13 @@ async def fetch_movie_ids_by_term_ids(
     if not term_ids:
         return set()
 
+    filter_clause, filter_params = _build_inline_movie_card_filter_clause(metadata_filters)
     query = f"""
         SELECT DISTINCT movie_id
         FROM {table.value}
-        WHERE term_id = ANY(%s::bigint[])
+        WHERE term_id = ANY(%s::bigint[]){filter_clause}
     """
-    search_results = await _execute_read(query, (term_ids,))
+    search_results = await _execute_read(query, (term_ids, *filter_params))
     return {row[0] for row in search_results}
 
 
@@ -2751,6 +2933,8 @@ async def fetch_movie_ids_by_term_ids(
 async def fetch_movie_ids_by_brands(
     brand_ids: list[int],
     restrict_movie_ids: Optional[set[int]] = None,
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """
     Resolve one or more ProductionBrand enum brand_ids to stamped movie IDs.
@@ -2775,25 +2959,26 @@ async def fetch_movie_ids_by_brands(
     """
     if not brand_ids:
         return set()
+    filter_clause, filter_params = _build_inline_movie_card_filter_clause(metadata_filters)
     if restrict_movie_ids is not None:
         if not restrict_movie_ids:
             return set()
-        query = """
+        query = f"""
             SELECT movie_id
             FROM lex.inv_production_brand_postings
             WHERE brand_id = ANY(%s::smallint[])
-              AND movie_id = ANY(%s::bigint[])
+              AND movie_id = ANY(%s::bigint[]){filter_clause}
         """
         rows = await _execute_read(
-            query, (brand_ids, list(restrict_movie_ids))
+            query, (brand_ids, list(restrict_movie_ids), *filter_params)
         )
     else:
-        query = """
+        query = f"""
             SELECT movie_id
             FROM lex.inv_production_brand_postings
-            WHERE brand_id = ANY(%s::smallint[])
+            WHERE brand_id = ANY(%s::smallint[]){filter_clause}
         """
-        rows = await _execute_read(query, (brand_ids,))
+        rows = await _execute_read(query, (brand_ids, *filter_params))
     return {row[0] for row in rows}
 
 
@@ -2842,6 +3027,8 @@ async def fetch_company_ids_for_tokens(
 async def fetch_movie_ids_by_production_company_ids(
     production_company_ids: set[int],
     restrict_movie_ids: Optional[set[int]] = None,
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """
     Resolve a set of production_company_ids to the movies they appear on.
@@ -2863,24 +3050,27 @@ async def fetch_movie_ids_by_production_company_ids(
     if not production_company_ids:
         return set()
 
+    # FROM is movie_card already, so AND the filter conditions inline
+    # rather than using a self-IN subquery.
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
     id_list = list(production_company_ids)
     if restrict_movie_ids is not None:
         if not restrict_movie_ids:
             return set()
-        query = """
+        query = f"""
             SELECT movie_id
             FROM public.movie_card
             WHERE production_company_ids && %s::bigint[]
-              AND movie_id = ANY(%s::bigint[])
+              AND movie_id = ANY(%s::bigint[]){filter_clause}
         """
-        rows = await _execute_read(query, (id_list, list(restrict_movie_ids)))
+        rows = await _execute_read(query, (id_list, list(restrict_movie_ids), *filter_params))
     else:
-        query = """
+        query = f"""
             SELECT movie_id
             FROM public.movie_card
-            WHERE production_company_ids && %s::bigint[]
+            WHERE production_company_ids && %s::bigint[]{filter_clause}
         """
-        rows = await _execute_read(query, (id_list,))
+        rows = await _execute_read(query, (id_list, *filter_params))
     return {row[0] for row in rows}
 
 
@@ -2898,6 +3088,8 @@ async def fetch_movie_ids_by_production_company_ids(
 async def fetch_movie_ids_by_release_format(
     release_format_ids: list[int],
     restrict_movie_ids: Optional[set[int]] = None,
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """
     Resolve a list of ReleaseFormat int ids to the matching movie IDs.
@@ -2924,25 +3116,27 @@ async def fetch_movie_ids_by_release_format(
     """
     if not release_format_ids:
         return set()
+    # FROM is movie_card already, so inline the filter conditions.
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
     if restrict_movie_ids is not None:
         if not restrict_movie_ids:
             return set()
-        query = """
+        query = f"""
             SELECT movie_id
             FROM public.movie_card
             WHERE release_format = ANY(%s::smallint[])
-              AND movie_id = ANY(%s::bigint[])
+              AND movie_id = ANY(%s::bigint[]){filter_clause}
         """
         rows = await _execute_read(
-            query, (release_format_ids, list(restrict_movie_ids))
+            query, (release_format_ids, list(restrict_movie_ids), *filter_params)
         )
     else:
-        query = """
+        query = f"""
             SELECT movie_id
             FROM public.movie_card
-            WHERE release_format = ANY(%s::smallint[])
+            WHERE release_format = ANY(%s::smallint[]){filter_clause}
         """
-        rows = await _execute_read(query, (release_format_ids,))
+        rows = await _execute_read(query, (release_format_ids, *filter_params))
     return {row[0] for row in rows}
 
 
@@ -2986,6 +3180,8 @@ async def fetch_character_strings_exact(phrases: list[str]) -> dict[str, int]:
 async def fetch_actor_billing_rows(
     term_ids: list[int],
     restrict_movie_ids: Optional[set[int]] = None,
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> list[tuple[int, int, int]]:
     """Fetch (movie_id, billing_position, cast_size) for actor term_ids.
 
@@ -2997,6 +3193,9 @@ async def fetch_actor_billing_rows(
         term_ids: Resolved string IDs for actor names.
         restrict_movie_ids: Optional candidate-pool filter (used by
             preference execution to narrow the scan to the pool).
+        metadata_filters: Optional user-supplied hard filters; applied via
+            an inline ``movie_id IN (SELECT ... FROM public.movie_card
+            WHERE ...)`` subquery since the FROM table is a posting table.
 
     Returns:
         List of (movie_id, billing_position, cast_size) tuples. Rows
@@ -3012,6 +3211,9 @@ async def fetch_actor_billing_rows(
         restrict_clause = " AND movie_id = ANY(%s::bigint[])"
         params.append(list(restrict_movie_ids))
 
+    filter_clause, filter_params = _build_inline_movie_card_filter_clause(metadata_filters)
+    params.extend(filter_params)
+
     # billing_position and cast_size are NOT NULL on the schema, but the
     # IS NOT NULL gates defend against any future schema drift where a
     # legacy upsert path leaves them unset — per the entity endpoint's
@@ -3022,7 +3224,7 @@ async def fetch_actor_billing_rows(
         WHERE term_id = ANY(%s::bigint[]){restrict_clause}
           AND billing_position IS NOT NULL
           AND cast_size IS NOT NULL
-          AND cast_size > 0
+          AND cast_size > 0{filter_clause}
     """
     rows = await _execute_read(query, params)
     return [(row[0], row[1], row[2]) for row in rows]
@@ -3031,6 +3233,8 @@ async def fetch_actor_billing_rows(
 async def fetch_character_billing_rows(
     term_ids: list[int],
     restrict_movie_ids: Optional[set[int]] = None,
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> list[tuple[int, int, int]]:
     """Fetch (movie_id, billing_position, character_cast_size) for character term_ids.
 
@@ -3060,13 +3264,16 @@ async def fetch_character_billing_rows(
         restrict_clause = " AND movie_id = ANY(%s::bigint[])"
         params.append(list(restrict_movie_ids))
 
+    filter_clause, filter_params = _build_inline_movie_card_filter_clause(metadata_filters)
+    params.extend(filter_params)
+
     query = f"""
         SELECT movie_id, billing_position, character_cast_size
         FROM lex.inv_character_postings
         WHERE term_id = ANY(%s::bigint[]){restrict_clause}
           AND billing_position IS NOT NULL
           AND character_cast_size IS NOT NULL
-          AND character_cast_size > 0
+          AND character_cast_size > 0{filter_clause}
     """
     rows = await _execute_read(query, params)
     return [(row[0], row[1], row[2]) for row in rows]
@@ -3075,6 +3282,8 @@ async def fetch_character_billing_rows(
 async def fetch_movie_ids_with_title_like(
     like_pattern: str,
     restrict_movie_ids: Optional[set[int]] = None,
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """LIKE match of a normalized title pattern against public.movie_card.title_normalized.
 
@@ -3104,10 +3313,14 @@ async def fetch_movie_ids_with_title_like(
         restrict_clause = " AND movie_id = ANY(%s::bigint[])"
         params.append(list(restrict_movie_ids))
 
+    # FROM is movie_card already → fold conditions inline rather than self-IN.
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    params.extend(filter_params)
+
     query = f"""
         SELECT movie_id
         FROM public.movie_card
-        WHERE title_normalized LIKE %s{restrict_clause}
+        WHERE title_normalized LIKE %s{restrict_clause}{filter_clause}
     """
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}
@@ -3116,6 +3329,8 @@ async def fetch_movie_ids_with_title_like(
 async def fetch_movie_ids_with_titles_matching_any(
     like_patterns: list[str],
     restrict_movie_ids: Optional[set[int]] = None,
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """Single-query union of multiple LIKE patterns against title_normalized.
 
@@ -3147,6 +3362,10 @@ async def fetch_movie_ids_with_titles_matching_any(
         restrict_clause = " AND movie_id = ANY(%s::bigint[])"
         params.append(list(restrict_movie_ids))
 
+    # FROM is movie_card already → fold conditions inline rather than self-IN.
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    params.extend(filter_params)
+
     # `LIKE ANY (text[])` is the Postgres idiom for OR-ing a variable
     # number of patterns in a single query. Planner can still use
     # idx_movie_card_title_normalized_trgm for non-anchored patterns
@@ -3154,7 +3373,7 @@ async def fetch_movie_ids_with_titles_matching_any(
     query = f"""
         SELECT movie_id
         FROM public.movie_card
-        WHERE title_normalized LIKE ANY(%s::text[]){restrict_clause}
+        WHERE title_normalized LIKE ANY(%s::text[]){restrict_clause}{filter_clause}
     """
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}
@@ -3274,6 +3493,7 @@ async def fetch_franchise_movie_ids(
     launched_franchise: bool,
     launched_subgroup: bool,
     restrict_movie_ids: set[int] | None = None,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> tuple[set[int], set[int]]:
     """Resolve pre-computed franchise entry-id sets + structural flags to movie IDs.
 
@@ -3417,6 +3637,20 @@ async def fetch_franchise_movie_ids(
         conditions.append(f"{restrict_column} = ANY(%s::bigint[])")
         params.append(list(restrict_movie_ids))
 
+    # Apply UI hard filters. We use the inline subquery form rather than
+    # folding into a direct WHERE — the structural-only branch above
+    # drives from movie_franchise_metadata (which doesn't carry movie_card
+    # columns), so a self-IN against movie_card is the only uniform way
+    # to apply the filter across all three FROM-clause shapes.
+    filter_clause, filter_params = _build_inline_movie_card_filter_clause(
+        metadata_filters,
+        movie_id_column=restrict_column,
+    )
+    if filter_clause:
+        # Strip leading " AND " — we'll splice into the conditions list.
+        conditions.append(filter_clause.removeprefix(" AND "))
+        params.extend(filter_params)
+
     where_clause = " AND ".join(conditions)
 
     # When the name axis is active we also SELECT a per-row boolean
@@ -3453,6 +3687,7 @@ async def fetch_non_character_franchise_movies(
     normalized_canonical_names: list[str],
     *,
     limit: int = 100,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> list[tuple[int, int]]:
     """Resolve a set of franchise canonical names and bucket their movies.
 
@@ -3503,6 +3738,17 @@ async def fetch_non_character_franchise_movies(
     if not cleaned:
         return []
 
+    # The query already joins movie_card via the GIN-array overlap, so
+    # filter conditions fold inline onto mc.* columns (no need for a
+    # self-IN subquery). The helper emits unqualified column names —
+    # since the join references mc.* explicitly elsewhere, we re-emit
+    # via the inline-subquery form so we don't have to mess with the
+    # `mc.` alias prefix.
+    filter_clause, filter_params = _build_inline_movie_card_filter_clause(
+        metadata_filters,
+        movie_id_column="mc.movie_id",
+    )
+
     # The JOIN amplifies one row per matched franchise_entry. GROUP BY
     # mc.movie_id collapses that back to one row per movie; bool_or over
     # the lineage-containment predicate assigns bucket=0 if ANY of the
@@ -3512,7 +3758,7 @@ async def fetch_non_character_franchise_movies(
     # GROUP BY is just to satisfy the SQL grouping rules — there's no
     # real grouping on it. Using @> ARRAY[id]::bigint[] (rather than
     # = ANY(...)) keeps the GIN index on both array columns eligible.
-    query = """
+    query = f"""
         SELECT
             mc.movie_id,
             CASE
@@ -3525,12 +3771,12 @@ async def fetch_non_character_franchise_movies(
         JOIN public.movie_card mc
           ON (mc.lineage_entry_ids @> ARRAY[fe.franchise_entry_id]::bigint[]
               OR mc.shared_universe_entry_ids @> ARRAY[fe.franchise_entry_id]::bigint[])
-        WHERE fe.normalized_string = ANY(%s::text[])
+        WHERE fe.normalized_string = ANY(%s::text[]){filter_clause}
         GROUP BY mc.movie_id, mc.popularity_score
         ORDER BY bucket ASC, mc.popularity_score DESC NULLS LAST, mc.movie_id DESC
         LIMIT %s
     """
-    rows = await _execute_read(query, (cleaned, limit))
+    rows = await _execute_read(query, (cleaned, *filter_params, limit))
     return [(int(row[0]), int(row[1])) for row in rows]
 
 
@@ -3554,6 +3800,7 @@ async def fetch_keyword_hit_counts(
     source_material_source_ids: list[int],
     concept_tag_source_ids: list[int],
     restrict_movie_ids: set[int] | None = None,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> dict[int, int]:
     """Per-movie count of how many of the supplied source_ids appear
     in the movie's classification arrays on movie_card.
@@ -3641,6 +3888,12 @@ async def fetch_keyword_hit_counts(
     if restrict_movie_ids is not None:
         where_sql += " AND movie_id = ANY(%s::bigint[])"
         params.append(list(restrict_movie_ids))
+
+    # FROM is movie_card — fold the user hard filter inline.
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    if filter_clause:
+        where_sql += filter_clause
+        params.extend(filter_params)
 
     query = (
         f"SELECT movie_id, {select_count} AS hits "
@@ -3738,6 +3991,7 @@ async def fetch_award_name_entry_ids_for_tokens(
 async def fetch_award_fast_path_movie_ids(
     *,
     restrict_movie_ids: set[int] | None = None,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """Return movie_ids with at least one non-Razzie ceremony win.
 
@@ -3764,6 +4018,14 @@ async def fetch_award_fast_path_movie_ids(
         conditions.append("movie_id = ANY(%s::bigint[])")
         params.append(list(restrict_movie_ids))
 
+    # FROM is movie_card — fold the user hard filter inline.
+    direct_filter, direct_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    if direct_filter:
+        # _build_direct_... emits with a leading " AND " — strip it since
+        # we're appending into a list joined by " AND ".
+        conditions.append(direct_filter.removeprefix(" AND "))
+        params.extend(direct_params)
+
     where_clause = " AND ".join(conditions)
     query = f"SELECT movie_id FROM public.movie_card WHERE {where_clause}"
     rows = await _execute_read(query, params)
@@ -3780,6 +4042,7 @@ async def fetch_award_row_counts(
     year_to: int | None,
     exclude_razzie: bool,
     restrict_movie_ids: set[int] | None = None,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> dict[int, int]:
     """Count matching movie_awards rows grouped by movie_id.
 
@@ -3865,6 +4128,14 @@ async def fetch_award_row_counts(
     if restrict_movie_ids is not None:
         conditions.append("movie_id = ANY(%s::bigint[])")
         params.append(list(restrict_movie_ids))
+
+    # User hard filter via inline subquery (movie_awards doesn't carry
+    # movie_card columns). The subquery is index-friendly: Postgres
+    # builds a hash semi-join on the eligible movie_id set.
+    inline_filter, inline_params = _build_inline_movie_card_filter_clause(metadata_filters)
+    if inline_filter:
+        conditions.append(inline_filter.removeprefix(" AND "))
+        params.extend(inline_params)
 
     # Fallback WHERE clause for the degenerate "no filters, no Razzie
     # exclusion" call — would count every row in movie_awards. Execution

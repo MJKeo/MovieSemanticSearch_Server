@@ -74,8 +74,13 @@ from kneed import KneeLocator
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Filter, HasIdCondition
 
-from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS
+from db.vector_search import (
+    COLLECTION_ALIAS,
+    QDRANT_SEARCH_PARAMS,
+    build_qdrant_filter,
+)
 from implementation.classes.enums import VectorName
+from implementation.classes.schemas import MetadataFilters
 from implementation.llms.generic_methods import generate_vector_embedding
 from schemas.endpoint_result import EndpointResult
 from schemas.semantic_bodies import (
@@ -224,17 +229,46 @@ async def _embed_bodies(bodies: list[SemanticBody]) -> list[list[float]]:
     )
 
 
+def _hard_filter_must(
+    metadata_filters: MetadataFilters | None,
+) -> list:
+    """Return the ``must`` conditions for the UI hard filter, or [].
+
+    Helper that lifts the existing ``build_qdrant_filter()`` output into
+    a list of FieldConditions we can splice into another Filter's
+    ``must``. Returns [] when filters is None / inactive so callers can
+    concatenate unconditionally.
+    """
+    if metadata_filters is None or not metadata_filters.is_active:
+        return []
+    qd = build_qdrant_filter(metadata_filters)
+    if qd is None:
+        return []
+    return list(qd.must or [])
+
+
 async def _run_corpus_topn(
     embedding: list[float],
     vector_name: VectorName,
     *,
     qdrant_client: AsyncQdrantClient,
     limit: int = CORPUS_PROBE_LIMIT,
+    metadata_filters: MetadataFilters | None = None,
 ) -> list[tuple[int, float]]:
+    # When the UI hard filter is active, the corpus probe must run over
+    # the filtered slice — otherwise the elbow-calibration sample is
+    # drawn from points that will be excluded downstream, and the
+    # threshold lands on the wrong distribution. With very tight
+    # filters fewer than CORPUS_PROBE_LIMIT points exist; the
+    # downstream pathology detector (PATHOLOGY_RANGE_THRESHOLD)
+    # handles that gracefully.
+    hard_must = _hard_filter_must(metadata_filters)
+    query_filter = Filter(must=hard_must) if hard_must else None
     response = await qdrant_client.query_points(
         collection_name=COLLECTION_ALIAS,
         query=embedding,
         using=vector_name.value,
+        query_filter=query_filter,
         limit=limit,
         with_payload=False,
         with_vectors=False,
@@ -253,6 +287,14 @@ async def _run_filtered_score(
     # Score a specific set of movie_ids on a single named vector.
     # Movie_id IS the Qdrant point ID, so HasIdCondition is the right
     # filter (not a payload FieldCondition).
+    #
+    # The user hard filter is intentionally NOT applied here: this
+    # primitive is the reranker scoring path (HasId pool restriction
+    # only), and the supplied movie_ids come from a candidate pool
+    # the upstream generators already narrowed with the filter. The
+    # corpus-probe primitive (`_run_corpus_topn`) still receives the
+    # filter — that one is calibration and/or pool-source, both of
+    # which need filter-aware sampling.
     id_list = [int(mid) for mid in movie_ids]
     if not id_list:
         return {}
@@ -528,6 +570,7 @@ async def _execute_carver_restricted(
     candidate_ids: set[int],
     *,
     qdrant_client: AsyncQdrantClient,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     # Carver acting as a reranker on a supplied pool. Two parallel
     # fetches per space:
@@ -541,9 +584,15 @@ async def _execute_carver_restricted(
     # across spaces via max().
     n = len(inputs.entries)
     tasks = [
-        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
+        _run_corpus_topn(
+            emb, vn, qdrant_client=qdrant_client,
+            metadata_filters=metadata_filters,
+        )
         for emb, vn in zip(embeddings, inputs.vector_names)
     ] + [
+        # No metadata_filters here — `_run_filtered_score` is the
+        # reranker scoring path; `candidate_ids` already passed the
+        # filter upstream at candidate-generation time.
         _run_filtered_score(emb, vn, candidate_ids, qdrant_client=qdrant_client)
         for emb, vn in zip(embeddings, inputs.vector_names)
     ]
@@ -565,6 +614,7 @@ async def _execute_carver_unrestricted(
     embeddings: list[list[float]],
     *,
     qdrant_client: AsyncQdrantClient,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     # Carver acting as a candidate generator. A single corpus probe
     # per space serves as both the calibration sample and the
@@ -573,7 +623,10 @@ async def _execute_carver_unrestricted(
     # while missing top-N is implausible by construction (the elbow
     # rank sits inside top-N).
     probes = await asyncio.gather(*[
-        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
+        _run_corpus_topn(
+            emb, vn, qdrant_client=qdrant_client,
+            metadata_filters=metadata_filters,
+        )
         for emb, vn in zip(embeddings, inputs.vector_names)
     ])
 
@@ -604,6 +657,8 @@ async def _execute_qualifier_restricted(
     # answered relative to the supplied pool, not to the corpus.
     # Cross-space combine is weighted-sum so CENTRAL/SUPPORTING
     # structure shapes the final ranking.
+    # `_run_filtered_score` is the reranker scoring path — no filter
+    # needed; the supplied pool has already passed the filter upstream.
     per_space_lookups = await asyncio.gather(*[
         _run_filtered_score(emb, vn, candidate_ids, qdrant_client=qdrant_client)
         for emb, vn in zip(embeddings, inputs.vector_names)
@@ -622,6 +677,7 @@ async def _execute_qualifier_promoted(
     embeddings: list[list[float]],
     *,
     qdrant_client: AsyncQdrantClient,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     # Qualifier promoted to candidate generator via tier-fallback.
     # Per-space corpus probe acts as both calibration AND pool
@@ -632,7 +688,10 @@ async def _execute_qualifier_promoted(
     # be flattened by the orchestration's promotion of a qualifier
     # into pool-defining duty.
     probes = await asyncio.gather(*[
-        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
+        _run_corpus_topn(
+            emb, vn, qdrant_client=qdrant_client,
+            metadata_filters=metadata_filters,
+        )
         for emb, vn in zip(embeddings, inputs.vector_names)
     ])
 
@@ -661,6 +720,7 @@ async def execute_semantic_query(
     *,
     restrict_to_movie_ids: set[int] | None = None,
     qdrant_client: AsyncQdrantClient,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Execute a semantic payload and return scored candidates.
 
@@ -719,19 +779,26 @@ async def execute_semantic_query(
             if is_carver:
                 if restrict_to_movie_ids is None:
                     scores = await _execute_carver_unrestricted(
-                        inputs, embeddings, qdrant_client=qdrant_client
+                        inputs, embeddings,
+                        qdrant_client=qdrant_client,
+                        metadata_filters=metadata_filters,
                     )
                 else:
                     scores = await _execute_carver_restricted(
                         inputs, embeddings, restrict_to_movie_ids,
                         qdrant_client=qdrant_client,
+                        metadata_filters=metadata_filters,
                     )
             else:
                 if restrict_to_movie_ids is None:
                     scores = await _execute_qualifier_promoted(
-                        inputs, embeddings, qdrant_client=qdrant_client
+                        inputs, embeddings,
+                        qdrant_client=qdrant_client,
+                        metadata_filters=metadata_filters,
                     )
                 else:
+                    # qualifier_restricted is a pure pool reranker; no
+                    # metadata_filters needed (pool already filtered).
                     scores = await _execute_qualifier_restricted(
                         inputs, embeddings, restrict_to_movie_ids,
                         qdrant_client=qdrant_client,

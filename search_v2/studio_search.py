@@ -40,6 +40,7 @@ import logging
 from dataclasses import dataclass, field
 
 from db.postgres import fetch_quality_popularity_signals
+from implementation.classes.schemas import MetadataFilters
 from schemas.enums import ScoringMethod
 from schemas.step_0_flow_routing import StudioFlowData
 from schemas.studio_translation import StudioQuerySpec, StudioRef
@@ -81,6 +82,7 @@ async def run_studio_search(
     flow_data: StudioFlowData,
     *,
     limit: int = 100,
+    metadata_filters: MetadataFilters | None = None,
 ) -> StudioSearchResult:
     """Execute the studio flow.
 
@@ -112,7 +114,8 @@ async def run_studio_search(
     # Stage 2: execute the spec in ANY mode. restrict_to_movie_ids=None
     # gives us the natural match set (one entry per matched movie).
     endpoint_result = await execute_studio_query(
-        spec, restrict_to_movie_ids=None
+        spec, restrict_to_movie_ids=None,
+        metadata_filters=metadata_filters,
     )
     matched_movie_ids = {sc.movie_id for sc in endpoint_result.scores}
     if not matched_movie_ids:

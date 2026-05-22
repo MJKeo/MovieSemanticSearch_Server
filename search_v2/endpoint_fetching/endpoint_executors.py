@@ -36,6 +36,7 @@ from typing import Any, Coroutine
 
 from qdrant_client import AsyncQdrantClient
 
+from implementation.classes.schemas import MetadataFilters
 from schemas.chronological_translation import ChronologicalQuerySpec
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
@@ -87,6 +88,7 @@ def build_endpoint_coroutine(
     *,
     qdrant_client: AsyncQdrantClient,
     restrict_to_movie_ids: set[int] | None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> Coroutine[Any, Any, EndpointResult]:
     """Build the awaitable that runs `spec`'s endpoint executor.
 
@@ -150,39 +152,49 @@ def build_endpoint_coroutine(
     # indirection.
     if route == EndpointRoute.ENTITY:
         return execute_entity_query(
-            wrapper, restrict_to_movie_ids=restrict_to_movie_ids
+            wrapper, restrict_to_movie_ids=restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
     if route == EndpointRoute.CHRONOLOGICAL:
         assert isinstance(wrapper, ChronologicalQuerySpec)
+        # Chronological is a POOL_RERANKER only — the supplied pool was
+        # already filter-narrowed by upstream candidate generators, so
+        # the executor intentionally does not accept `metadata_filters`.
         return execute_chronological_query(
-            wrapper, restrict_to_movie_ids=restrict_to_movie_ids
+            wrapper, restrict_to_movie_ids=restrict_to_movie_ids,
         )
 
     params = wrapper.parameters
 
     if route == EndpointRoute.STUDIO:
         return execute_studio_query(
-            params, restrict_to_movie_ids=restrict_to_movie_ids
+            params, restrict_to_movie_ids=restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
     if route == EndpointRoute.FRANCHISE_STRUCTURE:
         return execute_franchise_query(
-            params, restrict_to_movie_ids=restrict_to_movie_ids
+            params, restrict_to_movie_ids=restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
     if route == EndpointRoute.KEYWORD:
         return execute_keyword_query(
-            params, restrict_to_movie_ids=restrict_to_movie_ids
+            params, restrict_to_movie_ids=restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
     if route == EndpointRoute.METADATA:
         return execute_metadata_query(
-            params, restrict_to_movie_ids=restrict_to_movie_ids
+            params, restrict_to_movie_ids=restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
     if route == EndpointRoute.AWARDS:
         return execute_award_query(
-            params, restrict_to_movie_ids=restrict_to_movie_ids
+            params, restrict_to_movie_ids=restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
     if route == EndpointRoute.MEDIA_TYPE:
         return execute_media_type_query(
-            params, restrict_to_movie_ids=restrict_to_movie_ids
+            params, restrict_to_movie_ids=restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
     if route == EndpointRoute.SEMANTIC:
         # Semantic executor branches on the LLM-committed `role` field
@@ -195,6 +207,7 @@ def build_endpoint_coroutine(
             params,
             restrict_to_movie_ids=restrict_to_movie_ids,
             qdrant_client=qdrant_client,
+            metadata_filters=metadata_filters,
         )
 
     raise ValueError(f"Unsupported route for handler execution: {route!r}")

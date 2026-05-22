@@ -49,6 +49,7 @@ import numpy as np
 
 from db.postgres import fetch_neutral_reranker_seed_ids
 from db.qdrant import qdrant_client
+from implementation.classes.schemas import MetadataFilters
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import (
     CategoryCombineType,
@@ -66,6 +67,9 @@ from search_v2.endpoint_fetching.category_handlers.handler import (
 )
 from search_v2.endpoint_fetching.endpoint_executors import (
     build_endpoint_coroutine,
+)
+from search_v2.endpoint_fetching.trending_query_execution import (
+    execute_trending_query,
 )
 
 if TYPE_CHECKING:
@@ -528,6 +532,8 @@ async def execute_branches(
 async def _run_branch(
     branch: "Step2BranchResult",
     auxiliary_specs: list[GeneratedEndpointSpec],
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> BranchRankedResults:
     """Execute one Step-2 branch end-to-end via the 5-phase pipeline."""
     if branch.branch_error is not None:
@@ -607,7 +613,10 @@ async def _run_branch(
         ] + unkeyed
         rep_results = await asyncio.gather(
             *(
-                _dispatch_call(t.spec, restrict=None)
+                _dispatch_call(
+                    t.spec, restrict=None,
+                    metadata_filters=metadata_filters,
+                )
                 for t in representatives
             )
         )
@@ -656,7 +665,9 @@ async def _run_branch(
                 if s.route is EndpointRoute.NEUTRAL_SEED
             ]
             if seed_specs:
-                union = await _seed_from_neutral(seed_specs)
+                union = await _seed_from_neutral(
+                    seed_specs, metadata_filters=metadata_filters,
+                )
         if not union:
             logger.info(
                 "branch %s: empty union after Phase B; returning empty",
@@ -678,7 +689,10 @@ async def _run_branch(
     if pos_rerankers:
         rer_results = await asyncio.gather(
             *(
-                _dispatch_call(t.spec, restrict=union)
+                _dispatch_call(
+                    t.spec, restrict=union,
+                    metadata_filters=metadata_filters,
+                )
                 for t in pos_rerankers
             )
         )
@@ -722,7 +736,12 @@ async def _run_branch(
     if negative_trait_indices:
         negative_traits = [branch.traits[i] for i in negative_trait_indices]
         neg_score_maps = await asyncio.gather(
-            *(_dispatch_negative_trait(t, union) for t in negative_traits)
+            *(
+                _dispatch_negative_trait(
+                    t, union, metadata_filters=metadata_filters,
+                )
+                for t in negative_traits
+            )
         )
         for trait, neg_scores in zip(negative_traits, neg_score_maps):
             weight = _commitment_multiplier(trait.commitment)
@@ -773,6 +792,14 @@ async def _subtract_shorts(
     """
     if not shorts_specs or not union:
         return union
+    # NOTE: shorts subtraction intentionally does NOT pass the UI hard
+    # filter. We want to subtract ALL shorts from the union, including
+    # ones the user's filter doesn't admit — otherwise a SHORT-format
+    # movie that fails the hard filter (so isn't in the eligible set)
+    # also wouldn't appear in the shorts-removal set, and a movie
+    # narrowly missing the eligible cutoff could survive as a "short"
+    # in the union. Keeping this filter-free is safe because shorts
+    # results are used as a blocklist only, never as candidates.
     shorts_results = await asyncio.gather(
         *(_dispatch_call(spec, restrict=None) for spec in shorts_specs)
     )
@@ -795,6 +822,8 @@ async def _subtract_shorts(
 
 async def _seed_from_neutral(
     neutral_seed_specs: list[GeneratedEndpointSpec],
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> set[int]:
     """Fetch the neutral-seed movie IDs as a fallback union.
 
@@ -804,13 +833,20 @@ async def _seed_from_neutral(
     enter trait scoring (implicit priors handle quality/popularity
     contribution at branch aggregation).
 
+    The user's UI hard filter applies here — this is the path the
+    user explicitly called out (the no-LLM/no-candidate-generator
+    fallback). If we skip the filter the fallback silently bypasses
+    user constraints.
+
     Best-effort: a fetch failure simply leaves the union empty, and
     the branch returns no results.
     """
     if not neutral_seed_specs:
         return set()
     try:
-        seed_ids = await fetch_neutral_reranker_seed_ids()
+        seed_ids = await fetch_neutral_reranker_seed_ids(
+            metadata_filters=metadata_filters,
+        )
     except Exception as exc:  # noqa: BLE001 — seed fetch is best-effort
         logger.warning(
             "neutral seed fetch failed; branch will return empty (%r)",
@@ -1106,6 +1142,8 @@ def _match_count_for_rarity(
 async def _dispatch_negative_trait(
     trait: "TraitWithEndpoints",
     union: set[int],
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Dispatch a negative trait's calls against the finalized union
     and apply the gate × fuzzy three-bin formula.
@@ -1130,7 +1168,13 @@ async def _dispatch_negative_trait(
         return {mid: 0.0 for mid in union}
 
     call_results = await asyncio.gather(
-        *(_dispatch_call(spec, restrict=union) for _, spec in paired)
+        *(
+            _dispatch_call(
+                spec, restrict=union,
+                metadata_filters=metadata_filters,
+            )
+            for _, spec in paired
+        )
     )
     return _score_negative_trait(paired, list(call_results), union)
 
@@ -1436,6 +1480,7 @@ async def _dispatch_call(
     spec: GeneratedEndpointSpec,
     *,
     restrict: set[int] | None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float] | None:
     """Run one GeneratedEndpointSpec through the existing dispatcher.
 
@@ -1451,17 +1496,30 @@ async def _dispatch_call(
     their per-category combine; the negative-trait scorer drops failed
     calls from their bin entirely.
 
-    NEUTRAL_SEED and TRENDING are not dispatched through this path.
-    NEUTRAL_SEED is handled inside `_seed_from_neutral`; TRENDING has
-    no LLM codepath in v2 and is not expected to appear in
-    `generated_specs`.
+    NEUTRAL_SEED is not dispatched through this path — it's handled
+    inside `_seed_from_neutral`.
+
+    TRENDING is special-cased here. `run_query_generation` emits a
+    spec with `params=None` for CategoryName.TRENDING (the route has
+    no LLM-generated parameters — it reads the precomputed Redis
+    hash directly). `build_endpoint_coroutine` intentionally rejects
+    that shape, so we route TRENDING to `execute_trending_query`
+    directly, mirroring the special-case in
+    `category_handlers.handler._dispatch_one_spec`.
     """
     try:
-        coro = build_endpoint_coroutine(
-            spec,
-            qdrant_client=qdrant_client,
-            restrict_to_movie_ids=restrict,
-        )
+        if spec.route is EndpointRoute.TRENDING:
+            coro = execute_trending_query(
+                restrict_to_movie_ids=restrict,
+                metadata_filters=metadata_filters,
+            )
+        else:
+            coro = build_endpoint_coroutine(
+                spec,
+                qdrant_client=qdrant_client,
+                restrict_to_movie_ids=restrict,
+                metadata_filters=metadata_filters,
+            )
         result: EndpointResult = await asyncio.wait_for(
             coro, timeout=EXECUTOR_TIMEOUT_SECONDS
         )

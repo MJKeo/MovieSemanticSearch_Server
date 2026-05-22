@@ -51,6 +51,7 @@ from db.postgres import (
     fetch_phrase_term_ids,
     fetch_quality_popularity_signals,
 )
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
 from schemas.step_0_flow_routing import ActorFlowData
 from search_v2.actor_zones import zone_cutoffs, zone_relative_position
@@ -104,6 +105,7 @@ async def run_actor_search(
     flow_data: ActorFlowData,
     *,
     limit: int = 100,
+    metadata_filters: MetadataFilters | None = None,
 ) -> ActorSearchResult:
     """Execute the actor flow.
 
@@ -136,7 +138,12 @@ async def run_actor_search(
     # named actor. Fanned out in parallel — each call is one
     # Postgres roundtrip for phrase_term_ids + one for billing rows.
     per_actor_buckets = await asyncio.gather(
-        *(_fetch_actor_buckets(ref.canonical_name) for ref in references)
+        *(
+            _fetch_actor_buckets(
+                ref.canonical_name, metadata_filters=metadata_filters,
+            )
+            for ref in references
+        )
     )
 
     # Intersection demands all-or-nothing — if any actor resolved
@@ -198,7 +205,11 @@ async def run_actor_search(
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_actor_buckets(canonical_name: str) -> dict[int, int]:
+async def _fetch_actor_buckets(
+    canonical_name: str,
+    *,
+    metadata_filters: MetadataFilters | None = None,
+) -> dict[int, int]:
     """Resolve one actor → {movie_id: bucket_num}.
 
     Returns an empty dict when the canonical_name fails to resolve.
@@ -227,7 +238,9 @@ async def _fetch_actor_buckets(canonical_name: str) -> dict[int, int]:
         return {}
 
     term_ids = list(phrase_to_id.values())
-    rows = await fetch_actor_billing_rows(term_ids, None)
+    rows = await fetch_actor_billing_rows(
+        term_ids, None, metadata_filters=metadata_filters,
+    )
 
     # MIN bucket per movie. Lower bucket number = better billing.
     buckets: dict[int, int] = {}

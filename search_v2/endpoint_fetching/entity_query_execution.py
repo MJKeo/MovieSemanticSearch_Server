@@ -51,6 +51,7 @@ from db.postgres import (
     fetch_movie_ids_with_titles_matching_any,
     fetch_phrase_term_ids,
 )
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
 from schemas.endpoint_result import EndpointResult
@@ -250,8 +251,12 @@ async def _fetch_actor_scores(
     term_ids: list[int],
     mode: PersonProminenceMode,
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
-    rows = await fetch_actor_billing_rows(term_ids, restrict_movie_ids)
+    rows = await fetch_actor_billing_rows(
+        term_ids, restrict_movie_ids, metadata_filters=metadata_filters,
+    )
     scores: dict[int, float] = {}
     for movie_id, billing_position, cast_size in rows:
         score = _actor_prominence_score(billing_position, cast_size, mode)
@@ -265,6 +270,8 @@ async def _fetch_binary_role_scores(
     table: PostingTable,
     term_ids: list[int],
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Binary 1.0 scoring for non-actor / non-character role tables.
 
@@ -272,8 +279,13 @@ async def _fetch_binary_role_scores(
     single person is small enough that pulling it back and intersecting
     is cheaper than extending every posting helper to support a server-
     side restrict.
+
+    The UI hard filter pushes down via fetch_movie_ids_by_term_ids'
+    inline subquery (server-side).
     """
-    movie_ids = await fetch_movie_ids_by_term_ids(table, term_ids)
+    movie_ids = await fetch_movie_ids_by_term_ids(
+        table, term_ids, metadata_filters=metadata_filters,
+    )
     if restrict_movie_ids is not None:
         movie_ids = movie_ids & restrict_movie_ids
     return {mid: 1.0 for mid in movie_ids}
@@ -283,8 +295,12 @@ async def _fetch_character_scores(
     term_ids: list[int],
     mode: CharacterProminenceMode,
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
-    rows = await fetch_character_billing_rows(term_ids, restrict_movie_ids)
+    rows = await fetch_character_billing_rows(
+        term_ids, restrict_movie_ids, metadata_filters=metadata_filters,
+    )
     scores: dict[int, float] = {}
     for movie_id, billing_position, character_cast_size in rows:
         score = _character_prominence_score(
@@ -336,6 +352,8 @@ def _max_merge(dicts: list[dict[int, float]]) -> dict[int, float]:
 async def _execute_person_target(
     target: PersonTarget,
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """One PersonTarget → {movie_id: score}. Branches on
     `person_category`: ACTOR uses prominence scoring; the four other
@@ -351,7 +369,8 @@ async def _execute_person_target(
 
     if target.person_category == PersonCategory.ACTOR:
         return await _fetch_actor_scores(
-            term_ids, target.prominence_mode, restrict_movie_ids
+            term_ids, target.prominence_mode, restrict_movie_ids,
+            metadata_filters=metadata_filters,
         )
 
     if target.person_category == PersonCategory.UNKNOWN:
@@ -362,10 +381,14 @@ async def _execute_person_target(
         # so every table contributes equally and the strongest signal
         # wins.
         actor_task = _fetch_actor_scores(
-            term_ids, target.prominence_mode, restrict_movie_ids
+            term_ids, target.prominence_mode, restrict_movie_ids,
+            metadata_filters=metadata_filters,
         )
         binary_tasks = [
-            _fetch_binary_role_scores(table, term_ids, restrict_movie_ids)
+            _fetch_binary_role_scores(
+                table, term_ids, restrict_movie_ids,
+                metadata_filters=metadata_filters,
+            )
             for table in PEOPLE_POSTING_TABLES
             if table is not PostingTable.ACTOR
         ]
@@ -386,12 +409,17 @@ async def _execute_person_target(
         raise ValueError(
             f"Unhandled person_category: {target.person_category!r}"
         )
-    return await _fetch_binary_role_scores(table, term_ids, restrict_movie_ids)
+    return await _fetch_binary_role_scores(
+        table, term_ids, restrict_movie_ids,
+        metadata_filters=metadata_filters,
+    )
 
 
 async def _execute_character_target(
     target: CharacterTarget,
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """One CharacterTarget → {movie_id: score}. Exact-match `forms`
     against lex.character_strings, then prominence-score each row via
@@ -404,7 +432,8 @@ async def _execute_character_target(
     if not term_ids:
         return {}
     return await _fetch_character_scores(
-        term_ids, target.prominence_mode, restrict_movie_ids
+        term_ids, target.prominence_mode, restrict_movie_ids,
+        metadata_filters=metadata_filters,
     )
 
 
@@ -416,12 +445,17 @@ async def _execute_character_target(
 async def _execute_person_spec(
     spec: PersonQuerySpec,
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Fan one coroutine per PersonTarget, MAX-merge per movie. Single-
     target specs collapse to a 1-element merge with no scoring drift."""
     per_target = await asyncio.gather(
         *(
-            _execute_person_target(target, restrict_movie_ids)
+            _execute_person_target(
+                target, restrict_movie_ids,
+                metadata_filters=metadata_filters,
+            )
             for target in spec.targets
         )
     )
@@ -431,11 +465,16 @@ async def _execute_person_spec(
 async def _execute_character_spec(
     spec: CharacterQuerySpec,
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Fan one coroutine per CharacterTarget, MAX-merge per movie."""
     per_target = await asyncio.gather(
         *(
-            _execute_character_target(target, restrict_movie_ids)
+            _execute_character_target(
+                target, restrict_movie_ids,
+                metadata_filters=metadata_filters,
+            )
             for target in spec.targets
         )
     )
@@ -462,6 +501,8 @@ def _build_title_like_pattern(target: TitlePatternTarget) -> str | None:
 async def _execute_title_pattern_spec(
     spec: TitlePatternQuerySpec,
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Single OR'd LIKE query across every target. Per-pattern scoring
     is binary 1.0, so union semantics collapse to set membership at
@@ -476,7 +517,7 @@ async def _execute_title_pattern_spec(
         return {}
 
     movie_ids = await fetch_movie_ids_with_titles_matching_any(
-        patterns, restrict_movie_ids
+        patterns, restrict_movie_ids, metadata_filters=metadata_filters,
     )
     return {mid: 1.0 for mid in movie_ids}
 
@@ -497,6 +538,7 @@ async def execute_entity_query(
     spec: EntitySpec,
     *,
     restrict_to_movie_ids: set[int] | None = None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Execute one entity-family spec against the lexical schema.
 
@@ -528,12 +570,19 @@ async def execute_entity_query(
             natural match set.
     """
     if isinstance(spec, PersonQuerySpec):
-        scores_by_movie = await _execute_person_spec(spec, restrict_to_movie_ids)
+        scores_by_movie = await _execute_person_spec(
+            spec, restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
+        )
     elif isinstance(spec, CharacterQuerySpec):
-        scores_by_movie = await _execute_character_spec(spec, restrict_to_movie_ids)
+        scores_by_movie = await _execute_character_spec(
+            spec, restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
+        )
     elif isinstance(spec, TitlePatternQuerySpec):
         scores_by_movie = await _execute_title_pattern_spec(
-            spec, restrict_to_movie_ids
+            spec, restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
     else:
         # Exhaustive over the EntitySpec union — any new spec family

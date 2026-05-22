@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 _redis_pool: ConnectionPool | None = None
 _redis_client: aioredis.Redis | None = None
 
-ENV_PREFIX: str = os.getenv("REDIS_ENV", "unknown_env")
-
 
 def get_redis_client() -> aioredis.Redis:
     """Return the shared async Redis client backed by a connection pool."""
@@ -26,8 +24,16 @@ def get_redis_client() -> aioredis.Redis:
 
 
 def redis_key(*parts: str) -> str:
-    """Build an environment-prefixed Redis key from one or more parts."""
-    return f"{ENV_PREFIX}:{':'.join(parts)}"
+    """Build an environment-prefixed Redis key from one or more parts.
+
+    `REDIS_ENV` is resolved at call time, not import time, so the prefix
+    picks up whatever the process environment holds when the key is
+    built. This avoids a foot-gun where dotenv loading (or any other
+    env setup) happens after `db.redis` is imported and a module-level
+    constant would have already frozen the default.
+    """
+    env_prefix = os.getenv("REDIS_ENV", "unknown_env")
+    return f"{env_prefix}:{':'.join(parts)}"
 
 
 async def init_redis(

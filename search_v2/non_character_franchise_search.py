@@ -52,6 +52,7 @@ import logging
 from dataclasses import dataclass, field
 
 from db.postgres import fetch_non_character_franchise_movies
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.franchise_text import normalize_franchise_string
 from schemas.step_0_flow_routing import NonCharacterFranchiseFlowData
 # Reuse the Step-3 category handler's LLM config so the two callers
@@ -95,6 +96,7 @@ async def run_non_character_franchise_search(
     flow_data: NonCharacterFranchiseFlowData,
     *,
     limit: int = 100,
+    metadata_filters: MetadataFilters | None = None,
 ) -> NonCharacterFranchiseSearchResult:
     """Execute the non-character franchise flow.
 
@@ -132,7 +134,9 @@ async def run_non_character_franchise_search(
     if not normalized:
         return NonCharacterFranchiseSearchResult()
 
-    rows = await fetch_non_character_franchise_movies(normalized, limit=limit)
+    rows = await fetch_non_character_franchise_movies(
+        normalized, limit=limit, metadata_filters=metadata_filters,
+    )
 
     # Rows are already sorted (bucket asc, popularity desc, movie_id desc).
     # Split into the two buckets in one pass while preserving order.

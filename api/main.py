@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
@@ -12,7 +13,15 @@ from db.postgres import (
 )
 from db.qdrant import qdrant_client, check_qdrant
 from db.redis import init_redis, close_redis, check_redis
+from implementation.classes.enums import Genre, StreamingAccessType
+from implementation.classes.languages import Language
+from implementation.classes.schemas import MetadataFilters
+from implementation.classes.watch_providers import (
+    STREAMING_PROVIDER_MAP,
+    StreamingService,
+)
 from implementation.misc.event_loop import install_uvloop
+from implementation.misc.helpers import create_watch_provider_offering_key
 from search_v2.similar_movies import run_similar_movies_for_ids
 from search_v2.streaming_orchestrator import stream_full_pipeline
 
@@ -20,6 +29,13 @@ from search_v2.streaming_orchestrator import stream_full_pipeline
 # encode natively without Pydantic's model_dump round-trip; ~10-50×
 # faster than stdlib json + Pydantic on the wire-format hot path.
 _json_encoder = msgspec.json.Encoder()
+
+# All StreamingAccessType method ids (SUBSCRIPTION/BUY/RENT). The UI filter
+# carries no access-type preference, so we expand every selected provider
+# across all methods — matches "available on this service, any way".
+_ALL_STREAMING_METHOD_IDS: tuple[int, ...] = tuple(
+    m.type_id for m in StreamingAccessType
+)
 
 # Switch asyncio onto uvloop before uvicorn starts the event loop.
 # ~2x faster than the default selector loop on socket-heavy workloads
@@ -73,10 +89,121 @@ async def health_check():
 # ---------------------------------------------------------------------------
 
 
+class MetadataFiltersInput(BaseModel):
+    """Wire-level mirror of MetadataFilters for the /query_search body.
+
+    Every field is optional / nullable so unset filters are transmitted
+    as None and converted into MetadataFilters with the corresponding
+    attribute left as None (the "no filter on this axis" contract).
+
+    The string-valued list fields take canonical enum values that match
+    the labels the UI displays:
+      - genres: ``Genre`` enum values ("Action", "Sci-Fi", …)
+      - audio_languages: ``Language`` enum values ("English", "Spanish", …)
+      - streaming_services: ``StreamingService`` enum values
+        ("netflix", "max", …). Server-side these expand to the flat
+        TMDB provider-id list via STREAMING_PROVIDER_MAP.
+
+    Invalid enum values raise HTTPException 422 in _to_metadata_filters
+    rather than silently dropping — wire input must be validated at
+    the boundary per coding-standards.md.
+    """
+
+    min_release_ts:     Optional[int] = None
+    max_release_ts:     Optional[int] = None
+    min_runtime:        Optional[int] = None
+    max_runtime:        Optional[int] = None
+    min_maturity_rank:  Optional[int] = None  # 1=G..5=NC-17
+    max_maturity_rank:  Optional[int] = None
+    genres:             Optional[list[str]] = None
+    audio_languages:    Optional[list[str]] = None
+    streaming_services: Optional[list[str]] = None
+
+
+def _to_metadata_filters(
+    body_input: MetadataFiltersInput | None,
+) -> MetadataFilters | None:
+    """Translate the wire mirror into the internal MetadataFilters dataclass.
+
+    Returns ``None`` when the input is None or every field is None
+    (no-filter signal). Raises HTTPException 422 on any unknown enum
+    value; this is the input-validation boundary for filters.
+    """
+    if body_input is None:
+        return None
+
+    # Resolve enum lists via direct value lookup. Genre / Language /
+    # StreamingService all use string-valued members whose ``value``
+    # matches the wire token.
+    try:
+        genres = (
+            [Genre(name) for name in body_input.genres]
+            if body_input.genres else None
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"unknown genre value: {exc}"
+        ) from exc
+
+    try:
+        languages = (
+            [Language(name) for name in body_input.audio_languages]
+            if body_input.audio_languages else None
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"unknown audio language value: {exc}"
+        ) from exc
+
+    # Expand StreamingService values into the encoded watch_offer_keys that
+    # movie_card.watch_offer_keys is indexed against. Each key packs
+    # (provider_id, method_id) via create_watch_provider_offering_key
+    # ((pid << 4) | mid), so raw provider IDs never appear in the column —
+    # we must fan each service's providers out across every access-type
+    # method (subscription/buy/rent) for the prefilter to match. Same
+    # encoding pattern as _precompute_streaming_keys in
+    # search_v2/endpoint_fetching/metadata_query_execution.py.
+    watch_offer_keys: list[int] | None = None
+    if body_input.streaming_services:
+        try:
+            services = [StreamingService(s) for s in body_input.streaming_services]
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown streaming_service value: {exc}",
+            ) from exc
+        flat: list[int] = []
+        seen: set[int] = set()
+        for svc in services:
+            for pid in STREAMING_PROVIDER_MAP.get(svc, []):
+                for mid in _ALL_STREAMING_METHOD_IDS:
+                    key = create_watch_provider_offering_key(pid, mid)
+                    if key not in seen:
+                        seen.add(key)
+                        flat.append(key)
+        watch_offer_keys = flat or None
+
+    filters = MetadataFilters(
+        min_release_ts=body_input.min_release_ts,
+        max_release_ts=body_input.max_release_ts,
+        min_runtime=body_input.min_runtime,
+        max_runtime=body_input.max_runtime,
+        min_maturity_rank=body_input.min_maturity_rank,
+        max_maturity_rank=body_input.max_maturity_rank,
+        genres=genres,
+        audio_languages=languages,
+        watch_offer_keys=watch_offer_keys,
+    )
+    # If every field collapsed to None, return None so downstream
+    # primitives short-circuit instead of building empty filter clauses.
+    return filters if filters.is_active else None
+
+
 class QuerySearchBody(BaseModel):
     """Request body for POST /query_search."""
 
     query: str = Field(min_length=1)
+    filters: Optional[MetadataFiltersInput] = None
 
 
 class SimilaritySearchBody(BaseModel):
@@ -110,6 +237,13 @@ async def query_search(body: QuerySearchBody):
     if not query:
         raise HTTPException(status_code=400, detail="query must be non-empty.")
 
+    # Translate the wire mirror into the internal MetadataFilters
+    # dataclass once, at the boundary. Raises 422 on any unknown enum
+    # value (genre / language / streaming_service); collapses to None
+    # if every field is unset so the pipeline short-circuits filter
+    # plumbing entirely on unfiltered queries.
+    metadata_filters = _to_metadata_filters(body.filters)
+
     async def event_stream():
         # Translate (event_name, payload) pairs from the orchestrator
         # into SSE wire frames. msgspec.json.Encoder handles
@@ -118,7 +252,9 @@ async def query_search(body: QuerySearchBody):
         # We let CancelledError propagate so Starlette can clean up
         # on client disconnect; the orchestrator's `finally` block
         # cancels any in-flight tasks before unwinding.
-        async for event_name, payload in stream_full_pipeline(query):
+        async for event_name, payload in stream_full_pipeline(
+            query, metadata_filters=metadata_filters,
+        ):
             body = _json_encoder.encode(payload).decode("utf-8")
             yield f"event: {event_name}\ndata: {body}\n\n"
 

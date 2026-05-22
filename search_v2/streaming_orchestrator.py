@@ -65,6 +65,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from db.postgres import fetch_movie_card_summaries
+from implementation.classes.schemas import MetadataFilters
 from schemas.api_responses import MovieCard
 from schemas.step_0_flow_routing import (
     ActorFlowData,
@@ -208,11 +209,19 @@ class _FetchOutcome:
 
 async def stream_full_pipeline(
     query: str,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Run the full pipeline and yield `(event_name, payload)` tuples.
 
     Args:
         query: raw user query (non-empty after stripping).
+        metadata_filters: Optional UI hard filters applied at every
+            candidate-generation / reranker primitive. Threaded through
+            standard Stage 4 branches and the entity-flow runners
+            (exact_title, franchise, studio, actor). Intentionally NOT
+            threaded into the similarity flow — anchor-based "movies
+            like X" is not filter-relevant.
 
     Yields:
         (event_name, payload) tuples. The endpoint encodes these as SSE
@@ -464,6 +473,7 @@ async def stream_full_pipeline(
             _run_exact_title_with_hydration(
                 exact_title_flow_data,
                 emit_stage=_make_emitter(_FETCH_ID_EXACT_TITLE),
+                metadata_filters=metadata_filters,
             )
         )
         task_info[task] = _TaskInfo(
@@ -471,6 +481,9 @@ async def stream_full_pipeline(
             phase=_PHASE_NONSTANDARD,
         )
     if similarity_firing:
+        # Note: similarity flow intentionally NOT passed metadata_filters
+        # — anchor-based "movies like X" search is not filter-relevant
+        # (the user wants similar movies, not filtered ones).
         task = asyncio.create_task(
             _run_similarity_with_hydration(
                 similarity_flow_data,
@@ -486,6 +499,7 @@ async def stream_full_pipeline(
             _run_non_character_franchise_with_hydration(
                 non_character_franchise_flow_data,
                 emit_stage=_make_emitter(_FETCH_ID_NON_CHARACTER_FRANCHISE),
+                metadata_filters=metadata_filters,
             )
         )
         task_info[task] = _TaskInfo(
@@ -497,6 +511,7 @@ async def stream_full_pipeline(
             _run_character_franchise_with_hydration(
                 character_franchise_flow_data,
                 emit_stage=_make_emitter(_FETCH_ID_CHARACTER_FRANCHISE),
+                metadata_filters=metadata_filters,
             )
         )
         task_info[task] = _TaskInfo(
@@ -508,6 +523,7 @@ async def stream_full_pipeline(
             _run_studio_with_hydration(
                 studio_flow_data,
                 emit_stage=_make_emitter(_FETCH_ID_STUDIO),
+                metadata_filters=metadata_filters,
             )
         )
         task_info[task] = _TaskInfo(
@@ -519,6 +535,7 @@ async def stream_full_pipeline(
             _run_actor_with_hydration(
                 actor_flow_data,
                 emit_stage=_make_emitter(_FETCH_ID_ACTOR),
+                metadata_filters=metadata_filters,
             )
         )
         task_info[task] = _TaskInfo(
@@ -558,6 +575,7 @@ async def stream_full_pipeline(
                     info,
                     task_info=task_info,
                     make_emitter=_make_emitter,
+                    metadata_filters=metadata_filters,
                 ):
                     yield event
 
@@ -605,6 +623,7 @@ async def _handle_finished_task(
     *,
     task_info: dict[asyncio.Task, _TaskInfo],
     make_emitter: Callable[[str], StageEmitter],
+    metadata_filters: MetadataFilters | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Process one completed task; may launch follow-on tasks.
 
@@ -661,7 +680,10 @@ async def _handle_finished_task(
         # sub-stages: rescoring → hydrating).
         emitter("executing")
         stage4_task = asyncio.create_task(
-            _run_stage4_with_implicit_prior(branch_result, auxiliary, emitter)
+            _run_stage4_with_implicit_prior(
+                branch_result, auxiliary, emitter,
+                metadata_filters=metadata_filters,
+            )
         )
         task_info[stage4_task] = _TaskInfo(
             fetch_id=info.fetch_id, phase=_PHASE_STAGE4
@@ -748,6 +770,8 @@ async def _run_stage4_with_implicit_prior(
     branch: Step2BranchResult,
     auxiliary: list[GeneratedEndpointSpec],
     emit_stage: StageEmitter,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> _FetchOutcome:
     """Run Stage 4 for one branch, rerank, then hydrate movie cards.
 
@@ -762,7 +786,9 @@ async def _run_stage4_with_implicit_prior(
     emitted "executing" before this task started.
     """
     # Execute candidate-generator + reranker specs and score traits.
-    result = await _stage4_run_branch(branch, auxiliary)
+    result = await _stage4_run_branch(
+        branch, auxiliary, metadata_filters=metadata_filters,
+    )
     emit_stage("rescoring")
     # Apply the implicit-prior post-rerank pass.
     result = await _apply_implicit_prior_rerank_for_branch(branch, result)
@@ -783,6 +809,10 @@ async def _run_similarity_with_hydration(
     The caller emits the initial `resolving_anchors` stage before this
     task starts; we flip to `hydrating` between the similarity search
     and the Postgres card lookup so the UI sees the transition.
+
+    Intentionally does NOT accept a metadata_filters arg — anchor-based
+    similarity is not filter-relevant (user wants similar movies, not
+    filtered ones).
     """
     result = await run_similarity_search(flow_data)
     emit_stage("hydrating")
@@ -794,6 +824,8 @@ async def _run_similarity_with_hydration(
 async def _run_exact_title_with_hydration(
     flow_data: ExactTitleFlowData,
     emit_stage: StageEmitter,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> _FetchOutcome:
     """Run the exact-title flow then hydrate the ranked tmdb_ids.
 
@@ -801,7 +833,9 @@ async def _run_exact_title_with_hydration(
     task starts; we flip to `hydrating` between the title search and
     the Postgres card lookup so the UI sees the transition.
     """
-    result = await run_exact_title_search(flow_data)
+    result = await run_exact_title_search(
+        flow_data, metadata_filters=metadata_filters,
+    )
     emit_stage("hydrating")
     movie_ids = [int(mid) for mid, _ in result.ranked]
     cards = await fetch_movie_card_summaries(movie_ids)
@@ -811,6 +845,8 @@ async def _run_exact_title_with_hydration(
 async def _run_non_character_franchise_with_hydration(
     flow_data: NonCharacterFranchiseFlowData,
     emit_stage: StageEmitter,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> _FetchOutcome:
     """Run the non-character franchise flow then hydrate the bucketed result.
 
@@ -819,7 +855,9 @@ async def _run_non_character_franchise_with_hydration(
     preserve the input ordering — primary-by-popularity followed by
     secondary-by-popularity.
     """
-    result = await run_non_character_franchise_search(flow_data)
+    result = await run_non_character_franchise_search(
+        flow_data, metadata_filters=metadata_filters,
+    )
     emit_stage("hydrating")
     movie_ids = result.primary_franchise + result.secondary_franchise
     cards = await fetch_movie_card_summaries(movie_ids)
@@ -829,6 +867,8 @@ async def _run_non_character_franchise_with_hydration(
 async def _run_character_franchise_with_hydration(
     flow_data: CharacterFranchiseFlowData,
     emit_stage: StageEmitter,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> _FetchOutcome:
     """Run the character-franchise flow then hydrate the tiered result.
 
@@ -839,7 +879,9 @@ async def _run_character_franchise_with_hydration(
     ranked list; fetch_movie_card_summaries preserves input ordering
     so the tier-then-popularity invariant survives hydration.
     """
-    result = await run_character_franchise_search(flow_data)
+    result = await run_character_franchise_search(
+        flow_data, metadata_filters=metadata_filters,
+    )
     emit_stage("hydrating")
     movie_ids = (
         result.tier_1_lineage_mainline
@@ -857,6 +899,8 @@ async def _run_character_franchise_with_hydration(
 async def _run_studio_with_hydration(
     flow_data: StudioFlowData,
     emit_stage: StageEmitter,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> _FetchOutcome:
     """Run the studio flow then hydrate the single popularity-sorted list.
 
@@ -865,7 +909,9 @@ async def _run_studio_with_hydration(
     so the popularity-DESC invariant established by run_studio_search
     survives hydration.
     """
-    result = await run_studio_search(flow_data)
+    result = await run_studio_search(
+        flow_data, metadata_filters=metadata_filters,
+    )
     emit_stage("hydrating")
     cards = await fetch_movie_card_summaries(result.ranked)
     return _FetchOutcome(cards=cards, branch_error=None)
@@ -874,6 +920,8 @@ async def _run_studio_with_hydration(
 async def _run_actor_with_hydration(
     flow_data: ActorFlowData,
     emit_stage: StageEmitter,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> _FetchOutcome:
     """Run the actor flow then hydrate the bucketed result.
 
@@ -883,7 +931,9 @@ async def _run_actor_with_hydration(
     preserves input ordering so the bucket-then-popularity invariant
     survives hydration.
     """
-    result = await run_actor_search(flow_data)
+    result = await run_actor_search(
+        flow_data, metadata_filters=metadata_filters,
+    )
     emit_stage("hydrating")
     movie_ids = (
         result.bucket_1_lead

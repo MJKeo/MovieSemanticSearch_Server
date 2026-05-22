@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 from db.postgres import fetch_movie_ids_by_release_format
+from implementation.classes.schemas import MetadataFilters
 from schemas.endpoint_result import EndpointResult
 from schemas.media_type_translation import MediaTypeQuerySpec
 from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
@@ -30,6 +31,7 @@ async def execute_media_type_query(
     spec: MediaTypeQuerySpec,
     *,
     restrict_to_movie_ids: set[int] | None = None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Execute one MediaTypeQuerySpec against public.movie_card.release_format.
 
@@ -56,7 +58,8 @@ async def execute_media_type_query(
     release_format_ids = [fmt.release_format_id for fmt in spec.formats]
 
     matched_ids = await fetch_movie_ids_by_release_format(
-        release_format_ids, restrict_to_movie_ids
+        release_format_ids, restrict_to_movie_ids,
+        metadata_filters=metadata_filters,
     )
     scores_by_movie = {mid: 1.0 for mid in matched_ids}
 

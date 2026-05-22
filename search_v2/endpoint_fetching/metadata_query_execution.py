@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 import math
 from typing import Any
 
-from db.postgres import pool
+from db.postgres import _build_direct_movie_card_filter_clause, pool
 from implementation.classes.countries import Country
 from implementation.classes.enums import (
     DateMatchOperation,
@@ -43,6 +43,7 @@ from implementation.classes.enums import (
     StreamingAccessType,
 )
 from implementation.classes.languages import Language
+from implementation.classes.schemas import MetadataFilters
 from implementation.classes.watch_providers import STREAMING_PROVIDER_MAP, StreamingService
 from implementation.misc.helpers import create_watch_provider_offering_key
 from schemas.endpoint_result import EndpointResult
@@ -676,6 +677,7 @@ def _build_dealbreaker_sql(
     handlers: dict[MetadataAttribute, _ColumnHandler],
     mode: ScoringMethod,
     select_cols: list[str],
+    metadata_filters: MetadataFilters | None = None,
 ) -> tuple[str, list]:
     """Compose one SELECT for the dealbreaker path.
 
@@ -686,16 +688,22 @@ def _build_dealbreaker_sql(
       - At least one bounded column: OR the per-column gates. A movie
         qualifies if any column's gate admits it; per-row scoring
         determines its actual contribution.
+
+    The UI hard filter (when active) folds directly into the WHERE
+    clause via _build_direct_movie_card_filter_clause — FROM is
+    movie_card already, so all filter columns are in scope.
     """
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
     if all(h.unbounded for h in handlers.values()):
         non_null_clauses = [f"{col} IS NOT NULL" for col in select_cols]
         where = " OR ".join(non_null_clauses)
         sort_expr = _build_unbounded_sort_expr(handlers, mode)
         sql = (
             f"SELECT movie_id, {', '.join(select_cols)} FROM movie_card "
-            f"WHERE {where} ORDER BY {sort_expr} DESC LIMIT %s"
+            f"WHERE ({where}){filter_clause} "
+            f"ORDER BY {sort_expr} DESC LIMIT %s"
         )
-        return sql, [_POPULARITY_RECEPTION_DEALBREAKER_CAP]
+        return sql, [*filter_params, _POPULARITY_RECEPTION_DEALBREAKER_CAP]
 
     # Mixed / all-bounded: OR'd gates.
     gate_parts: list[str] = []
@@ -704,19 +712,24 @@ def _build_dealbreaker_sql(
         gate_parts.append(f"({h.gate_sql})")
         params.extend(h.gate_params)
     where = " OR ".join(gate_parts)
-    sql = f"SELECT movie_id, {', '.join(select_cols)} FROM movie_card WHERE {where}"
-    return sql, params
+    sql = (
+        f"SELECT movie_id, {', '.join(select_cols)} FROM movie_card "
+        f"WHERE ({where}){filter_clause}"
+    )
+    return sql, params + filter_params
 
 
 def _build_preference_sql(
     restrict: set[int], select_cols: list[str],
+    metadata_filters: MetadataFilters | None = None,
 ) -> tuple[str, list]:
     """Pull every supplied id with all needed columns in one round-trip."""
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
     sql = (
         f"SELECT movie_id, {', '.join(select_cols)} FROM movie_card "
-        "WHERE movie_id = ANY(%s)"
+        f"WHERE movie_id = ANY(%s){filter_clause}"
     )
-    return sql, [list(restrict)]
+    return sql, [list(restrict), *filter_params]
 
 
 # ── Per-row scoring + folding ────────────────────────────────────────────
@@ -756,6 +769,8 @@ def _score_and_combine(
 async def execute_metadata_query(
     output: MetadataTranslationOutput,
     restrict_to_movie_ids: set[int] | None = None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Execute one whole-call metadata translation and return scored
     candidates.
@@ -797,9 +812,13 @@ async def execute_metadata_query(
     select_cols = _ordered_select_columns(handlers)
 
     if is_dealbreaker:
-        sql, params = _build_dealbreaker_sql(handlers, mode, select_cols)
+        sql, params = _build_dealbreaker_sql(
+            handlers, mode, select_cols, metadata_filters,
+        )
     else:
-        sql, params = _build_preference_sql(restrict_to_movie_ids, select_cols)
+        sql, params = _build_preference_sql(
+            restrict_to_movie_ids, select_cols, metadata_filters,
+        )
 
     for attempt in (1, 2):
         try:

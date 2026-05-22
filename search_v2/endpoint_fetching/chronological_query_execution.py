@@ -37,6 +37,12 @@ async def _fetch_release_ts(movie_ids: list[int]) -> dict[int, int | None]:
     movie_card table (e.g., upstream stale pool members) simply do
     not appear in the returned map — the caller fills those as
     None so the scorer floors them at 0.
+
+    The user hard filter is intentionally NOT applied here:
+    chronological is a POOL_RERANKER, and the candidate pool the
+    caller supplied was already narrowed by upstream candidate
+    generators with the filter applied. Re-applying the filter
+    would do redundant work for no quality benefit.
     """
     sql = (
         "SELECT movie_id, release_ts FROM public.movie_card "

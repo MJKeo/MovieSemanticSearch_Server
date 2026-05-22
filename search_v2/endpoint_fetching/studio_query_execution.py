@@ -54,6 +54,7 @@ from db.postgres import (
     fetch_movie_ids_by_brands,
     fetch_movie_ids_by_production_company_ids,
 )
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.production_company_text import (
     normalize_company_string,
     tokenize_company_string,
@@ -81,18 +82,24 @@ DF_CEILING: int = 323
 async def _execute_brand_path(
     brand_ids: list[int],
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Direct posting-list lookup for one or more brand_ids. Empty input
     short-circuits without a DB round trip."""
     if not brand_ids:
         return {}
-    movie_ids = await fetch_movie_ids_by_brands(brand_ids, restrict_movie_ids)
+    movie_ids = await fetch_movie_ids_by_brands(
+        brand_ids, restrict_movie_ids, metadata_filters=metadata_filters,
+    )
     return {mid: 1.0 for mid in movie_ids}
 
 
 async def _execute_freeform_path(
     freeform_names: list[str],
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Token-intersection freeform path.
 
@@ -150,7 +157,8 @@ async def _execute_freeform_path(
 
     # Phase 4: GIN `&&` join against movie_card.production_company_ids.
     movie_ids = await fetch_movie_ids_by_production_company_ids(
-        all_company_ids, restrict_movie_ids
+        all_company_ids, restrict_movie_ids,
+        metadata_filters=metadata_filters,
     )
     return {mid: 1.0 for mid in movie_ids}
 
@@ -163,6 +171,8 @@ async def _execute_freeform_path(
 async def _resolve_single_ref(
     ref: StudioRef,
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Resolve one StudioRef to a {movie_id: 1.0} score map.
 
@@ -172,11 +182,13 @@ async def _resolve_single_ref(
     """
     if ref.brand is not None:
         return await _execute_brand_path(
-            [ref.brand.brand_id], restrict_movie_ids
+            [ref.brand.brand_id], restrict_movie_ids,
+            metadata_filters=metadata_filters,
         )
     if ref.freeform_names:
         return await _execute_freeform_path(
-            ref.freeform_names, restrict_movie_ids
+            ref.freeform_names, restrict_movie_ids,
+            metadata_filters=metadata_filters,
         )
     # Caller already filters out refs with neither set; reachable only
     # if the upstream filter is bypassed.
@@ -191,6 +203,8 @@ async def _resolve_single_ref(
 async def _execute_any(
     refs: list[StudioRef],
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """ANY combine — single batched fetch across all refs, per-movie max.
 
@@ -215,8 +229,14 @@ async def _execute_any(
             freeform_names.extend(ref.freeform_names)
 
     brand_scores, freeform_scores = await asyncio.gather(
-        _execute_brand_path(sorted(brand_ids), restrict_movie_ids),
-        _execute_freeform_path(freeform_names, restrict_movie_ids),
+        _execute_brand_path(
+            sorted(brand_ids), restrict_movie_ids,
+            metadata_filters=metadata_filters,
+        ),
+        _execute_freeform_path(
+            freeform_names, restrict_movie_ids,
+            metadata_filters=metadata_filters,
+        ),
     )
 
     # Both paths score 1.0 per match, so a set union of their key sets
@@ -228,6 +248,8 @@ async def _execute_any(
 async def _execute_all(
     refs: list[StudioRef],
     restrict_movie_ids: set[int] | None,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """ALL combine — per-ref parallel fetches, evenly weighted mean.
 
@@ -255,7 +277,10 @@ async def _execute_all(
 
     per_ref_scores = await asyncio.gather(
         *(
-            _resolve_single_ref(ref, restrict_movie_ids)
+            _resolve_single_ref(
+                ref, restrict_movie_ids,
+                metadata_filters=metadata_filters,
+            )
             for ref in deduped_refs
         )
     )
@@ -286,6 +311,7 @@ async def execute_studio_query(
     spec: StudioQuerySpec,
     *,
     restrict_to_movie_ids: set[int] | None = None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Execute one StudioQuerySpec.
 
@@ -319,10 +345,14 @@ async def execute_studio_query(
         return build_endpoint_result({}, restrict_to_movie_ids)
 
     if spec.scoring_method == ScoringMethod.ANY:
-        scores_by_movie = await _execute_any(valid_refs, restrict_to_movie_ids)
+        scores_by_movie = await _execute_any(
+            valid_refs, restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
+        )
     else:  # ALL
         scores_by_movie = await _execute_all(
-            valid_refs, restrict_to_movie_ids
+            valid_refs, restrict_to_movie_ids,
+            metadata_filters=metadata_filters,
         )
 
     return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)

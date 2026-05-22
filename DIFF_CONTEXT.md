@@ -443,3 +443,143 @@ Post-review revisions to the backfill script (per /review-code findings):
 - **Binary-format COPY.** Switched `COPY ... FROM STDIN` to `WITH (FORMAT BINARY)` so psycopg3's binary array adapter handles `list[int] → int4[]` directly without text-mode `{1,2,3}` literal encoding per row.
 - **`ORDER BY tmdb_id`** on the SQLite query so `--limit N` is reproducible across re-runs while metadata generation is still landing new rows.
 - **Style cleanups.** `Iterator` import moved from `typing` to `collections.abc` (PEP 585, Python 3.13 idiom); dropped the over-defensive `IF NOT EXISTS` on `CREATE TEMP TABLE` since a fresh pool connection never has one.
+
+
+## Add hard-filter UI controls to Gradio frontend
+Files: run_gradio_ui.py | Added a collapsed "Filters" accordion exposing all six hard filters (release year range, runtime range, maturity range, genres, audio languages, streaming providers) from implementation/classes/schemas.py. Each filter is gated by an enable checkbox that toggles `interactive` on its controls — unchecked = visually disabled "inactive" state. Filter choices are duplicated as module-level constants rather than imported from the enums to keep the UI module import-light; comments mark the swap to enum-driven choices when the values get wired into the /query_search payload. No wiring into on_search yet — these are pure scaffolding for a follow-up change.
+
+
+## Make Redis key prefix lazy to fix trending lookup
+Files: db/redis.py | Resolve `REDIS_ENV` inside `redis_key()` at call time instead of caching it in a module-level `ENV_PREFIX`. The cached value froze to the `"unknown_env"` default when `api/main.py` was launched before any dotenv load (api/main.py never calls `load_dotenv()`), so reads went to `unknown_env:trending:current` while writes landed under `dev:trending:current` and the trending executor saw an empty hash. Lazy lookup removes the import-order foot-gun for all entry points without changing the docker path. No other module imported `ENV_PREFIX`.
+
+## Special-case TRENDING in test_v3_endpoints.ipynb Cell 2
+Files: test_v3_endpoints.ipynb | Cell 2 was sending every GeneratedEndpointSpec through build_endpoint_coroutine, which intentionally rejects TRENDING (params=None is legitimate for that route — see endpoint_executors.py docstring). Now mirrors handler._dispatch_one_spec: if spec.route is EndpointRoute.TRENDING, call execute_trending_query directly; otherwise fall through to build_endpoint_coroutine.
+
+
+## Refine release-date / runtime / maturity filter UX
+Files: run_gradio_ui.py | Release date now uses a mode radio (Inactive/Before/After/Between) plus `gr.DateTime(include_time=False, type="timestamp")` pickers whose visibility is bound to the selected mode — returns Unix timestamps so it lines up with the `release_ts` schema. Runtime keeps two stacked sliders (Gradio has no native dual-handle range slider) with the max slider relabeled to make `_RUNTIME_MAX = "Any"` explicit; an enable checkbox still provides the off state since neither slider has a natural inactive position. Maturity now folds Inactive into a comparison-type dropdown (Inactive/At most/At least) paired with an anchor rating — anchor is grayed out when comparison = Inactive. Dropped the unused `_YEAR_MIN`/`_YEAR_MAX` constants now that the year `gr.Number` inputs are gone.
+
+## Special-case TRENDING in stage_4_execution._dispatch_call
+Files: search_v2/stage_4_execution.py
+Why: A trending query through the API was returning no trending hits and emitting `build_endpoint_coroutine: spec.params is None for route=trending; returning empty result.` warnings. `run_query_generation` for CategoryName.TRENDING legitimately produces a GeneratedEndpointSpec with route=TRENDING and params=None (the route reads the precomputed Redis hash, no LLM parameters), but `_dispatch_call` routed every spec through `build_endpoint_coroutine`, which intentionally rejects TRENDING (see endpoint_executors.py docstring).
+Approach: In `_dispatch_call`, branch on `spec.route is EndpointRoute.TRENDING` and call `execute_trending_query(restrict_to_movie_ids=restrict)` directly; otherwise fall through to `build_endpoint_coroutine` unchanged. Mirrors the existing special-case in `category_handlers.handler._dispatch_one_spec`. Same timeout + soft-fail wrapper. Updated the stale docstring that claimed "TRENDING has no LLM codepath in v2 and is not expected to appear in `generated_specs`" — that assumption no longer holds now that handler.run_query_generation emits TRENDING specs for the TRENDING category.
+Testing notes: Verified live against the running docker-compose API by re-running "whats trending right now" — zero warnings in container logs, original branch now returns 263 candidates led by 2025-2026 trending titles (Avatar: Fire and Ash, Hoppers, Greenland 2: Migration, 28 Years Later: The Bone Temple).
+
+## Wire UI hard filters into V2 pipeline as pre-filters
+Files: api/main.py, run_gradio_ui.py, db/postgres.py,
+search_v2/streaming_orchestrator.py, search_v2/stage_4_execution.py,
+search_v2/endpoint_fetching/endpoint_executors.py,
+search_v2/endpoint_fetching/semantic_query_execution.py,
+search_v2/endpoint_fetching/entity_query_execution.py,
+search_v2/endpoint_fetching/studio_query_execution.py,
+search_v2/endpoint_fetching/keyword_query_execution.py,
+search_v2/endpoint_fetching/franchise_query_execution.py,
+search_v2/endpoint_fetching/metadata_query_execution.py,
+search_v2/endpoint_fetching/award_query_execution.py,
+search_v2/endpoint_fetching/chronological_query_execution.py,
+search_v2/endpoint_fetching/media_type_query_execution.py,
+search_v2/endpoint_fetching/trending_query_execution.py,
+search_v2/exact_title_search.py,
+search_v2/non_character_franchise_search.py,
+search_v2/character_franchise_search.py,
+search_v2/studio_search.py,
+search_v2/actor_search.py
+
+### Intent
+The Gradio UI's six hard filters (release date, runtime, maturity,
+genres, audio languages, streaming providers) were inert — collected
+locally but never sent to the API. The V2 pipeline issued every
+Postgres and Qdrant query without filtering, so any UI selection had
+zero effect on results. Post-filtering was unacceptable because top-K
+candidates could all be excluded, leaving the UI empty even when
+filter-compatible movies existed in the corpus. This change threads
+`MetadataFilters` (the existing dataclass at
+`implementation/classes/schemas.py:778`) through the entire V2
+pipeline so every query primitive applies filters at retrieval time.
+
+### Key Decisions
+- **Apply at primitive, not pre-resolved IDs.** Each Postgres and
+  Qdrant primitive accepts the `MetadataFilters` dataclass and folds
+  conditions into its own WHERE / payload-Filter. Resolving an
+  eligible-id set once at the top and threading a list everywhere
+  was rejected: defeats Qdrant payload indexes (a `HasIdCondition`
+  over ~100k IDs is much slower than payload `Range`/`MatchAny`),
+  bloats request memory, and wastes work on loose filters.
+- **Two new helpers in `db/postgres.py`:** `_build_movie_card_conditions`
+  centralizes the per-column SQL fragment + params (used by both the
+  existing `_build_eligible_cte` and the new helpers).
+  `_build_inline_movie_card_filter_clause` returns an
+  `" AND movie_id IN (SELECT movie_id FROM public.movie_card WHERE …)"`
+  clause for primitives whose FROM is a posting table.
+  `_build_direct_movie_card_filter_clause` returns an
+  `" AND <conds>"` clause for primitives whose FROM is `movie_card`
+  already (avoids a self-IN subquery). Both return `("", [])` when
+  filters is None/inactive so the query plan is byte-identical to
+  today on unfiltered calls.
+- **Wire format.** `QuerySearchBody` grew an optional `filters` field
+  modeled by `MetadataFiltersInput` in `api/main.py`. Genres and
+  audio_languages travel as enum value strings ("Action",
+  "English"); streaming_services as `StreamingService` enum values
+  ("netflix", "max") that the API expands into the flat TMDB
+  provider-id list via `STREAMING_PROVIDER_MAP`. Unknown enum values
+  surface as HTTP 422 at the boundary.
+- **Critical Qdrant load-bearing change:** `_run_corpus_topn` (the
+  semantic elbow-calibration probe) now accepts the hard filter and
+  passes it as `query_filter`. Without this the probe samples points
+  that will be excluded downstream, and the calibrated threshold
+  lands on the wrong distribution. `_run_filtered_score` merges the
+  filter's payload conditions into its existing `HasIdCondition`
+  `must` list (both are AND'd, so concatenation is correct).
+- **No-LLM fallback paths explicitly filtered:**
+  `fetch_neutral_reranker_seed_ids`, `fetch_browse_seed_ids`, and
+  `fetch_quality_popularity_seed` all now accept and apply
+  `metadata_filters`. These are the seed paths the user explicitly
+  called out — fetches that run when no candidate-generating call
+  exists.
+- **Trending lives in Redis** (no payload to filter), so
+  `execute_trending_query` calls the new
+  `fetch_movie_ids_matching_filters` helper to intersect the Redis
+  trending set against an eligible-movie-card scan in one Postgres
+  round-trip.
+- **Similarity flow intentionally NOT filtered.** The
+  `/similarity_search` endpoint and the similarity branch of
+  `/query_search` skip filter threading by design — anchor-based
+  "movies like X" search is not filter-relevant. The orchestrator
+  branch-launch site documents this with a comment.
+- **Shorts subtraction (Stage 4 auxiliary) also skipped.** Shorts
+  are used as a blocklist; subtracting only filter-eligible shorts
+  would let a SHORT that narrowly misses the filter survive as a
+  candidate. Documented inline in `_subtract_shorts`.
+
+### Planning Context
+Plan in `~/.claude/plans/abstract-honking-biscuit.md`. Strategy
+selected: thread `MetadataFilters` (not pre-resolved IDs) through
+the V2 pipeline. Existing `build_qdrant_filter()` and
+`_build_eligible_cte()` (built for the legacy stack) are now reused
+unmodified in V2 via the new inline-clause helpers. After
+implementation review, the user directed that `similar_movies.py`
+be excluded from filter threading; the orchestrator marks that
+branch with a comment.
+
+### Testing Notes
+- Standard branches (e.g. "Tom Hanks 2000s comedies" + Genre=Comedy)
+  — exercises entity + semantic + Stage 4 dispatch.
+- Exact-title flow with a provider filter.
+- Franchise flow (character + non-character) with a maturity filter.
+- Studio / actor flows with a date-range filter.
+- Trending fetch with a filter — verifies the Redis-then-Postgres
+  intersection.
+- Neutral-seed fallback path: a reranker-only query with filters
+  active should produce a filter-respecting seed pool.
+- Verify pre-filtering (not post-filtering): set a filter that
+  excludes the obvious top match; the runner-up should land at
+  position 1, not "No results."
+- No-filter regression: confirm `body.filters is None` produces
+  byte-identical behavior to before this change.
+- UNRATED movies (maturity_rank=999) are silently excluded by any
+  maturity range filter (Postgres BETWEEN and Qdrant Range both
+  exclude NULL). Acceptable per "at most PG-13 shouldn't surface
+  unrated."
+
+## Fix: streaming-service filter returned zero results
+Files: api/main.py | `_to_metadata_filters` was sending raw TMDB provider IDs (e.g. Netflix → [8, 175, 1796]) into `watch_offer_keys`, but the column stores encoded `(provider_id << 4) | method_id` values (per `create_watch_provider_offering_key`). Raw IDs never matched the encoded column, so both the Postgres GIN prefilter (`watch_offer_keys && ...`) and Qdrant `MatchAny` filter excluded everything. Fix expands each `(pid, method_id)` for all `StreamingAccessType` ids — same fan-out pattern as `_precompute_streaming_keys` in `search_v2/endpoint_fetching/metadata_query_execution.py`. The UI filter has no access-type preference, so we match any method.

@@ -64,6 +64,7 @@ from db.postgres import (
     fetch_award_name_entry_ids_for_tokens,
     fetch_award_row_counts,
 )
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.award_name_text import tokenize_award_string_for_query
 from schemas.award_category_tags import RAZZIE_TAG_IDS, TAG_BY_SLUG
 from schemas.award_translation import (
@@ -301,6 +302,7 @@ async def _execute_award_search(
     search: AwardSearch,
     *,
     restrict_to_movie_ids: set[int] | None = None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     """Execute one AwardSearch and return raw [0, 1] scores.
 
@@ -317,6 +319,7 @@ async def _execute_award_search(
             try:
                 matched_ids = await fetch_award_fast_path_movie_ids(
                     restrict_movie_ids=restrict_to_movie_ids,
+                    metadata_filters=metadata_filters,
                 )
                 break
             except Exception:
@@ -394,6 +397,7 @@ async def _execute_award_search(
                 year_to=year_to,
                 exclude_razzie=exclude_razzie,
                 restrict_movie_ids=restrict_to_movie_ids,
+                metadata_filters=metadata_filters,
             )
             break
         except Exception:
@@ -464,6 +468,7 @@ async def execute_award_query(
     plan: AwardQueryPlan,
     *,
     restrict_to_movie_ids: set[int] | None = None,
+    metadata_filters: MetadataFilters | None = None,
 ) -> EndpointResult:
     """Execute an AwardQueryPlan against the award data sources.
 
@@ -484,6 +489,7 @@ async def execute_award_query(
             _execute_award_search(
                 search,
                 restrict_to_movie_ids=restrict_to_movie_ids,
+                metadata_filters=metadata_filters,
             )
             for search in plan.searches
         )

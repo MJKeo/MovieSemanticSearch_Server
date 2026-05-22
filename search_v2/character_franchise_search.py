@@ -84,6 +84,7 @@ from db.postgres import (
     fetch_lineage_mainline_signals,
     fetch_quality_popularity_signals,
 )
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
 from schemas.enums import ReleaseFormat
 from schemas.step_0_flow_routing import CharacterFranchiseFlowData
@@ -182,6 +183,7 @@ async def run_character_franchise_search(
     flow_data: CharacterFranchiseFlowData,
     *,
     limit: int = 100,
+    metadata_filters: MetadataFilters | None = None,
 ) -> CharacterFranchiseSearchResult:
     """Execute the character-franchise flow.
 
@@ -214,8 +216,14 @@ async def run_character_franchise_search(
     # lists internally and degrade to empty results — we never need to
     # branch on "did the LLM emit forms" here.
     (lineage_matched, universe_only_matched), character_info = await asyncio.gather(
-        _fetch_franchise_tiers(list(fanout.franchise_forms)),
-        _fetch_character_scores(list(fanout.character_forms)),
+        _fetch_franchise_tiers(
+            list(fanout.franchise_forms),
+            metadata_filters=metadata_filters,
+        ),
+        _fetch_character_scores(
+            list(fanout.character_forms),
+            metadata_filters=metadata_filters,
+        ),
     )
 
     # Stage 2b: split lineage into mainline vs ancillary using the
@@ -311,6 +319,8 @@ async def _run_fanout(
 
 async def _fetch_franchise_tiers(
     franchise_forms: list[str],
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> tuple[set[int], set[int]]:
     """Resolve franchise forms to (lineage_matched, universe_only).
 
@@ -339,6 +349,7 @@ async def _fetch_franchise_tiers(
         launched_franchise=False,
         launched_subgroup=False,
         restrict_movie_ids=None,
+        metadata_filters=metadata_filters,
     )
 
 
@@ -349,6 +360,8 @@ async def _fetch_franchise_tiers(
 
 async def _fetch_character_scores(
     character_forms: list[str],
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, CharacterSignals]:
     """Resolve character forms and compute best prominence signals per movie.
 
@@ -380,7 +393,9 @@ async def _fetch_character_scores(
         return {}
 
     term_ids = list(phrase_to_id.values())
-    rows = await fetch_character_billing_rows(term_ids, None)
+    rows = await fetch_character_billing_rows(
+        term_ids, None, metadata_filters=metadata_filters,
+    )
 
     # Per-movie reduction: MAX DEFAULT score, MIN billing position.
     # Mirrors entity_query_execution._fetch_character_scores's MAX-per-

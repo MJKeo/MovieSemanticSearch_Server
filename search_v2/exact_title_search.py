@@ -34,6 +34,7 @@ from db.postgres import (
     fetch_movie_cards,
     fetch_movie_ids_with_title_like,
 )
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
 from schemas.step_0_flow_routing import ExactTitleFlowData
@@ -116,6 +117,8 @@ def _apply(
 
 async def run_exact_title_search(
     flow_data: ExactTitleFlowData,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> ExactTitleSearchResult:
     """Execute the exact-title search flow described by Step 0.
 
@@ -155,7 +158,15 @@ async def run_exact_title_search(
         return ExactTitleSearchResult()
 
     # ---- 3. Title fetch ---------------------------------------------------
-    title_match_ids = await fetch_movie_ids_with_title_like(pattern)
+    # UI hard filter applies to the initial title-match scan only. Once
+    # we have seeds, the franchise fan-out is intentionally NOT
+    # filtered — fan-out is meant to surface franchise siblings, and a
+    # user filter on a sibling's metadata is more naturally interpreted
+    # as "narrow the seed set," which is what filtering the seed scan
+    # already does.
+    title_match_ids = await fetch_movie_ids_with_title_like(
+        pattern, metadata_filters=metadata_filters,
+    )
     if not title_match_ids:
         return ExactTitleSearchResult()
 
