@@ -68,8 +68,8 @@ from schemas.entity_translation import (
     TitlePatternTarget,
 )
 # Zone primitives (cutoffs + in-zone relative position) live in a
-# shared module so the actor entity-flow bucketer in
-# search_v2.actor_search and the score curves here can't drift on
+# shared module so the person entity-flow bucketer in
+# search_v2.person_search and the score curves here can't drift on
 # tuning constants. See search_v2.actor_zones for the docstring.
 from search_v2.actor_zones import zone_cutoffs, zone_relative_position
 from search_v2.endpoint_fetching.result_helpers import build_endpoint_result

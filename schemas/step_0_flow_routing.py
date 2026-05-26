@@ -2,15 +2,16 @@
 #
 # Step 0 is a narrow classifier that decides which of the entity-bearing
 # search flows (specific title, similarity to titles, character franchise,
-# non-character franchise, studio, actor) should execute for a given user
+# non-character franchise, studio, person) should execute for a given user
 # query, or whether none of them apply. It runs in parallel with Step 1
 # on the raw query; the merge happens in code afterward.
 #
-# Studio and actor are list-style entity flows: like similarity_to_titles,
+# Studio and person are list-style entity flows: like similarity_to_titles,
 # they accept one or more entities in `selected_entities` (e.g. a query
-# of "tom hanks and woody harrelson" fires the actor flow with two
-# EntityReference entries). The studio/actor flows currently route to
-# no-op handlers — the executors are not yet implemented.
+# of "tom hanks and woody harrelson" fires the person flow with two
+# EntityReference entries). The person flow is role-agnostic — any
+# credited role (actor, director, writer, producer, composer) qualifies;
+# the executor unions matches across all five posting tables.
 #
 # The schema follows the FACTS → DECISION pattern:
 #   Zone 1 — extractive observations (entity candidates, qualifiers)
@@ -55,7 +56,7 @@ class EntityKind(StrEnum):
     CHARACTER_FRANCHISE = "character_franchise"
     NON_CHARACTER_FRANCHISE = "non_character_franchise"
     STUDIO = "studio"
-    ACTOR = "actor"
+    PERSON = "person"
 
 
 class EntityFlow(StrEnum):
@@ -64,7 +65,7 @@ class EntityFlow(StrEnum):
     CHARACTER_FRANCHISE = "character_franchise"
     NON_CHARACTER_FRANCHISE = "non_character_franchise"
     STUDIO = "studio"
-    ACTOR = "actor"
+    PERSON = "person"
     NONE_OF_THE_ABOVE = "none_of_the_above"
 
 
@@ -77,22 +78,7 @@ _ENTITY_FLOW_TO_SEARCH_FLOW: dict[EntityFlow, SearchFlow] = {
     EntityFlow.CHARACTER_FRANCHISE: SearchFlow.CHARACTER_FRANCHISE,
     EntityFlow.NON_CHARACTER_FRANCHISE: SearchFlow.NON_CHARACTER_FRANCHISE,
     EntityFlow.STUDIO: SearchFlow.STUDIO,
-    EntityFlow.ACTOR: SearchFlow.ACTOR,
-}
-
-
-# Mapping from EntityFlow to the EntityKind every `selected_entities`
-# entry must carry on the matching `entity_candidates` row. NONE_OF_THE_
-# ABOVE is absent (no entities are selected). SIMILARITY_TO_TITLES is
-# the one flow whose name differs from the kind it carries — similarity
-# references are titles, so the candidate kind is SPECIFIC_TITLE.
-_EXPECTED_KIND_FOR_FLOW: dict[EntityFlow, EntityKind] = {
-    EntityFlow.SPECIFIC_TITLE: EntityKind.SPECIFIC_TITLE,
-    EntityFlow.SIMILARITY_TO_TITLES: EntityKind.SPECIFIC_TITLE,
-    EntityFlow.CHARACTER_FRANCHISE: EntityKind.CHARACTER_FRANCHISE,
-    EntityFlow.NON_CHARACTER_FRANCHISE: EntityKind.NON_CHARACTER_FRANCHISE,
-    EntityFlow.STUDIO: EntityKind.STUDIO,
-    EntityFlow.ACTOR: EntityKind.ACTOR,
+    EntityFlow.PERSON: SearchFlow.PERSON,
 }
 
 
@@ -187,11 +173,15 @@ producer of films). Resolution targets the studio entity. Disqualified \
 when the span is only a parent corporation referenced as a brand \
 generality rather than a specific film-producing label.
 
-actor — the typed span names a real human performer credited as an \
-actor in films. Resolution targets the person entity. Disqualified \
-when the span names a director, writer, producer, or composer rather \
-than a performer; those non-actor crew roles do NOT fire the actor \
-flow and should fall back to none_of_the_above.
+person — the typed span names a real human credited in films in any \
+filmmaking role: actor, director, writer, producer, or composer. \
+Resolution targets the person entity. There is no preferred role — a \
+span that names a director-only, writer-only, producer-only, or \
+composer-only credit qualifies just as much as one that names a \
+performer. The downstream executor unions matches across all five \
+role tables and uses billing prominence only where the data carries \
+it (actor postings); other role credits surface at top prominence by \
+default.
 """
 
 
@@ -216,7 +206,7 @@ class EntityCandidate(BaseModel):
 #   * CHARACTER_FRANCHISE / NON_CHARACTER_FRANCHISE → canonical_name is a
 #     character or franchise umbrella name
 #   * STUDIO → canonical_name is a studio / production-company name
-#   * ACTOR → canonical_name is an actor's person-entity name
+#   * PERSON → canonical_name is a person's full name (any credited role)
 #   * NONE_OF_THE_ABOVE → list is empty
 class EntityReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -269,12 +259,12 @@ class NonCharacterFranchiseFlowData(BaseModel):
     canonical_name: constr(strip_whitespace=True, min_length=1)
 
 
-# Studio and actor flow-data shapes. Both wrap one or more canonical
+# Studio and person flow-data shapes. Both wrap one or more canonical
 # names — a query like "tom hanks and woody harrelson" produces two
-# entries on the actor side, "warner bros and pixar" produces two on
+# entries on the person side, "warner bros and pixar" produces two on
 # the studio side. Distinct types (rather than a shared
 # PersonOrCompanyFlowData) so each executor can evolve its own fields
-# (e.g. actor-side prominence mode, studio-side label disambiguation)
+# (e.g. person-side prominence mode, studio-side label disambiguation)
 # without a schema migration.
 class StudioReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -288,16 +278,16 @@ class StudioFlowData(BaseModel):
     references: list[StudioReference]
 
 
-class ActorReference(BaseModel):
+class PersonReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     canonical_name: constr(strip_whitespace=True, min_length=1)
 
 
-class ActorFlowData(BaseModel):
+class PersonFlowData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    references: list[ActorReference]
+    references: list[PersonReference]
 
 
 # ---------------------------------------------------------------------------
@@ -334,102 +324,30 @@ class Step0Response(BaseModel):
     also_fire_standard_due_to_ambiguity: bool
 
     # -----------------------------------------------------------------
-    # Validators
+    # Normalizers
     # -----------------------------------------------------------------
 
-    # selected_entities cardinality must match the selected flow.
+    # Cardinality normalizer. Rather than rejecting payloads where the
+    # LLM produced too many entries for the chosen flow, we truncate
+    # to the per-flow maximum. The single-entry flows (specific_title,
+    # character_franchise, non_character_franchise) keep only the first
+    # entry; none_of_the_above is forced empty; the list-style flows
+    # (similarity_to_titles, studio, person) are left as-is. Downstream
+    # adapters only ever read what fits the flow, so trimming is a
+    # safer recovery than a hard failure.
     @model_validator(mode="after")
-    def _entities_match_flow_cardinality(self) -> "Step0Response":
-        n = len(self.selected_entities)
+    def _truncate_selected_entities_to_flow_cardinality(self) -> "Step0Response":
         flow = self.selected_entity_flow
-        if flow == EntityFlow.NONE_OF_THE_ABOVE and n != 0:
-            raise ValueError(
-                "selected_entities must be empty when selected_entity_flow is "
-                "none_of_the_above."
-            )
-        if flow in {
+        if flow == EntityFlow.NONE_OF_THE_ABOVE:
+            self.selected_entities = []
+        elif flow in {
             EntityFlow.SPECIFIC_TITLE,
             EntityFlow.CHARACTER_FRANCHISE,
             EntityFlow.NON_CHARACTER_FRANCHISE,
-        } and n != 1:
-            raise ValueError(
-                f"selected_entity_flow={flow.value} requires exactly one "
-                f"entry in selected_entities (got {n})."
-            )
-        # similarity, studio, and actor are the list-style flows — one
-        # or more entries. The LLM may surface multiple titles, studios,
-        # or actors as the entire query payload (e.g.
-        # "tom hanks and woody harrelson" → two ACTOR entries).
-        if (
-            flow
-            in {
-                EntityFlow.SIMILARITY_TO_TITLES,
-                EntityFlow.STUDIO,
-                EntityFlow.ACTOR,
-            }
-            and n < 1
-        ):
-            raise ValueError(
-                f"selected_entity_flow={flow.value} requires at least "
-                "one entry in selected_entities."
-            )
-        return self
-
-    # The "no qualifiers" rule becomes a schema-level invariant: any
-    # qualifier present in the query forces selected_entity_flow to
-    # NONE_OF_THE_ABOVE. "Qualifier" here carries the refined meaning
-    # from _QUALIFIERS_DESCRIPTION — only phrases that change the
-    # intended meaning of the search relative to a bare-entity lookup
-    # belong in the list. Conversational packaging that does not shift
-    # the search must be dropped at extraction time and does not trip
-    # this gate.
-    @model_validator(mode="after")
-    def _qualifiers_force_no_entity(self) -> "Step0Response":
-        if self.qualifiers and self.selected_entity_flow != EntityFlow.NONE_OF_THE_ABOVE:
-            raise ValueError(
-                "selected_entity_flow must be none_of_the_above when "
-                "qualifiers are present — entity-flow routing requires "
-                "the entity to be the entire query."
-            )
-        return self
-
-    # Homogeneity rule: every entity in selected_entities must, when
-    # looked up against entity_candidates by canonical_name, carry the
-    # EntityKind that matches the selected flow. The prompt teaches
-    # the LLM to route mixed-kind queries to NONE_OF_THE_ABOVE; this
-    # validator is a hard backstop for the studio/actor list-shaped
-    # flows where a slip-up would silently corrupt the executor's
-    # downstream resolution.
-    @model_validator(mode="after")
-    def _selected_entities_match_flow_kind(self) -> "Step0Response":
-        expected = _EXPECTED_KIND_FOR_FLOW.get(self.selected_entity_flow)
-        if expected is None:
-            # NONE_OF_THE_ABOVE — no entities to check.
-            return self
-
-        # Build a canonical_name → kind map from candidates. If the LLM
-        # emits a selected_entity whose canonical_name has no matching
-        # candidate, we skip the check for that entry: the candidate
-        # list is the authoritative source of kind, and we don't want
-        # to over-constrain when the LLM has legitimately collapsed an
-        # alias into a different canonical form. The COVERAGE/RESOLUTION
-        # principles in the prompt are the primary enforcement layer;
-        # this validator catches the worst-case mismatch.
-        kind_by_name = {
-            cand.canonical_name: cand.most_likely_kind
-            for cand in self.entity_candidates
-        }
-        for ref in self.selected_entities:
-            kind = kind_by_name.get(ref.canonical_name)
-            if kind is None:
-                continue
-            if kind != expected:
-                raise ValueError(
-                    f"selected_entity_flow={self.selected_entity_flow.value} "
-                    f"requires every selected entity to be classified as "
-                    f"{expected.value}, but {ref.canonical_name!r} was "
-                    f"classified as {kind.value} in entity_candidates."
-                )
+        }:
+            self.selected_entities = self.selected_entities[:1]
+        # similarity_to_titles, studio, and person are list-style — no
+        # upper bound, so leave the list untouched.
         return self
 
     # -----------------------------------------------------------------
@@ -525,17 +443,17 @@ class Step0Response(BaseModel):
             ],
         )
 
-    def to_actor_flow_data(self) -> ActorFlowData | None:
-        # Only valid when ACTOR was selected. Cardinality validator
+    def to_person_flow_data(self) -> PersonFlowData | None:
+        # Only valid when PERSON was selected. Cardinality validator
         # guarantees at least one entry in selected_entities. Each
-        # entry maps 1:1 to an ActorReference. The actor executor is
-        # not yet wired into the orchestrator — this adapter exists so
-        # downstream callers can plumb the payload through once it is.
-        if self.selected_entity_flow != EntityFlow.ACTOR:
+        # entry maps 1:1 to a PersonReference. The downstream executor
+        # is role-agnostic — it unions matches across all five role
+        # tables (actor, director, writer, producer, composer).
+        if self.selected_entity_flow != EntityFlow.PERSON:
             return None
-        return ActorFlowData(
+        return PersonFlowData(
             references=[
-                ActorReference(canonical_name=ref.canonical_name)
+                PersonReference(canonical_name=ref.canonical_name)
                 for ref in self.selected_entities
             ],
         )

@@ -6,7 +6,7 @@
 #
 # Each query produces a file step_0_results/<slug>.txt containing the
 # query, the full Step0Response as JSON, the derived routing decisions,
-# AND — when Step 0 selects the studio or actor flow — the popularity-
+# AND — when Step 0 selects the studio or person flow — the popularity-
 # sorted (or bucketed) search results. Other entity flows currently
 # dump only the Step 0 routing block; their search executors can be
 # added here on the same pattern when verification of those flows lands.
@@ -33,13 +33,13 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 # consistent across batch entries even when no studio flow fires.
 from db.postgres import fetch_movie_cards, pool as postgres_pool  # noqa: E402
 from schemas.step_0_flow_routing import (  # noqa: E402
-    ActorFlowData,
     EntityFlow,
+    PersonFlowData,
     StudioFlowData,
 )
 from search_v2.step_0 import run_step_0  # noqa: E402
 from search_v2.studio_search import run_studio_search, StudioSearchResult  # noqa: E402
-from search_v2.actor_search import run_actor_search, ActorSearchResult  # noqa: E402
+from search_v2.person_search import run_person_search, PersonSearchResult  # noqa: E402
 
 _OUT_DIR = Path(__file__).resolve().parents[1] / "step_0_results"
 
@@ -108,20 +108,20 @@ async def _format_studio_block(
     return "\n".join(lines)
 
 
-async def _format_actor_block(
-    flow_data: ActorFlowData,
-    result: ActorSearchResult,
+async def _format_person_block(
+    flow_data: PersonFlowData,
+    result: PersonSearchResult,
     elapsed: float,
 ) -> str:
-    """Render the actor-search section for the per-query output file.
+    """Render the person-search section for the per-query output file.
 
-    Mirrors _print_actor_results in run_step_0.py but builds a string
+    Mirrors _print_person_results in run_step_0.py but builds a string
     instead of streaming to stdout. Four prominence buckets, each
     capped at _MAX_PRINTED_RESULTS so distribution stays scannable in
     the per-query file.
     """
     canonical_names = [ref.canonical_name for ref in flow_data.references]
-    lines: list[str] = ["", "[actor_search]", f"input: canonical_names={canonical_names!r}"]
+    lines: list[str] = ["", "[person_search]", f"input: canonical_names={canonical_names!r}"]
 
     buckets: list[tuple[str, list[int]]] = [
         ("bucket_1_lead",     result.bucket_1_lead),
@@ -132,10 +132,11 @@ async def _format_actor_block(
 
     if not any(movie_ids for _, movie_ids in buckets):
         lines.append(
-            "results: (no matches — either an actor failed to resolve or "
-            "no movie had all named actors)"
+            "results: (no matches — none of the named people resolved to "
+            "any credits across actor / director / writer / producer / "
+            "composer postings)"
         )
-        lines.append(f"[actor_stats] elapsed={elapsed:.2f}s")
+        lines.append(f"[person_stats] elapsed={elapsed:.2f}s")
         return "\n".join(lines)
 
     # Bulk-fetch covering each bucket's print cap independently.
@@ -163,7 +164,7 @@ async def _format_actor_block(
             year = _year_of(card["release_ts"]) if card else None
             year_str = str(year) if year is not None else "----"
             lines.append(f"  {rank:>2}. {year_str}  {title} ({mid})")
-    lines.append(f"[actor_stats] elapsed={elapsed:.2f}s")
+    lines.append(f"[person_stats] elapsed={elapsed:.2f}s")
     return "\n".join(lines)
 
 
@@ -198,7 +199,7 @@ async def _run_one(query: str) -> tuple[str, str]:
         f"primary_flow={response.primary_flow.value}",
     ]
 
-    # Per-flow executor dispatch. Studio and actor are wired in here;
+    # Per-flow executor dispatch. Studio and person are wired in here;
     # the other entity flows still print routing-only and execute via
     # run_step_0.py for live inspection.
     if response.selected_entity_flow == EntityFlow.STUDIO:
@@ -216,20 +217,20 @@ async def _run_one(query: str) -> tuple[str, str]:
             block.append(
                 f"\n[studio_search]\n[error] {exc!r}"
             )
-    elif response.selected_entity_flow == EntityFlow.ACTOR:
-        actor_flow_data = response.to_actor_flow_data()
-        assert actor_flow_data is not None
+    elif response.selected_entity_flow == EntityFlow.PERSON:
+        person_flow_data = response.to_person_flow_data()
+        assert person_flow_data is not None
         try:
             await _ensure_postgres_open()
-            act_start = time.perf_counter()
-            act_result = await run_actor_search(actor_flow_data)
-            act_elapsed = time.perf_counter() - act_start
+            ps_start = time.perf_counter()
+            ps_result = await run_person_search(person_flow_data)
+            ps_elapsed = time.perf_counter() - ps_start
             block.append(
-                await _format_actor_block(actor_flow_data, act_result, act_elapsed)
+                await _format_person_block(person_flow_data, ps_result, ps_elapsed)
             )
         except Exception as exc:  # noqa: BLE001 — keep batching even on per-query failure
             block.append(
-                f"\n[actor_search]\n[error] {exc!r}"
+                f"\n[person_search]\n[error] {exc!r}"
             )
 
     return query, "\n".join(block) + "\n"

@@ -6,7 +6,7 @@
 # script can be invoked with no arguments for a quick smoke test.
 #
 # Whichever entity flow Step 0 selects (specific_title, similarity_to_
-# titles, character_franchise, non_character_franchise, studio, actor),
+# titles, character_franchise, non_character_franchise, studio, person),
 # the runner additionally invokes the corresponding standalone search
 # flow and pretty-prints the ranked candidates. This requires Postgres
 # connectivity, so the pool is opened on demand.
@@ -33,11 +33,11 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from db.postgres import fetch_movie_cards, pool as postgres_pool  # noqa: E402
 from schemas.step_0_flow_routing import (  # noqa: E402
-    ActorFlowData,
     CharacterFranchiseFlowData,
     EntityFlow,
     ExactTitleFlowData,
     NonCharacterFranchiseFlowData,
+    PersonFlowData,
     SimilarityFlowData,
     Step0Response,
     StudioFlowData,
@@ -63,9 +63,9 @@ from search_v2.studio_search import (  # noqa: E402
     StudioSearchResult,
     run_studio_search,
 )
-from search_v2.actor_search import (  # noqa: E402
-    ActorSearchResult,
-    run_actor_search,
+from search_v2.person_search import (  # noqa: E402
+    PersonSearchResult,
+    run_person_search,
 )
 
 
@@ -370,19 +370,19 @@ async def _print_studio_results(
         print(f"  {rank:>2}. {year_str}  {title} ({mid})")
 
 
-async def _print_actor_results(
-    flow_data: ActorFlowData,
-    result: ActorSearchResult,
+async def _print_person_results(
+    flow_data: PersonFlowData,
+    result: PersonSearchResult,
 ) -> None:
-    """Render the actor-search output as four bucket tables.
+    """Render the person-search output as four bucket tables.
 
-    Actor flow returns movies grouped by prominence: lead → major →
+    Person flow returns movies grouped by prominence: lead → major →
     has-relevance → minor/cameo. Each bucket is independently
-    popularity-sorted, capped at _MAX_PRINTED_RESULTS for the CLI.
-    Mirrors the franchise-tier printer with four buckets instead of
-    seven.
+    sorted by (overlap_count DESC, popularity DESC), capped at
+    _MAX_PRINTED_RESULTS for the CLI. Mirrors the franchise-tier
+    printer with four buckets instead of seven.
     """
-    print("\n[actor_search]")
+    print("\n[person_search]")
     canonical = [ref.canonical_name for ref in flow_data.references]
     print(f"input: canonical_names={canonical!r}")
 
@@ -395,8 +395,9 @@ async def _print_actor_results(
 
     if not any(movie_ids for _, movie_ids in buckets):
         print(
-            "results: (no matches — either an actor failed to resolve or "
-            "no movie had all named actors)"
+            "results: (no matches — none of the named people resolved to "
+            "any credits across actor / director / writer / producer / "
+            "composer postings)"
         )
         return
 
@@ -505,15 +506,15 @@ async def _main_async() -> None:
         std_elapsed = time.perf_counter() - std_start
         await _print_studio_results(flow_data, std_result)
         print(f"[studio_stats] elapsed={std_elapsed:.2f}s")
-    elif flow == EntityFlow.ACTOR:
-        flow_data = response.to_actor_flow_data()
+    elif flow == EntityFlow.PERSON:
+        flow_data = response.to_person_flow_data()
         assert flow_data is not None
         await _ensure_postgres_open()
-        act_start = time.perf_counter()
-        act_result = await run_actor_search(flow_data)
-        act_elapsed = time.perf_counter() - act_start
-        await _print_actor_results(flow_data, act_result)
-        print(f"[actor_stats] elapsed={act_elapsed:.2f}s")
+        ps_start = time.perf_counter()
+        ps_result = await run_person_search(flow_data)
+        ps_elapsed = time.perf_counter() - ps_start
+        await _print_person_results(flow_data, ps_result)
+        print(f"[person_stats] elapsed={ps_elapsed:.2f}s")
 
 
 def main() -> None:

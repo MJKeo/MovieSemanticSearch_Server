@@ -71,6 +71,10 @@ from search_v2.endpoint_fetching.endpoint_executors import (
 from search_v2.endpoint_fetching.trending_query_execution import (
     execute_trending_query,
 )
+from search_v2.promotion_tiers import (
+    PromotionTier,
+    determine_promotion_tier,
+)
 
 if TYPE_CHECKING:
     from search_v2.full_pipeline_orchestrator import (
@@ -101,6 +105,16 @@ _ELBOW_ONE_EPSILON: float = 1e-6
 # value so the executor surface stays consistent with already-tuned
 # upstream behavior.
 EXECUTOR_TIMEOUT_SECONDS: float = 25.0
+
+# Minimum acceptable candidate-pool size when the user has an active
+# hard filter. Below this floor the per-branch Phase B loop promotes
+# the next-lowest reranker tier and re-dispatches just the newly-
+# promoted specs, repeating until either the pool reaches the floor
+# or every promotable tier has fired. The pre-execution "no generator
+# at all" fallback in the orchestrator already handles the unfiltered
+# case; this floor only fires when filters are active and the initial
+# generator pass came up short because the filter shrunk it.
+CANDIDATE_FLOOR: int = 25
 
 
 # ---------------------------------------------------------------------------
@@ -581,82 +595,148 @@ async def _run_branch(
     # Run every positive-polarity generator concurrently with no
     # restrict (each emits its own match set). Build the union from
     # successful generator score-map keys. Apply shorts subtraction.
-    # Apply neutral seed fallback only when no positive generator was
-    # attempted (i.e. every positive trait is structurally pure-
-    # reranker AND tier-fallback promotion did not promote any).
+    # When the user has an active hard filter, run a tiered promotion
+    # loop so a filter-narrowed initial pool can be rescued by
+    # promoting the next-lowest reranker tier into a generator role.
+    # Apply neutral seed fallback when no positive generator was
+    # attempted OR (filter-active path) when tier promotion exhausted
+    # without reaching the candidate floor.
     # ------------------------------------------------------------------
     call_score_maps: dict[_CallKey, dict[int, float] | None] = {}
-    if pos_generators:
-        # Phase 1.2 (rescore_overhaul.md D5): when two traits commit
-        # generator specs that serialize identically, the underlying DB
-        # query would otherwise execute twice. Group by
-        # (route, _params_identity(params)) — the identity helper builds
-        # a hashable structural fingerprint without paying for a
-        # full Pydantic model_dump + json.dumps sort. Specs with
-        # `params is None` skip dedup (no key to compare on).
-        # Score-side semantics are unchanged: each (trait_idx, cat_idx,
-        # spec_idx) coordinate still gets its own score map entry,
-        # so per-trait combine + rarity logic reads identical inputs.
-        dedup_groups: dict[tuple[str, object], list[_TaggedSpec]] = {}
-        unkeyed: list[_TaggedSpec] = []
-        for tagged in pos_generators:
-            params = tagged.spec.params
-            if params is None:
-                unkeyed.append(tagged)
-                continue
-            key = (tagged.spec.route.value, _params_identity(params))
-            dedup_groups.setdefault(key, []).append(tagged)
-
-        # Run one representative per group + every unkeyed spec.
-        representatives: list[_TaggedSpec] = [
-            group[0] for group in dedup_groups.values()
-        ] + unkeyed
-        rep_results = await asyncio.gather(
-            *(
-                _dispatch_call(
-                    t.spec, restrict=None,
-                    metadata_filters=metadata_filters,
-                )
-                for t in representatives
-            )
-        )
-        rep_map: dict[_CallKey, dict[int, float] | None] = dict(
-            zip((t.key for t in representatives), rep_results)
-        )
-
-        for group in dedup_groups.values():
-            head_scores = rep_map[group[0].key]
-            for tagged in group:
-                call_score_maps[tagged.key] = head_scores
-        for tagged in unkeyed:
-            call_score_maps[tagged.key] = rep_map[tagged.key]
-
-        if logger.isEnabledFor(logging.INFO):
-            n_total = len(pos_generators)
-            n_unique = len(representatives)
-            if n_total != n_unique:
-                logger.info(
-                    "branch %s: generator dedup folded %d → %d specs",
-                    branch.kind, n_total, n_unique,
-                )
-
     union: set[int] = set()
-    for tagged in pos_generators:
-        scores = call_score_maps.get(tagged.key)
-        if scores is not None:
-            union.update(scores.keys())
 
+    # Cross-iteration dedup cache shared between the initial generator
+    # dispatch and the tiered-promotion loop. Lets the loop skip
+    # re-dispatch when a later tier holds a structurally identical
+    # (route, params) spec already executed in an earlier tier or in
+    # the initial pass.
+    dispatch_cache: dict[_DispatchCacheKey, dict[int, float] | None] = {}
+
+    # Precompute shorts IDs once; the loop reapplies the blocklist
+    # per iteration without re-querying.
     shorts_specs = [
         s for s in auxiliary_specs if s.route is EndpointRoute.MEDIA_TYPE
     ]
-    if shorts_specs and union:
-        union = await _subtract_shorts(union, shorts_specs)
+    shorts_ids = await _fetch_shorts_ids(shorts_specs)
+
+    if pos_generators:
+        await _dispatch_generator_specs(
+            tagged_specs=pos_generators,
+            call_score_maps=call_score_maps,
+            metadata_filters=metadata_filters,
+            branch_kind=branch.kind,
+            dispatch_cache=dispatch_cache,
+        )
+        for tagged in pos_generators:
+            scores = call_score_maps.get(tagged.key)
+            if scores is not None:
+                union.update(scores.keys())
+        union = _apply_shorts_subtraction(union, shorts_ids)
+
+    # ------------------------------------------------------------------
+    # Tiered promotion loop (filter-active gate). When the user's hard
+    # filter has narrowed the initial union below CANDIDATE_FLOOR, the
+    # filter — not concept absence — is most likely the cause of the
+    # shortfall. Promote the next-lowest reranker tier into generator
+    # role, re-dispatch just the newly-promoted specs, and merge the
+    # results into the union. Repeat until either the floor is met or
+    # every promotable tier in the branch has been promoted. Promotion
+    # is parallelized WITHIN a tier (rerankers at the same tier are
+    # roughly comparable in authority); tiers run SERIALLY so the
+    # loop stops at the earliest tier that brings the pool over the
+    # floor. The unfiltered base case is intentionally unchanged —
+    # "doesn't exist means doesn't exist" remains the contract.
+    # ------------------------------------------------------------------
+    filter_active = (
+        metadata_filters is not None and metadata_filters.is_active
+    )
+    promoted_keys: set[_CallKey] = set()
+    if filter_active and len(union) < CANDIDATE_FLOOR:
+        # Collect all promotable reranker specs in the branch with
+        # their stable _CallKeys and category/polarity context.
+        promotable_refs: list[
+            tuple[PromotionTier, _CallKey, GeneratedEndpointSpec]
+        ] = []
+        for trait_idx, trait in enumerate(branch.traits):
+            if trait.step_3_error is not None:
+                continue
+            for cat_idx, cc in enumerate(trait.category_calls):
+                if cc.handler_error is not None:
+                    continue
+                for spec_idx, spec in enumerate(cc.generated_specs):
+                    tier = determine_promotion_tier(
+                        cc.category, spec, trait.polarity
+                    )
+                    if tier is PromotionTier.NEVER_PROMOTE:
+                        continue
+                    key: _CallKey = (trait_idx, cat_idx, spec_idx)
+                    promotable_refs.append((tier, key, spec))
+
+        promoted_tiers: set[PromotionTier] = set()
+        while len(union) < CANDIDATE_FLOOR:
+            # Pick the lowest tier with at least one not-yet-promoted
+            # spec. min() over the filtered list keeps the same
+            # authority-first ordering used by the pre-execution
+            # fallback.
+            remaining_tiers = [
+                tier
+                for tier, _, _ in promotable_refs
+                if tier not in promoted_tiers
+            ]
+            if not remaining_tiers:
+                break
+            next_tier = min(remaining_tiers)
+
+            newly_promoted: list[_TaggedSpec] = []
+            for tier, key, spec in promotable_refs:
+                if tier is not next_tier:
+                    continue
+                # Mutations are idempotent and commutative — the spec
+                # is mutated in-place so Phase C reads the updated
+                # operation_type when classifying live rerankers.
+                spec.operation_type = OperationType.CANDIDATE_GENERATOR
+                spec.was_promoted = True
+                newly_promoted.append(_TaggedSpec(key=key, spec=spec))
+                promoted_keys.add(key)
+
+            promoted_tiers.add(next_tier)
+
+            # `next_tier` was chosen as the min of `remaining_tiers`,
+            # which is the set of tiers in `promotable_refs` not yet
+            # promoted — so at least one spec in `promotable_refs` has
+            # `tier is next_tier`, and `newly_promoted` is guaranteed
+            # non-empty here. No defensive guard needed.
+            logger.info(
+                "branch %s: union %d < floor %d; promoting tier %s "
+                "(%d specs)",
+                branch.kind, len(union), CANDIDATE_FLOOR,
+                next_tier.name, len(newly_promoted),
+            )
+            await _dispatch_generator_specs(
+                tagged_specs=newly_promoted,
+                call_score_maps=call_score_maps,
+                metadata_filters=metadata_filters,
+                branch_kind=branch.kind,
+                dispatch_cache=dispatch_cache,
+            )
+            for tagged in newly_promoted:
+                scores = call_score_maps.get(tagged.key)
+                if scores is not None:
+                    union.update(scores.keys())
+            union = _apply_shorts_subtraction(union, shorts_ids)
 
     # Empty-pool semantics:
-    #   * No generators were attempted → seed via NEUTRAL_SEED (if
-    #     auxiliary spec is present).
-    #   * Generators ran and union ended up empty → return empty
-    #     results. Per rescore_overhaul.md: "if something truly
+    #   * No generators were attempted → seed via NEUTRAL_SEED (the
+    #     orchestrator's pre-execution fallback added the aux spec
+    #     for this case).
+    #   * Hard filter active and the tiered loop exhausted without
+    #     producing any candidates → seed directly from the neutral
+    #     pool, bypassing the aux-spec gate. The orchestrator can't
+    #     predict this case (it doesn't know filters are active), so
+    #     `auxiliary_specs` won't carry a NEUTRAL_SEED spec for
+    #     branches that had generators present.
+    #   * Generators ran without filters and union ended up empty →
+    #     return empty. Per rescore_overhaul.md: "if something truly
     #     doesn't exist, then it doesn't exist."
     if not union:
         if not pos_generators:
@@ -668,6 +748,11 @@ async def _run_branch(
                 union = await _seed_from_neutral(
                     seed_specs, metadata_filters=metadata_filters,
                 )
+        elif filter_active:
+            union = await _seed_neutral_pool(
+                metadata_filters=metadata_filters,
+                reason=f"branch {branch.kind} filter-active fallback",
+            )
         if not union:
             logger.info(
                 "branch %s: empty union after Phase B; returning empty",
@@ -679,6 +764,17 @@ async def _run_branch(
                 ui_label=branch.ui_label,
                 ranked=[],
             )
+
+    # Filter Phase C input to drop specs that were promoted into
+    # generator role during the loop — their score is already in
+    # call_score_maps from the generator dispatch, and re-running
+    # them as rerankers would overwrite the generator result with a
+    # restricted-pool rescoring (different semantics + a wasted
+    # round-trip).
+    if promoted_keys:
+        pos_rerankers = [
+            t for t in pos_rerankers if t.key not in promoted_keys
+        ]
 
     # ------------------------------------------------------------------
     # Phase C — Reranker pass against the finalized union.
@@ -777,29 +873,137 @@ async def _run_branch(
 # ---------------------------------------------------------------------------
 
 
-async def _subtract_shorts(
-    union: set[int],
+# Cache key for cross-iteration dedup: (route_value, params_identity).
+# `_params_identity` returns a hashable structural fingerprint, so the
+# tuple is hashable and cheap to compare. Specs with `params is None`
+# never enter the cache because there is no key to compare on.
+_DispatchCacheKey = tuple[str, object]
+
+
+async def _dispatch_generator_specs(
+    *,
+    tagged_specs: list[_TaggedSpec],
+    call_score_maps: dict[_CallKey, dict[int, float] | None],
+    metadata_filters: MetadataFilters | None,
+    branch_kind: "BranchKind",
+    dispatch_cache: dict[_DispatchCacheKey, dict[int, float] | None]
+    | None = None,
+) -> None:
+    """Dispatch a batch of generator specs with dedup, merging the
+    resulting score maps into `call_score_maps` in place.
+
+    Shared between the initial Phase B generator dispatch and the
+    tiered-promotion loop. Two layers of dedup:
+
+    1. **Within-batch dedup** (rescore_overhaul.md D5): specs in this
+       call's `tagged_specs` sharing the same `(route, params_identity)`
+       are folded onto a single representative dispatch; the result
+       broadcasts to every member's `_CallKey`.
+    2. **Cross-iteration dedup** (optional `dispatch_cache`): when the
+       caller threads the same cache across multiple invocations, any
+       spec whose `(route, params_identity)` already appears in the
+       cache reuses the cached score map instead of re-dispatching.
+       Used by the tiered-promotion loop so a SEMANTIC spec promoted at
+       tier T₁ isn't re-dispatched when a structurally identical spec
+       on a different trait gets promoted at tier T₂.
+
+    Specs with `params is None` skip both dedup layers (no key to
+    compare on) and always dispatch.
+
+    Score-side semantics are unchanged: each (trait_idx, cat_idx,
+    spec_idx) coordinate still gets its own score map entry in
+    `call_score_maps`, so the downstream combine + rarity logic reads
+    identical inputs regardless of dedup grouping.
+
+    Side effects: mutates `call_score_maps` in place. If `dispatch_cache`
+    is provided, populates it with new (route, params) → score-map
+    entries discovered this call.
+    """
+    if not tagged_specs:
+        return
+
+    dedup_groups: dict[_DispatchCacheKey, list[_TaggedSpec]] = {}
+    unkeyed: list[_TaggedSpec] = []
+    cached_assignments: list[
+        tuple[_TaggedSpec, dict[int, float] | None]
+    ] = []
+    for tagged in tagged_specs:
+        params = tagged.spec.params
+        if params is None:
+            unkeyed.append(tagged)
+            continue
+        key = (tagged.spec.route.value, _params_identity(params))
+        if dispatch_cache is not None and key in dispatch_cache:
+            # Cross-iteration cache hit — reuse the prior dispatch's
+            # score map without dispatching again.
+            cached_assignments.append((tagged, dispatch_cache[key]))
+            continue
+        dedup_groups.setdefault(key, []).append(tagged)
+
+    representatives: list[_TaggedSpec] = [
+        group[0] for group in dedup_groups.values()
+    ] + unkeyed
+    rep_results = await asyncio.gather(
+        *(
+            _dispatch_call(
+                t.spec, restrict=None,
+                metadata_filters=metadata_filters,
+            )
+            for t in representatives
+        )
+    )
+    rep_map: dict[_CallKey, dict[int, float] | None] = dict(
+        zip((t.key for t in representatives), rep_results)
+    )
+
+    for tagged, scores in cached_assignments:
+        call_score_maps[tagged.key] = scores
+    for dedup_key, group in dedup_groups.items():
+        head_scores = rep_map[group[0].key]
+        for tagged in group:
+            call_score_maps[tagged.key] = head_scores
+        if dispatch_cache is not None:
+            dispatch_cache[dedup_key] = head_scores
+    for tagged in unkeyed:
+        call_score_maps[tagged.key] = rep_map[tagged.key]
+
+    if logger.isEnabledFor(logging.INFO):
+        n_total = len(tagged_specs)
+        n_dispatched = len(representatives)
+        n_cache_hits = len(cached_assignments)
+        # Surface dedup whenever the batch had any savings — either
+        # within-batch folds or cross-iteration cache reuse.
+        if n_total != n_dispatched or n_cache_hits:
+            logger.info(
+                "branch %s: generator dedup folded %d → %d specs "
+                "(%d cross-iteration cache hits)",
+                branch_kind, n_total, n_dispatched, n_cache_hits,
+            )
+
+
+async def _fetch_shorts_ids(
     shorts_specs: list[GeneratedEndpointSpec],
 ) -> set[int]:
-    """Subtract SHORT-format movies from the union.
+    """Fetch the SHORT-format movie IDs for blocklist subtraction.
 
     The auxiliary MEDIA_TYPE spec is tagged CANDIDATE_GENERATOR
     upstream so its executor returns the SHORT-format movies; we use
     those IDs as a blocklist rather than as a positive contribution.
 
+    NOTE: intentionally does NOT pass the UI hard filter. We want to
+    subtract ALL shorts from the union, including ones the user's
+    filter doesn't admit — otherwise a SHORT-format movie that fails
+    the hard filter (so isn't in the eligible set) also wouldn't
+    appear in the shorts-removal set, and a movie narrowly missing
+    the eligible cutoff could survive as a "short" in the union.
+    Keeping this filter-free is safe because shorts results are used
+    as a blocklist only, never as candidates.
+
     Failed shorts calls are skipped — better to let a SHORT slip
     through than to abandon the whole branch on a transient miss.
     """
-    if not shorts_specs or not union:
-        return union
-    # NOTE: shorts subtraction intentionally does NOT pass the UI hard
-    # filter. We want to subtract ALL shorts from the union, including
-    # ones the user's filter doesn't admit — otherwise a SHORT-format
-    # movie that fails the hard filter (so isn't in the eligible set)
-    # also wouldn't appear in the shorts-removal set, and a movie
-    # narrowly missing the eligible cutoff could survive as a "short"
-    # in the union. Keeping this filter-free is safe because shorts
-    # results are used as a blocklist only, never as candidates.
+    if not shorts_specs:
+        return set()
     shorts_results = await asyncio.gather(
         *(_dispatch_call(spec, restrict=None) for spec in shorts_specs)
     )
@@ -808,16 +1012,68 @@ async def _subtract_shorts(
         if scores is None:
             continue
         shorts_ids.update(scores.keys())
-    if not shorts_ids:
+    return shorts_ids
+
+
+def _apply_shorts_subtraction(
+    union: set[int],
+    shorts_ids: set[int],
+) -> set[int]:
+    """Remove the precomputed shorts blocklist from the union.
+
+    Pure set difference — separated from `_fetch_shorts_ids` so the
+    tiered-promotion loop in `_run_branch` can re-apply the blocklist
+    after each iteration without paying for repeated DB round-trips.
+    """
+    if not shorts_ids or not union:
         return union
     before = len(union)
-    union = union - shorts_ids
+    out = union - shorts_ids
+    removed = before - len(out)
+    if removed:
+        logger.info(
+            "auxiliary: shorts-excluded %d / %d candidates",
+            removed,
+            before,
+        )
+    return out
+
+
+async def _seed_neutral_pool(
+    *,
+    metadata_filters: MetadataFilters | None = None,
+    reason: str,
+) -> set[int]:
+    """Fetch the neutral-seed movie IDs directly.
+
+    Single source of truth for "fetch the neutral pool"; called by
+    `_seed_from_neutral` (the aux-spec-gated path used when no
+    generators were attempted) and by `_run_branch` directly (when
+    the filter-active tiered loop exhausts without producing any
+    candidates and the orchestrator's pre-execution fallback did
+    not add a NEUTRAL_SEED aux spec).
+
+    The user's UI hard filter applies here — without it the fallback
+    would silently bypass user constraints. Best-effort: a fetch
+    failure simply leaves the union empty so the branch returns no
+    results.
+    """
+    try:
+        seed_ids = await fetch_neutral_reranker_seed_ids(
+            metadata_filters=metadata_filters,
+        )
+    except Exception as exc:  # noqa: BLE001 — seed fetch is best-effort
+        logger.warning(
+            "neutral seed fetch failed (%s); branch will return empty (%r)",
+            reason, exc,
+        )
+        return set()
+    seeded = set(seed_ids)
     logger.info(
-        "auxiliary: shorts-excluded %d / %d candidates",
-        before - len(union),
-        before,
+        "auxiliary: seeded union with %d neutral-seed IDs (%s)",
+        len(seeded), reason,
     )
-    return union
+    return seeded
 
 
 async def _seed_from_neutral(
@@ -825,37 +1081,21 @@ async def _seed_from_neutral(
     *,
     metadata_filters: MetadataFilters | None = None,
 ) -> set[int]:
-    """Fetch the neutral-seed movie IDs as a fallback union.
+    """Fetch the neutral-seed movie IDs as a fallback union (aux-spec
+    gated path).
 
     The seed only fires when no positive generator was attempted
     pipeline-wide — i.e., every positive trait is pure-reranker AND
     tier-fallback promotion did not promote any. Seed scores do not
     enter trait scoring (implicit priors handle quality/popularity
     contribution at branch aggregation).
-
-    The user's UI hard filter applies here — this is the path the
-    user explicitly called out (the no-LLM/no-candidate-generator
-    fallback). If we skip the filter the fallback silently bypasses
-    user constraints.
-
-    Best-effort: a fetch failure simply leaves the union empty, and
-    the branch returns no results.
     """
     if not neutral_seed_specs:
         return set()
-    try:
-        seed_ids = await fetch_neutral_reranker_seed_ids(
-            metadata_filters=metadata_filters,
-        )
-    except Exception as exc:  # noqa: BLE001 — seed fetch is best-effort
-        logger.warning(
-            "neutral seed fetch failed; branch will return empty (%r)",
-            exc,
-        )
-        return set()
-    seeded = set(seed_ids)
-    logger.info("auxiliary: seeded union with %d neutral-seed IDs", len(seeded))
-    return seeded
+    return await _seed_neutral_pool(
+        metadata_filters=metadata_filters,
+        reason="aux-spec fallback (no generators attempted)",
+    )
 
 
 # ---------------------------------------------------------------------------

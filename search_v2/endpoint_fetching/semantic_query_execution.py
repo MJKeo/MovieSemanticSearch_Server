@@ -6,6 +6,17 @@
 # X?") or qualifier (positioning-against-reference, "how X are
 # these movies relative to each other?").
 #
+# Elbow calibration is filter-independent. The elbow answers an
+# ABSOLUTE question — "what cosine does a movie need to count as being
+# about this concept?" — which is a property of the global corpus, not
+# the filtered slice the user is currently scoping to. Calibrating
+# against a small/noisy filtered slice would either trigger the flat-
+# distribution pathology (`elbow = max_sim * 0.85`) or have Kneedle
+# find a fake elbow inside noise, manufacturing false positives by
+# labeling the top of the filtered noise floor as a confident match.
+# The candidate-fetch arm — separate from calibration — DOES respect
+# the user's hard filter on generator paths.
+#
 # Role drives BOTH axes of scoring:
 #
 #   Within-space normalization
@@ -112,8 +123,12 @@ SemanticParams = SemanticParameters | SemanticParametersSubintent
 # Constants
 # ---------------------------------------------------------------------------
 
-# Top-N corpus probe. Doubles as elbow calibration sample and (for
-# carver-no-restrict / qualifier-promoted) the candidate pool.
+# Top-N corpus probe. Used as the unfiltered elbow calibration
+# sample on all generator paths and as the candidate pool on
+# carver-no-restrict / qualifier-promoted when no hard filter is
+# active. When a hard filter is active those paths fire a second
+# probe via `_run_corpus_topn_filtered` to populate the pool while
+# leaving calibration anchored to the global distribution.
 CORPUS_PROBE_LIMIT = 2000
 
 # Pathology detector for elbow calibration. Fires when the top-N
@@ -253,15 +268,44 @@ async def _run_corpus_topn(
     *,
     qdrant_client: AsyncQdrantClient,
     limit: int = CORPUS_PROBE_LIMIT,
-    metadata_filters: MetadataFilters | None = None,
 ) -> list[tuple[int, float]]:
-    # When the UI hard filter is active, the corpus probe must run over
-    # the filtered slice — otherwise the elbow-calibration sample is
-    # drawn from points that will be excluded downstream, and the
-    # threshold lands on the wrong distribution. With very tight
-    # filters fewer than CORPUS_PROBE_LIMIT points exist; the
-    # downstream pathology detector (PATHOLOGY_RANGE_THRESHOLD)
-    # handles that gracefully.
+    # Unfiltered top-N corpus probe used for elbow calibration. The
+    # elbow is an ABSOLUTE bar ("what cosine does it take to be about
+    # this concept") that should not move when the user narrows the
+    # candidate pool with a hard filter — calibrating against a
+    # filtered slice would inflate the elbow toward the noise floor
+    # and produce false positives on the filtered set. Candidate-pool
+    # fetching uses `_run_corpus_topn_filtered` separately on the
+    # generator paths.
+    response = await qdrant_client.query_points(
+        collection_name=COLLECTION_ALIAS,
+        query=embedding,
+        using=vector_name.value,
+        query_filter=None,
+        limit=limit,
+        with_payload=False,
+        with_vectors=False,
+        search_params=QDRANT_SEARCH_PARAMS,
+    )
+    return [(int(p.id), float(p.score)) for p in response.points]
+
+
+async def _run_corpus_topn_filtered(
+    embedding: list[float],
+    vector_name: VectorName,
+    *,
+    qdrant_client: AsyncQdrantClient,
+    metadata_filters: MetadataFilters,
+    limit: int = CORPUS_PROBE_LIMIT,
+) -> list[tuple[int, float]]:
+    # Filtered top-N probe used only for candidate-pool selection on
+    # the carver-unrestricted and qualifier-promoted generator paths.
+    # Distinct from the calibration probe (`_run_corpus_topn`) because
+    # the user's hard filter MUST apply to the candidates we return,
+    # but MUST NOT apply to the calibration distribution. Callers are
+    # expected to pass an active `MetadataFilters`; an inactive filter
+    # is degenerate (same result as the calibration probe) and the
+    # callers special-case it to reuse the single calibration probe.
     hard_must = _hard_filter_must(metadata_filters)
     query_filter = Filter(must=hard_must) if hard_must else None
     response = await qdrant_client.query_points(
@@ -291,10 +335,11 @@ async def _run_filtered_score(
     # The user hard filter is intentionally NOT applied here: this
     # primitive is the reranker scoring path (HasId pool restriction
     # only), and the supplied movie_ids come from a candidate pool
-    # the upstream generators already narrowed with the filter. The
-    # corpus-probe primitive (`_run_corpus_topn`) still receives the
-    # filter — that one is calibration and/or pool-source, both of
-    # which need filter-aware sampling.
+    # the upstream generators already narrowed with the filter.
+    # Calibration uses `_run_corpus_topn` (unfiltered, by design);
+    # the filtered pool fetch lives in `_run_corpus_topn_filtered`
+    # and is only invoked by the unrestricted/promoted generator
+    # paths.
     id_list = [int(mid) for mid in movie_ids]
     if not id_list:
         return {}
@@ -570,29 +615,26 @@ async def _execute_carver_restricted(
     candidate_ids: set[int],
     *,
     qdrant_client: AsyncQdrantClient,
-    metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     # Carver acting as a reranker on a supplied pool. Two parallel
     # fetches per space:
-    #   - Corpus probe: sole purpose is elbow calibration. The
-    #     filtered candidate pool is too small / too biased to
-    #     calibrate against itself, so we always anchor the
-    #     threshold against the corpus's natural distribution.
+    #   - Corpus probe: sole purpose is elbow calibration. The probe
+    #     runs UNFILTERED — the hard filter is irrelevant here because
+    #     we only need the global cosine distribution to anchor the
+    #     "is-about-X" bar. Filtering would bias the elbow toward the
+    #     filtered noise floor.
     #   - HasId on candidate_ids: produces the per-candidate
     #     cosines we score against the probe-derived calibration.
     # Per-candidate score = elbow decay of HasId cosine; combined
     # across spaces via max().
     n = len(inputs.entries)
     tasks = [
-        _run_corpus_topn(
-            emb, vn, qdrant_client=qdrant_client,
-            metadata_filters=metadata_filters,
-        )
+        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
         for emb, vn in zip(embeddings, inputs.vector_names)
     ] + [
-        # No metadata_filters here — `_run_filtered_score` is the
-        # reranker scoring path; `candidate_ids` already passed the
-        # filter upstream at candidate-generation time.
+        # `_run_filtered_score` is the reranker scoring path; the
+        # supplied `candidate_ids` already passed the filter upstream
+        # at candidate-generation time, so no filter is needed here.
         _run_filtered_score(emb, vn, candidate_ids, qdrant_client=qdrant_client)
         for emb, vn in zip(embeddings, inputs.vector_names)
     ]
@@ -616,26 +658,50 @@ async def _execute_carver_unrestricted(
     qdrant_client: AsyncQdrantClient,
     metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
-    # Carver acting as a candidate generator. A single corpus probe
-    # per space serves as both the calibration sample and the
-    # candidate pool. A movie absent from one space's top-N
-    # contributes 0 to that space's max input — clearing the elbow
-    # while missing top-N is implausible by construction (the elbow
-    # rank sits inside top-N).
-    probes = await asyncio.gather(*[
-        _run_corpus_topn(
-            emb, vn, qdrant_client=qdrant_client,
-            metadata_filters=metadata_filters,
-        )
+    # Carver acting as a candidate generator. Two probes per space
+    # when the user has an active hard filter:
+    #   - Calibration probe (unfiltered): anchors the elbow against
+    #     the global corpus distribution so the "is-about-X" bar does
+    #     not move with the filter.
+    #   - Pool probe (filtered): produces the actual candidate IDs we
+    #     score against the unfiltered calibration.
+    # When no filter is active, calibration and pool degenerate to
+    # the same query — we fire one probe per space (byte-identical to
+    # the pre-split behavior) and reuse it for both purposes.
+    filter_active = (
+        metadata_filters is not None and metadata_filters.is_active
+    )
+    n_spaces = len(inputs.vector_names)
+    calibration_tasks = [
+        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
         for emb, vn in zip(embeddings, inputs.vector_names)
-    ])
+    ]
+    pool_tasks = (
+        [
+            _run_corpus_topn_filtered(
+                emb, vn,
+                qdrant_client=qdrant_client,
+                metadata_filters=metadata_filters,
+            )
+            for emb, vn in zip(embeddings, inputs.vector_names)
+        ]
+        if filter_active
+        else []
+    )
+    all_results = await asyncio.gather(*calibration_tasks, *pool_tasks)
+    calibration_probes = all_results[:n_spaces]
+    pool_probes = (
+        all_results[n_spaces:] if filter_active else calibration_probes
+    )
 
     per_space_scores: dict[VectorName, dict[int, float]] = {}
     candidate_pool: set[int] = set()
-    for vn, probe in zip(inputs.vector_names, probes):
-        calib = _detect_elbow_and_floor([cos for _, cos in probe])
+    for vn, calib_probe, pool_probe in zip(
+        inputs.vector_names, calibration_probes, pool_probes
+    ):
+        calib = _detect_elbow_and_floor([cos for _, cos in calib_probe])
         space_map: dict[int, float] = {}
-        for mid, cos in probe:
+        for mid, cos in pool_probe:
             space_map[mid] = _elbow_decay(cos, calib)
             candidate_pool.add(mid)
         per_space_scores[vn] = space_map
@@ -680,27 +746,48 @@ async def _execute_qualifier_promoted(
     metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, float]:
     # Qualifier promoted to candidate generator via tier-fallback.
-    # Per-space corpus probe acts as both calibration AND pool
-    # because there is no upstream pool to be relative against —
-    # within-space normalization degrades to absolute (corpus
-    # elbow). Cross-space combine stays weighted-sum: the trait
-    # still expresses CENTRAL/SUPPORTING structure that should not
-    # be flattened by the orchestration's promotion of a qualifier
-    # into pool-defining duty.
-    probes = await asyncio.gather(*[
-        _run_corpus_topn(
-            emb, vn, qdrant_client=qdrant_client,
-            metadata_filters=metadata_filters,
-        )
+    # Mirrors `_execute_carver_unrestricted`: two probes per space
+    # when a hard filter is active (unfiltered calibration +
+    # filtered pool), one probe when no filter is active. Within-
+    # space normalization degrades to absolute (corpus elbow)
+    # because there is no upstream pool to be relative against;
+    # cross-space combine stays weighted-sum to preserve the trait's
+    # CENTRAL/SUPPORTING structure even under the orchestrator's
+    # promotion of a qualifier into pool-defining duty.
+    filter_active = (
+        metadata_filters is not None and metadata_filters.is_active
+    )
+    n_spaces = len(inputs.vector_names)
+    calibration_tasks = [
+        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
         for emb, vn in zip(embeddings, inputs.vector_names)
-    ])
+    ]
+    pool_tasks = (
+        [
+            _run_corpus_topn_filtered(
+                emb, vn,
+                qdrant_client=qdrant_client,
+                metadata_filters=metadata_filters,
+            )
+            for emb, vn in zip(embeddings, inputs.vector_names)
+        ]
+        if filter_active
+        else []
+    )
+    all_results = await asyncio.gather(*calibration_tasks, *pool_tasks)
+    calibration_probes = all_results[:n_spaces]
+    pool_probes = (
+        all_results[n_spaces:] if filter_active else calibration_probes
+    )
 
     per_space_scores: dict[VectorName, dict[int, float]] = {}
     candidate_pool: set[int] = set()
-    for vn, probe in zip(inputs.vector_names, probes):
-        calib = _detect_elbow_and_floor([cos for _, cos in probe])
+    for vn, calib_probe, pool_probe in zip(
+        inputs.vector_names, calibration_probes, pool_probes
+    ):
+        calib = _detect_elbow_and_floor([cos for _, cos in calib_probe])
         space_map: dict[int, float] = {}
-        for mid, cos in probe:
+        for mid, cos in pool_probe:
             space_map[mid] = _elbow_decay(cos, calib)
             candidate_pool.add(mid)
         per_space_scores[vn] = space_map
@@ -784,10 +871,14 @@ async def execute_semantic_query(
                         metadata_filters=metadata_filters,
                     )
                 else:
+                    # carver_restricted does not take metadata_filters:
+                    # the calibration probe is intentionally unfiltered,
+                    # and the HasId scoring arm is filter-irrelevant
+                    # because the upstream pool already passed the
+                    # filter at candidate-generation time.
                     scores = await _execute_carver_restricted(
                         inputs, embeddings, restrict_to_movie_ids,
                         qdrant_client=qdrant_client,
-                        metadata_filters=metadata_filters,
                     )
             else:
                 if restrict_to_movie_ids is None:

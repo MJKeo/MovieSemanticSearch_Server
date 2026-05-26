@@ -2,13 +2,15 @@
 #
 # Classifies a raw user query into one of the entity-bearing search
 # flows (specific title, similarity to titles, character franchise,
-# non-character franchise, studio, actor) or none-of-the-above. Also
+# non-character franchise, studio, person) or none-of-the-above. Also
 # flags whether the standard flow should co-fire alongside a chosen
 # entity flow due to defensible ambiguity in primary intent.
 #
-# The studio and actor flows route to no-op handlers for now — the
-# enum + schema descriptors are in place so Step 0 can route, but the
-# downstream executors are not yet wired into the orchestrator.
+# The person flow is role-agnostic — any credited filmmaking role
+# (actor, director, writer, producer, composer) qualifies the span.
+# Downstream, the executor unions matches across all five role
+# tables and bucketizes by billing prominence where available
+# (actor postings only).
 #
 # Step 0 is a narrow classifier. It does not rewrite the query,
 # decompose intent, or propose alternate interpretations beyond the
@@ -54,9 +56,13 @@ exactly one:
 - studio — the query, as typed, IS the name of one or more film \
   studios / production companies (e.g. a single studio name, or a \
   conjoined list of studio names)
-- actor — the query, as typed, IS the name of one or more real \
-  performers credited as actors (e.g. a single actor name, or a \
-  conjoined list of actor names)
+- person — the query, as typed, IS the name of one or more real \
+  humans credited in films in any filmmaking role: actor, director, \
+  writer, producer, or composer. No preferred role — a span that \
+  names a director-only, writer-only, producer-only, or \
+  composer-only credit qualifies just as much as one that names a \
+  performer. A single name or a conjoined list of names both fire \
+  this flow.
 - none_of_the_above — the query does not cleanly resolve to any of \
   the above
 
@@ -74,7 +80,7 @@ Your job is NOT:
 - to rewrite, paraphrase, or decompose the query
 - to enrich the query with proxy traits, quality signals, or \
   inferred narrowings
-- to invent titles, characters, franchises, studios, or actors from \
+- to invent titles, characters, franchises, studios, or people from \
   descriptions — only recognize entities the query is already pointing \
   to
 - to decide whether the standard flow fires when no entity was \
@@ -134,17 +140,25 @@ when Y is itself a film reference) is part of the frame, not leftover \
 content. The reference titles still have to be the only content \
 inside the frame.
 
-The studio and actor flows are also list-shaped: a query may name \
-one entity ("Pixar", "Tom Hanks") or several joined by a neutral \
-conjunction ("Pixar and Studio Ghibli", "Tom Hanks and Woody \
-Harrelson", "Tom Hanks, Meg Ryan, Billy Crystal"). The connectors \
-"and", "&", and comma-separated lists are part of the list shape, \
-not leftover content. ANY other content — descriptors, role markers, \
-mixed entity kinds, similarity framing — disqualifies the studio / \
-actor flow and pushes the query to none_of_the_above. A list-shaped \
-studio or actor flow must be homogeneous: all entries must be \
-studios, or all entries must be actors. Mixing kinds (e.g. one actor \
-and one studio) is none_of_the_above.
+The studio and person flows are also list-shaped: a query may name \
+one entity ("Pixar", "Tom Hanks", "Christopher Nolan") or several \
+joined by a neutral conjunction ("Pixar and Studio Ghibli", "Tom \
+Hanks and Woody Harrelson", "Spielberg and John Williams"). The \
+connectors "and", "&", and comma-separated lists are part of the \
+list shape, not leftover content. ANY other content — descriptors, \
+role markers, mixed entity kinds, similarity framing — disqualifies \
+the studio / person flow and pushes the query to none_of_the_above. \
+A list-shaped studio or person flow must be homogeneous: all entries \
+must be studios, or all entries must be people. Mixing kinds (e.g. \
+one person and one studio) is none_of_the_above.
+
+Role markers in the query ("directed by", "starring", "score by", \
+"written by", "produced by") count as content, not packaging — they \
+disqualify the person flow because they constrain the search beyond \
+the bare-name lookup. Surface them as qualifiers and route to \
+none_of_the_above. A query that is just a person's name (with no \
+role marker) fires the person flow regardless of which role that \
+person is most known for.
 
 ---
 
@@ -157,7 +171,7 @@ the typed phrasing alone
 Only choose a non-none_of_the_above entity flow when the canonical \
 resolution can be derived from the typed phrasing alone, without \
 consulting your own knowledge of which installment is most famous, \
-which actor best matches, or which film best matches a character. If \
+which person best matches, or which film best matches a character. If \
 your reasoning includes a step like "they probably mean the X version" \
 or "the most famous adaptation" to pick a canonical record, the \
 resolution is NOT derivable from the phrasing — fall back to \
@@ -327,13 +341,14 @@ mutually exclusive.
 selected_entities — list of EntityReference. Cardinality is fixed by \
 the chosen flow: empty for none_of_the_above; exactly one entry for \
 specific_title, character_franchise, and non_character_franchise; one \
-or more entries for similarity_to_titles, studio, and actor. Each \
+or more entries for similarity_to_titles, studio, and person. Each \
 entry's canonical_name must be non-empty and must resolve to a real \
 entity (title for title flows, character or franchise name for \
-franchise flows, studio name for studio flow, actor name for actor \
-flow). For studio and actor, list entries in the order they appear in \
-the query. release_year_if_stated follows the same explicit-only rule \
-as on candidates and should remain null for studio and actor flows \
+franchise flows, studio name for studio flow, person's full name for \
+person flow — regardless of which role they're best known for). For \
+studio and person, list entries in the order they appear in the \
+query. release_year_if_stated follows the same explicit-only rule as \
+on candidates and should remain null for studio and person flows \
 (release year does not apply to a person or company entity).
 
 primary_intent_ambiguity_reasoning — one short sentence stating \

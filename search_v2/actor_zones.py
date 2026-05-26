@@ -12,9 +12,11 @@
 #   - search_v2.endpoint_fetching.entity_query_execution — uses the
 #     zones to produce raw [0, 1] DEFAULT/LEAD/SUPPORTING/MINOR
 #     actor-prominence scores. (Stage 3 entity executor.)
-#   - search_v2.actor_search — uses the zones to assign each (movie,
-#     actor) pair to one of four prominence buckets for the actor
-#     entity-flow search. (Step 0 ACTOR flow.)
+#   - search_v2.person_search — uses the zones to assign each (movie,
+#     actor) pair to one of four prominence buckets for the person
+#     entity-flow search. Only the actor postings table carries
+#     billing data; non-actor role tables don't reach this module.
+#     (Step 0 PERSON flow.)
 #
 # Keeping the constants and helpers here ensures the two callers
 # never drift on tuning parameters. If LEAD_SCALE or SUPP_SCALE

@@ -23,11 +23,25 @@
 #                          returns, before Step 3 fan-out. Skipped for
 #                          exact-title / similarity (they have no
 #                          traits stage).
-#   4. `branch_results` — fires per fetch when its execution completes,
+#   4. `branch_categories` — fires per standard-flow branch when Step 3
+#                          finishes (after `branch_traits`, before
+#                          `branch_results`). Payload:
+#                            { fetch_id, traits: [{ surface_text,
+#                              polarity, step_3_error, category_calls:
+#                              [{ category, expressions }] }] }
+#                          Trait order matches the same branch's
+#                          `branch_traits` payload. Per-trait
+#                          `step_3_error` short-circuits that trait's
+#                          `category_calls` to `[]`. EXPLICIT_NO_OP
+#                          categories and calls with empty expressions
+#                          are filtered out. Skipped for the
+#                          non-standard flows (same set as
+#                          `branch_traits`).
+#   5. `branch_results` — fires per fetch when its execution completes,
 #                          in whatever order the underlying tasks
 #                          finish.
-#   5. `done`           — terminal event with total elapsed seconds.
-#   6. `error`          — only on fatal failures (Step 0 fails both
+#   6. `done`           — terminal event with total elapsed seconds.
+#   7. `error`          — only on fatal failures (Step 0 fails both
 #                          attempts). Per-fetch errors surface inside
 #                          the corresponding `branch_results` event via
 #                          a `branch_error` field instead.
@@ -67,11 +81,12 @@ from typing import Any
 from db.postgres import fetch_movie_card_summaries
 from implementation.classes.schemas import MetadataFilters
 from schemas.api_responses import MovieCard
+from schemas.enums import HandlerBucket
 from schemas.step_0_flow_routing import (
-    ActorFlowData,
     CharacterFranchiseFlowData,
     ExactTitleFlowData,
     NonCharacterFranchiseFlowData,
+    PersonFlowData,
     SimilarityFlowData,
     Step0Response,
     StudioFlowData,
@@ -90,10 +105,12 @@ from search_v2.non_character_franchise_search import (
     run_non_character_franchise_search,
 )
 from search_v2.studio_search import run_studio_search
-from search_v2.actor_search import run_actor_search
+from search_v2.person_search import run_person_search
 from search_v2.full_pipeline_orchestrator import (
     BranchKind,
+    CategoryCallWithEndpoints,
     Step2BranchResult,
+    TraitWithEndpoints,
     _apply_implicit_prior_rerank_for_branch,
     _call_with_retry,
     _compute_branch_auxiliary,
@@ -119,7 +136,7 @@ _FETCH_ID_SIMILARITY = "similarity"
 _FETCH_ID_NON_CHARACTER_FRANCHISE = "non_character_franchise"
 _FETCH_ID_CHARACTER_FRANCHISE = "character_franchise"
 _FETCH_ID_STUDIO = "studio"
-_FETCH_ID_ACTOR = "actor"
+_FETCH_ID_PERSON = "person"
 
 
 def _standard_fetch_id(kind: BranchKind) -> str:
@@ -159,6 +176,8 @@ _STAGE_LABELS: dict[str, str] = {
     "searching_title":      "Searching by exact title…",
     # Similarity flow
     "resolving_anchors":    "Resolving similar movies…",
+    # Person flow
+    "resolving_person":     "Resolving person…",
 }
 
 
@@ -219,7 +238,7 @@ async def stream_full_pipeline(
         metadata_filters: Optional UI hard filters applied at every
             candidate-generation / reranker primitive. Threaded through
             standard Stage 4 branches and the entity-flow runners
-            (exact_title, franchise, studio, actor). Intentionally NOT
+            (exact_title, franchise, studio, person). Intentionally NOT
             threaded into the similarity flow — anchor-based "movies
             like X" is not filter-relevant.
 
@@ -307,15 +326,15 @@ async def stream_full_pipeline(
     studio_flow_data: StudioFlowData | None = (
         step0_response.to_studio_flow_data()
     )
-    actor_flow_data: ActorFlowData | None = (
-        step0_response.to_actor_flow_data()
+    person_flow_data: PersonFlowData | None = (
+        step0_response.to_person_flow_data()
     )
     exact_title_firing = exact_title_flow_data is not None
     similarity_firing = similarity_flow_data is not None
     non_character_franchise_firing = non_character_franchise_flow_data is not None
     character_franchise_firing = character_franchise_flow_data is not None
     studio_firing = studio_flow_data is not None
-    actor_firing = actor_flow_data is not None
+    person_firing = person_flow_data is not None
 
     fetches: list[dict[str, Any]] = []
     for kind, branch_query, ui_label in branch_plan:
@@ -329,11 +348,17 @@ async def stream_full_pipeline(
         )
     if exact_title_firing:
         et = exact_title_flow_data
+        # exact-title query text IS the resolved entity expression, so
+        # `query` and `label` share the same builder.
+        exact_title_text = _exact_title_label(
+            et.exact_title_to_search, et.release_year
+        )
         fetches.append(
             {
                 "id": _FETCH_ID_EXACT_TITLE,
                 "type": "exact_title",
-                "label": _exact_title_label(et.exact_title_to_search, et.release_year),
+                "label": exact_title_text,
+                "query": exact_title_text,
                 "title": et.exact_title_to_search,
                 "release_year": et.release_year,
             }
@@ -345,6 +370,7 @@ async def stream_full_pipeline(
                 "id": _FETCH_ID_SIMILARITY,
                 "type": "similarity",
                 "label": _similarity_label(refs),
+                "query": _similarity_query(refs),
                 "references": [
                     {
                         "title": r.similar_search_title,
@@ -361,6 +387,7 @@ async def stream_full_pipeline(
                 "id": _FETCH_ID_NON_CHARACTER_FRANCHISE,
                 "type": "non_character_franchise",
                 "label": canonical,
+                "query": _non_character_franchise_query(canonical),
                 "canonical_name": canonical,
             }
         )
@@ -371,6 +398,7 @@ async def stream_full_pipeline(
                 "id": _FETCH_ID_CHARACTER_FRANCHISE,
                 "type": "character_franchise",
                 "label": canonical,
+                "query": _character_franchise_query(canonical),
                 "canonical_name": canonical,
             }
         )
@@ -383,19 +411,21 @@ async def stream_full_pipeline(
                 "id": _FETCH_ID_STUDIO,
                 "type": "studio",
                 "label": _studio_label(canonical_names),
+                "query": _studio_query(canonical_names),
                 "canonical_names": canonical_names,
             }
         )
-    if actor_firing:
-        actor_canonical_names = [
-            ref.canonical_name for ref in actor_flow_data.references
+    if person_firing:
+        person_canonical_names = [
+            ref.canonical_name for ref in person_flow_data.references
         ]
         fetches.append(
             {
-                "id": _FETCH_ID_ACTOR,
-                "type": "actor",
-                "label": _actor_label(actor_canonical_names),
-                "canonical_names": actor_canonical_names,
+                "id": _FETCH_ID_PERSON,
+                "type": "person",
+                "label": _person_label(person_canonical_names),
+                "query": _person_query(person_canonical_names),
+                "canonical_names": person_canonical_names,
             }
         )
 
@@ -442,9 +472,9 @@ async def stream_full_pipeline(
             progress_queue.put_nowait(
                 _stage_event(fetch["id"], "resolving_studio")
             )
-        elif ftype == "actor":
+        elif ftype == "person":
             progress_queue.put_nowait(
-                _stage_event(fetch["id"], "resolving_actor")
+                _stage_event(fetch["id"], "resolving_person")
             )
 
     # ------------------------------------------------------------------
@@ -530,16 +560,16 @@ async def stream_full_pipeline(
             fetch_id=_FETCH_ID_STUDIO,
             phase=_PHASE_NONSTANDARD,
         )
-    if actor_firing:
+    if person_firing:
         task = asyncio.create_task(
-            _run_actor_with_hydration(
-                actor_flow_data,
-                emit_stage=_make_emitter(_FETCH_ID_ACTOR),
+            _run_person_with_hydration(
+                person_flow_data,
+                emit_stage=_make_emitter(_FETCH_ID_PERSON),
                 metadata_filters=metadata_filters,
             )
         )
         task_info[task] = _TaskInfo(
-            fetch_id=_FETCH_ID_ACTOR,
+            fetch_id=_FETCH_ID_PERSON,
             phase=_PHASE_NONSTANDARD,
         )
 
@@ -667,6 +697,25 @@ async def _handle_finished_task(
                 info.fetch_id, cards=[], branch_error=branch_result.branch_error
             )
             return
+
+        # Emit branch_categories before the next stage flips. This is
+        # the progressive-reveal point between branch_traits (fired
+        # after Step 2) and branch_results (fired after Stage 4): the
+        # trait → category → expressions structure is fully resolved at
+        # this point and the UI uses it to expand each trait before
+        # results land. Direct `yield` lands on the wire ahead of the
+        # `emitter("executing")` push below — the emitter routes via the
+        # progress queue, which the merge loop drains on a later tick.
+        yield (
+            "branch_categories",
+            {
+                "fetch_id": info.fetch_id,
+                "traits": [
+                    _trait_with_endpoints_to_dict(t)
+                    for t in branch_result.traits
+                ],
+            },
+        )
 
         # Compute per-branch auxiliary specs and launch Stage 4 for
         # this branch. The fallback helper may mutate the branch's
@@ -917,21 +966,21 @@ async def _run_studio_with_hydration(
     return _FetchOutcome(cards=cards, branch_error=None)
 
 
-async def _run_actor_with_hydration(
-    flow_data: ActorFlowData,
+async def _run_person_with_hydration(
+    flow_data: PersonFlowData,
     emit_stage: StageEmitter,
     *,
     metadata_filters: MetadataFilters | None = None,
 ) -> _FetchOutcome:
-    """Run the actor flow then hydrate the bucketed result.
+    """Run the person flow then hydrate the bucketed result.
 
     The executor returns four buckets in strict priority order
     (lead, major, relevant, minor). Concatenating in bucket order
     yields the final ranked list; fetch_movie_card_summaries
-    preserves input ordering so the bucket-then-popularity invariant
-    survives hydration.
+    preserves input ordering so the bucket-then-overlap-then-popularity
+    invariant survives hydration.
     """
-    result = await run_actor_search(
+    result = await run_person_search(
         flow_data, metadata_filters=metadata_filters,
     )
     emit_stage("hydrating")
@@ -963,14 +1012,23 @@ def _exact_title_label(title: str, release_year: int | None) -> str:
     return title
 
 
+def _format_similarity_refs(references: list) -> list[str]:
+    """Format each similarity ref as 'Title (Year)' or just 'Title'.
+
+    Shared by `_similarity_label` and `_similarity_query` so the
+    label and query stay aligned if the per-ref format changes.
+    """
+    return [
+        f"{r.similar_search_title} ({r.release_year})"
+        if r.release_year is not None
+        else r.similar_search_title
+        for r in references
+    ]
+
+
 def _similarity_label(references: list) -> str:
     """Build a UI label like 'Similar to: A (1999), B'."""
-    parts: list[str] = []
-    for ref in references:
-        if ref.release_year is not None:
-            parts.append(f"{ref.similar_search_title} ({ref.release_year})")
-        else:
-            parts.append(ref.similar_search_title)
+    parts = _format_similarity_refs(references)
     return "Similar to: " + ", ".join(parts) if parts else "Similar to: …"
 
 
@@ -983,13 +1041,62 @@ def _studio_label(canonical_names: list[str]) -> str:
     return " + ".join(canonical_names)
 
 
-def _actor_label(canonical_names: list[str]) -> str:
-    """Build a UI label like 'Tom Hanks' or 'Tom Hanks + Meg Ryan' for the actor fetch."""
+def _person_label(canonical_names: list[str]) -> str:
+    """Build a UI label like 'Tom Hanks' or 'Tom Hanks + Meg Ryan' for the person fetch."""
     if not canonical_names:
-        return "Actor"
+        return "Person"
     if len(canonical_names) == 1:
         return canonical_names[0]
     return " + ".join(canonical_names)
+
+
+# --- `query` builders for non-standard flows ---
+# Natural-language descriptions of what each entity-flow branch is
+# fetching. Surfaced verbatim in the `query` field of every fetch
+# entry so the frontend can show the same shape it shows for
+# standard-branch fetches (where `query` is the LLM-expanded sub-query).
+
+
+def _join_canonical_names(canonical_names: list[str]) -> str:
+    """Join 1+ names as 'A', 'A and B', or 'A, B, and C'."""
+    n = len(canonical_names)
+    if n == 0:
+        return ""
+    if n == 1:
+        return canonical_names[0]
+    if n == 2:
+        return f"{canonical_names[0]} and {canonical_names[1]}"
+    return ", ".join(canonical_names[:-1]) + f", and {canonical_names[-1]}"
+
+
+def _similarity_query(references: list) -> str:
+    """Build a query like 'movies similar to A (1999), B'."""
+    parts = _format_similarity_refs(references)
+    if not parts:
+        return "movies similar to …"
+    return "movies similar to " + ", ".join(parts)
+
+
+def _non_character_franchise_query(canonical_name: str) -> str:
+    """e.g. 'the Star Wars franchise'."""
+    return f"the {canonical_name} franchise"
+
+
+def _character_franchise_query(canonical_name: str) -> str:
+    """e.g. 'films featuring Batman'."""
+    return f"films featuring {canonical_name}"
+
+
+def _studio_query(canonical_names: list[str]) -> str:
+    """e.g. 'A24 films' or 'A24 and Neon films'."""
+    joined = _join_canonical_names(canonical_names)
+    return f"{joined} films" if joined else "studio films"
+
+
+def _person_query(canonical_names: list[str]) -> str:
+    """e.g. 'Christopher Nolan films' or 'Tom Hanks and Meg Ryan films'."""
+    joined = _join_canonical_names(canonical_names)
+    return f"{joined} films" if joined else "person films"
 
 
 # ---------------------------------------------------------------------------
@@ -1003,6 +1110,46 @@ def _trait_to_dict(trait: Trait) -> dict[str, Any]:
         "surface_text": trait.surface_text,
         "polarity": trait.polarity.value,
         "commitment": trait.commitment,
+        # Folded user-intent restatement from Step 2 — frontend reveals
+        # this when the user expands a trait node.
+        "contextualized_phrase": trait.contextualized_phrase,
+    }
+
+
+def _category_call_to_dict(call: CategoryCallWithEndpoints) -> dict[str, Any]:
+    return {
+        "category": call.category.value,
+        # User-facing description carried inline (cheap; saves the
+        # frontend from maintaining a parallel category dictionary).
+        "definition": call.category.description,
+        "retrieval_intent": call.retrieval_intent,
+        "expressions": call.expressions,
+    }
+
+
+def _trait_with_endpoints_to_dict(
+    trait: TraitWithEndpoints,
+) -> dict[str, Any]:
+    if trait.step_3_error is not None:
+        # Per-trait Step 3 failure — frontend renders an error leaf.
+        category_calls: list[dict[str, Any]] = []
+    else:
+        # Independent filters (one does not imply the other):
+        #   * EXPLICIT_NO_OP bucket — category deliberately not wired
+        #     to an endpoint (e.g. BELOW_THE_LINE_CREATOR). Identity
+        #     check matches handler.py's canonical pattern.
+        #   * empty expressions — handler ran but resolved to nothing.
+        category_calls = [
+            _category_call_to_dict(call)
+            for call in trait.category_calls
+            if call.category.bucket is not HandlerBucket.EXPLICIT_NO_OP
+            and len(call.expressions) > 0
+        ]
+    return {
+        "surface_text": trait.surface_text,
+        "polarity": trait.polarity.value,
+        "step_3_error": trait.step_3_error,
+        "category_calls": category_calls,
     }
 
 

@@ -1036,7 +1036,7 @@ class SearchFlow(StrEnum):
     CHARACTER_FRANCHISE = "character_franchise"
     NON_CHARACTER_FRANCHISE = "non_character_franchise"
     STUDIO = "studio"
-    ACTOR = "actor"
+    PERSON = "person"
     STANDARD = "standard"
 
 

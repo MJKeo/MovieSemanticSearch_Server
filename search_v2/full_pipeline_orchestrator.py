@@ -42,7 +42,6 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from enum import IntEnum
 from typing import Literal, TypeVar
 
 from db.postgres import fetch_quality_popularity_signals
@@ -76,6 +75,10 @@ from search_v2.endpoint_fetching.metadata_query_execution import (
     score_popularity_prior,
     score_reception_prior,
 )
+from search_v2.promotion_tiers import (
+    PromotionTier,
+    determine_promotion_tier,
+)
 from search_v2.stage_4_execution import (
     BranchRankedResults,
     execute_branches,
@@ -98,9 +101,9 @@ from search_v2.studio_search import (
     StudioSearchResult,
     run_studio_search,
 )
-from search_v2.actor_search import (
-    ActorSearchResult,
-    run_actor_search,
+from search_v2.person_search import (
+    PersonSearchResult,
+    run_person_search,
 )
 from search_v2.step_2 import run_step_2
 from search_v2.step_3 import run_step_3
@@ -227,7 +230,7 @@ class FullPipelineResult:
     non_character_franchise_flow_executed: bool = False
     character_franchise_flow_executed: bool = False
     studio_flow_executed: bool = False
-    actor_flow_executed: bool = False
+    person_flow_executed: bool = False
     similarity_result: SimilarMoviesSearchResult | None = None
     similarity_error: str | None = None
     non_character_franchise_result: NonCharacterFranchiseSearchResult | None = None
@@ -236,8 +239,8 @@ class FullPipelineResult:
     character_franchise_error: str | None = None
     studio_result: StudioSearchResult | None = None
     studio_error: str | None = None
-    actor_result: ActorSearchResult | None = None
-    actor_error: str | None = None
+    person_result: PersonSearchResult | None = None
+    person_error: str | None = None
     branches: list[Step2BranchResult] = field(default_factory=list)
     # Per-branch auxiliary endpoint specs — parallel to `branches`.
     # Each inner list is the auxiliary specs that were applied to the
@@ -254,24 +257,6 @@ class FullPipelineResult:
     # failure paths cannot reach this populated).
     branch_results: list[BranchRankedResults] = field(default_factory=list)
     total_elapsed: float = 0.0
-
-
-class PromotionTier(IntEnum):
-    """Fallback-promotion tier for endpoint specs.
-
-    Lower positive values promote first. NEVER_PROMOTE is reserved for
-    calls that must only rerank an already-existing or neutral fallback
-    pool.
-    """
-
-    NEVER_PROMOTE = -1
-    CONCRETE_FACT_OR_IDENTIFIER = 1
-    CONCRETE_ELEMENT_OR_STRUCTURE = 2
-    ABSTRACT_TYPE_OR_ARCHETYPE = 3
-    RECEPTION_OR_PRAISE_PROSE = 4
-    AUDIENCE_SENSITIVITY_OR_SEASONAL = 5
-    VIBES_OR_CONTEXT_FIT = 6
-    GLOBAL_METADATA_PRIOR_OR_ORDINAL = 7
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +317,7 @@ def _non_standard_firing_count(step0: Step0Response) -> int:
     """How many non-standard executor flows would run for this step 0 routing.
 
     Each entity flow with an executor (exact_title, similarity,
-    non_character_franchise, character_franchise, studio, actor)
+    non_character_franchise, character_franchise, studio, person)
     consumes one slot of the standard-flow budget.
     """
     return (
@@ -341,7 +326,7 @@ def _non_standard_firing_count(step0: Step0Response) -> int:
         + int(step0.to_non_character_franchise_flow_data() is not None)
         + int(step0.to_character_franchise_flow_data() is not None)
         + int(step0.to_studio_flow_data() is not None)
-        + int(step0.to_actor_flow_data() is not None)
+        + int(step0.to_person_flow_data() is not None)
     )
 
 
@@ -792,74 +777,6 @@ def _compute_branch_auxiliary(
     )
 
 
-_SEMANTIC_PROMOTION_TIERS: dict[CategoryName, PromotionTier] = {
-    # Tier 1 — concrete fact / specific identifier.
-    CategoryName.CENTRAL_TOPIC: PromotionTier.CONCRETE_FACT_OR_IDENTIFIER,
-    CategoryName.PLOT_EVENTS: PromotionTier.CONCRETE_FACT_OR_IDENTIFIER,
-    CategoryName.NARRATIVE_SETTING: PromotionTier.CONCRETE_FACT_OR_IDENTIFIER,
-    CategoryName.FILMING_LOCATION: PromotionTier.CONCRETE_FACT_OR_IDENTIFIER,
-    # Tier 2 — concrete element / structural feature.
-    CategoryName.ELEMENT_PRESENCE: PromotionTier.CONCRETE_ELEMENT_OR_STRUCTURE,
-    CategoryName.GENRE: PromotionTier.CONCRETE_ELEMENT_OR_STRUCTURE,
-    CategoryName.FORMAT_VISUAL: PromotionTier.CONCRETE_ELEMENT_OR_STRUCTURE,
-    CategoryName.NARRATIVE_DEVICES: PromotionTier.CONCRETE_ELEMENT_OR_STRUCTURE,
-    # Tier 3 — abstract type / archetype.
-    CategoryName.CHARACTER_ARCHETYPE: PromotionTier.ABSTRACT_TYPE_OR_ARCHETYPE,
-    CategoryName.STORY_THEMATIC_ARCHETYPE: PromotionTier.ABSTRACT_TYPE_OR_ARCHETYPE,
-    # Tier 4 — reception / praise prose.
-    CategoryName.VISUAL_CRAFT_ACCLAIM: PromotionTier.RECEPTION_OR_PRAISE_PROSE,
-    CategoryName.MUSIC_SCORE_ACCLAIM: PromotionTier.RECEPTION_OR_PRAISE_PROSE,
-    CategoryName.DIALOGUE_CRAFT_ACCLAIM: PromotionTier.RECEPTION_OR_PRAISE_PROSE,
-    CategoryName.CULTURAL_STATUS: PromotionTier.RECEPTION_OR_PRAISE_PROSE,
-    CategoryName.SPECIFIC_PRAISE_CRITICISM: PromotionTier.RECEPTION_OR_PRAISE_PROSE,
-    # Tier 5 — audience / sensitivity / seasonal.
-    CategoryName.TARGET_AUDIENCE: PromotionTier.AUDIENCE_SENSITIVITY_OR_SEASONAL,
-    CategoryName.SENSITIVE_CONTENT: PromotionTier.AUDIENCE_SENSITIVITY_OR_SEASONAL,
-    CategoryName.SEASONAL_HOLIDAY: PromotionTier.AUDIENCE_SENSITIVITY_OR_SEASONAL,
-    # Tier 6 — vibes / context fit.
-    CategoryName.EMOTIONAL_EXPERIENTIAL: PromotionTier.VIBES_OR_CONTEXT_FIT,
-    CategoryName.VIEWING_OCCASION: PromotionTier.VIBES_OR_CONTEXT_FIT,
-}
-
-_METADATA_PROMOTION_TIERS: dict[CategoryName, PromotionTier] = {
-    CategoryName.GENERAL_APPEAL: PromotionTier.GLOBAL_METADATA_PRIOR_OR_ORDINAL,
-    CategoryName.CULTURAL_STATUS: PromotionTier.GLOBAL_METADATA_PRIOR_OR_ORDINAL,
-    CategoryName.CHRONOLOGICAL: PromotionTier.GLOBAL_METADATA_PRIOR_OR_ORDINAL,
-}
-
-
-def determine_promotion_tier(
-    category: CategoryName,
-    endpoint_spec: GeneratedEndpointSpec,
-    polarity: Polarity,
-) -> PromotionTier:
-    """Return the fallback-promotion tier for one endpoint spec.
-
-    This helper is only for the reranker-only fallback path. Positive
-    semantic rerankers and positive metadata-prior rerankers receive a
-    promotable tier. Negative-polarity calls and already-candidate-
-    generating routes are never promoted.
-    """
-    if polarity is Polarity.NEGATIVE:
-        return PromotionTier.NEVER_PROMOTE
-
-    if endpoint_spec.operation_type is OperationType.CANDIDATE_GENERATOR:
-        return PromotionTier.NEVER_PROMOTE
-
-    route = endpoint_spec.route
-    if route is EndpointRoute.SEMANTIC:
-        return _SEMANTIC_PROMOTION_TIERS.get(
-            category, PromotionTier.NEVER_PROMOTE
-        )
-
-    if route is EndpointRoute.METADATA:
-        return _METADATA_PROMOTION_TIERS.get(
-            category, PromotionTier.NEVER_PROMOTE
-        )
-
-    return PromotionTier.NEVER_PROMOTE
-
-
 # ---------------------------------------------------------------------------
 # Implicit-prior post-reranking
 # ---------------------------------------------------------------------------
@@ -1127,7 +1044,7 @@ async def run_full_pipeline(
         step0_response.to_character_franchise_flow_data()
     )
     studio_flow_data = step0_response.to_studio_flow_data()
-    actor_flow_data = step0_response.to_actor_flow_data()
+    person_flow_data = step0_response.to_person_flow_data()
     exact_title_flow_executed = exact_title_flow_data is not None
     similarity_flow_executed = similarity_flow_data is not None
     non_character_franchise_flow_executed = (
@@ -1137,7 +1054,7 @@ async def run_full_pipeline(
         character_franchise_flow_data is not None
     )
     studio_flow_executed = studio_flow_data is not None
-    actor_flow_executed = actor_flow_data is not None
+    person_flow_executed = person_flow_data is not None
 
     similarity_result: SimilarMoviesSearchResult | None = None
     similarity_error: str | None = None
@@ -1197,18 +1114,18 @@ async def run_full_pipeline(
             )
             studio_error = repr(exc)
 
-    actor_result: ActorSearchResult | None = None
-    actor_error: str | None = None
-    if actor_flow_data is not None:
+    person_result: PersonSearchResult | None = None
+    person_error: str | None = None
+    if person_flow_data is not None:
         try:
-            actor_result = await run_actor_search(actor_flow_data)
+            person_result = await run_person_search(person_flow_data)
         except Exception as exc:  # noqa: BLE001 — non-standard side flow soft-fail
             logger.error(
-                "actor flow execution failed; continuing standard flow "
+                "person flow execution failed; continuing standard flow "
                 "when present (error=%r)",
                 exc,
             )
-            actor_error = repr(exc)
+            person_error = repr(exc)
 
     # Standard flow — plan branches per the budget rule and run them
     # in parallel with per-branch error isolation.
@@ -1245,7 +1162,7 @@ async def run_full_pipeline(
         non_character_franchise_flow_executed=non_character_franchise_flow_executed,
         character_franchise_flow_executed=character_franchise_flow_executed,
         studio_flow_executed=studio_flow_executed,
-        actor_flow_executed=actor_flow_executed,
+        person_flow_executed=person_flow_executed,
         similarity_result=similarity_result,
         similarity_error=similarity_error,
         non_character_franchise_result=non_character_franchise_result,
@@ -1254,8 +1171,8 @@ async def run_full_pipeline(
         character_franchise_error=character_franchise_error,
         studio_result=studio_result,
         studio_error=studio_error,
-        actor_result=actor_result,
-        actor_error=actor_error,
+        person_result=person_result,
+        person_error=person_error,
         branches=branches,
         auxiliary_endpoint_specs_per_branch=auxiliary_per_branch,
         branch_results=branch_results,

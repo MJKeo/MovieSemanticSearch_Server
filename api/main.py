@@ -218,17 +218,25 @@ async def query_search(body: QuerySearchBody):
     Stream the multi-channel search pipeline as Server-Sent Events.
 
     Events (in order, named on the SSE wire):
-      - fetches_ready  — fires once after Steps 0+1. Lists every "fetch"
-                          the pipeline will run (standard branches +
-                          exact-title + similarity).
-      - branch_traits  — fires per standard-flow branch when Step 2
-                          completes (one per branch). Skipped for the
-                          non-standard flows.
-      - branch_results — fires per fetch when its execution finishes.
-                          Per-fetch errors surface in the payload's
-                          `branch_error` field, not the `error` event.
-      - done           — terminal event with `total_elapsed` seconds.
-      - error          — only for fatal failures (Step 0 unrecoverable).
+      - fetches_ready    — fires once after Steps 0+1. Lists every
+                            "fetch" the pipeline will run (standard
+                            branches + exact-title + similarity).
+      - branch_traits    — fires per standard-flow branch when Step 2
+                            completes (one per branch). Skipped for the
+                            non-standard flows.
+      - branch_categories — fires per standard-flow branch when Step 3
+                            completes, after `branch_traits` and before
+                            `branch_results`. Carries each trait's
+                            decomposition into (category, expressions[])
+                            pairs so the UI can expand traits before
+                            results land. Same skip-set as
+                            `branch_traits`.
+      - branch_results   — fires per fetch when its execution finishes.
+                            Per-fetch errors surface in the payload's
+                            `branch_error` field, not the `error` event.
+      - done             — terminal event with `total_elapsed` seconds.
+      - error            — only for fatal failures (Step 0
+                            unrecoverable).
 
     Returns:
       HTTP 200 with `text/event-stream` content. Empty `query` → 400.

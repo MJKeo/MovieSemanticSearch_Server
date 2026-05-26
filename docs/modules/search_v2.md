@@ -5,7 +5,7 @@ front half (Steps 0–2) decomposes a natural-language query into
 structured trait atoms; the back half (Stage 3 + Stage 4) routes
 those atoms to typed endpoint LLMs and assembles a ranked candidate
 list. Standalone entity-flow executors handle exact-title, similarity,
-actor, studio, and character/franchise queries outside the standard
+person, studio, and character/franchise queries outside the standard
 trait pipeline.
 
 ## What This Module Does
@@ -14,7 +14,7 @@ Receives a user query (text), decomposes it through three front-end
 steps (flow routing, spin generation, holistic read) and two
 back-end stages (endpoint execution, assembly/reranking), and
 returns a ranked candidate list. When Step 0 identifies an entity
-flow (exact title, similarity, actor, studio, character/franchise,
+flow (exact title, similarity, person, studio, character/franchise,
 non-character franchise), the dedicated executor runs in place of
 the standard pipeline.
 
@@ -24,15 +24,18 @@ the standard pipeline.
 Step 0 (step_0.py): Flow routing
   → Step0Response: which of seven entity flows fires
     (exact_title / similarity_to_titles / character_franchise /
-     non_character_franchise / studio / actor / none_of_the_above)
+     non_character_franchise / studio / person / none_of_the_above)
     plus an optional standard co-fire
   → SimilarityFlowData now carries a list[SimilarityReference]
     (length 1 for single-anchor, length N for multi-anchor frames
     like "Inception meets Arrival")
   → ExactTitleFlowData and SimilarityFlowData carry optional
     release_year (only when user explicitly states it; never inferred)
-  → Similarity, studio, and actor flows are list-shaped (one-or-more
+  → Similarity, studio, and person flows are list-shaped (one-or-more
     entities); exact_title and character/franchise take exactly one entity
+  → The person flow is role-agnostic — any credited role (actor,
+    director, writer, producer, composer) qualifies the span; no
+    preferred role
   → Observations-first schema. Runs parallel with Step 1.
 
 Step 1 (step_1.py): Spin generation (standard flow only)
@@ -162,21 +165,37 @@ to deterministic on failure), runs `execute_studio_query` in ANY
 mode, popularity-sorts matched IDs. Single tier — co-productions not
 separately bucketed.
 
-### Actor search (`actor_search.py`)
-Fires when Step 0 selects `EntityFlow.ACTOR`. No LLM call. Per-actor
-resolution to term_ids via posting lists; multi-actor intersection
-(ALL actors must appear); sqrt-adaptive cast-zone model
-(`actor_zones.py`) assigns billing rows to four prominence buckets
-(lead / supporting / minor top-half / minor bottom-half). Within-
-bucket sort by `popularity_sort.sort_movie_ids_by_popularity`.
+### Person search (`person_search.py`)
+Fires when Step 0 selects `EntityFlow.PERSON`. No LLM call. Each
+named person is resolved to a term_id and looked up against ALL
+five role posting tables (actor, director, writer, producer,
+composer) in parallel — the executor is role-agnostic, with no
+preferred role. Per-(person, movie) bucket is the MIN across roles:
+actor credits use the sqrt-adaptive cast-zone model
+(`actor_zones.py`) to assign one of four prominence buckets (lead /
+supporting / minor top-half / minor bottom-half); director / writer
+/ producer / composer credits carry no billing data so they
+uniformly land in bucket 1 (lead).
+
+Multi-person queries (e.g. "Spielberg and Williams") use UNION
+semantics — any movie where any named person has any credit is a
+match. For each matched movie the executor tracks (a) the MIN
+bucket across the named people who appear ("best credit by any
+named person") and (b) an overlap_count of how many of the named
+people appear. Within-bucket sort is (overlap_count DESC,
+popularity DESC, movie_id DESC) so the intersection of all named
+people surfaces above single-person matches in the same prominence
+tier. Single-person queries collapse to pure popularity DESC.
 
 ### Supporting modules
 - `actor_zones.py` — sqrt-adaptive zone cutoffs and in-zone relative
-  position. Shared between `actor_search.py` and
+  position. Shared between `person_search.py` and
   `endpoint_fetching/entity_query_execution.py` so tuning parameters
   stay synchronized.
 - `popularity_sort.py` — shared popularity-sort helper used by
-  character_franchise_search, studio_search, and actor_search.
+  character_franchise_search and studio_search. The person flow
+  inlines an equivalent sort key so it can carry overlap_count as
+  the primary within-bucket sort component.
 - `auteur_directors.py` — 63-entry curated auteur frozenset, lazily
   resolved to `lex.lexical_dictionary.string_id` on first call.
 - `production_medium_registry.py` — 6×6 technique-only medium
@@ -187,7 +206,7 @@ bucket sort by `popularity_sort.sort_movie_ids_by_popularity`.
 - `award_taxonomy.py` — three-tier specific-award scoring.
 - `similar_studio_registry.py` — production-company similarity data.
 - `run_step_0_batch.py` — batch runner for Step 0 across N queries;
-  writes per-query files to `step_0_results/`. Includes actor and
+  writes per-query files to `step_0_results/`. Includes person and
   studio search result display.
 
 ## Stage 4 — Execution & Ranking (`stage_4_execution.py`)
@@ -210,13 +229,28 @@ sibling traits.
 ```
 Phase A — LLM generation (Steps 0/1/2/3 + handler-LLM, upstream)
 Phase B — Pool definition: positive generators in parallel → union
-          → shorts subtraction → neutral-seed only when zero generators
-            were attempted pipeline-wide
+          → shorts subtraction
+          → Filter-active tiered promotion loop: when a hard filter
+            is active and len(union) < CANDIDATE_FLOOR (25), promote
+            the lowest-tier reranker(s) into generator role, dispatch
+            them, merge into union, repeat until floor met or tiers
+            exhausted (parallel within tier, serial across tiers).
+            Unfiltered base case is unchanged ("doesn't exist means
+            doesn't exist")
+          → Neutral-seed when no positive generator was attempted
+            pipeline-wide (aux-spec path) OR when the filter-active
+            tiered loop exhausted with an empty union (direct path,
+            bypasses aux-spec gate)
           → Post-hoc generator-spec dedup: group by (route, params) →
             one _dispatch_call per unique group, result broadcast to
-            all shared CallKeys
+            all shared CallKeys. The promotion loop carries a
+            cross-iteration cache so a spec dispatched in an earlier
+            tier is not re-dispatched if a later tier holds an
+            identical (route, params) spec
 Phase C — Reranker pass: positive rerankers in parallel against the
-          finalized union (no trait-local scoping)
+          finalized union (no trait-local scoping). Specs that were
+          promoted to generators during the tiered loop are removed
+          from this pass so their generator score isn't overwritten
 Phase D — Per-trait scoring (positive + negative), described below
 Phase E — Branch aggregation: Σ trait_score × weight × sign
 ```
@@ -390,13 +424,35 @@ zero out the gate or saturate the noisy-OR.
 the reranker-only fallback's `NEUTRAL_SEED` and the default
 shorts-exclusion `MEDIA_TYPE`. Both are applied during Phase B:
 
-1. **Shorts subtraction** — fetch the SHORT-format movie IDs and
-   subtract them from the union (blocklist, not positive contribution).
-2. **Neutral seed** — fires only when **zero positive generators were
-   attempted pipeline-wide**. Fetches `db.postgres.fetch_neutral_reranker_seed_ids()`
-   using the DB-module constants `NEUTRAL_RERANKER_SEED_LIMIT` (2000),
+1. **Shorts subtraction** — fetched once into a set by
+   `_fetch_shorts_ids`, then re-applied via `_apply_shorts_subtraction`
+   after the initial generator dispatch AND after each iteration of
+   the filter-active tiered promotion loop (set difference is
+   idempotent; the fetch is not repeated). Blocklist semantics —
+   never a positive contribution.
+2. **Neutral seed** — two trigger paths share the same fetch
+   (`fetch_neutral_reranker_seed_ids` via the unified `_seed_neutral_pool`
+   helper):
+   - *Aux-spec gated path* (`_seed_from_neutral`): fires when **zero
+     positive generators were attempted pipeline-wide** and the
+     orchestrator's pre-execution fallback added a `NEUTRAL_SEED`
+     aux spec for the branch.
+   - *Filter-active direct path*: fires when a hard filter is active,
+     generators were attempted, and the tiered promotion loop
+     exhausted with an empty union. The orchestrator can't predict
+     this case so no aux spec is present; `_run_branch` invokes
+     `_seed_neutral_pool` directly.
+
+   Both paths use the same DB-module constants
+   `NEUTRAL_RERANKER_SEED_LIMIT` (2000),
    `NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT = 0.8`,
    `NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT = 0.2`.
+
+`CANDIDATE_FLOOR = 25` is the soft target for the tiered promotion
+loop. Below it the loop promotes the next tier; meeting or exceeding
+it terminates the loop. Tiers and their category memberships live in
+`search_v2/promotion_tiers.py` (extracted from
+`full_pipeline_orchestrator.py` to avoid an import cycle with Stage 4).
 
 ### Score breakdown and diagnostics
 
@@ -474,8 +530,8 @@ concurrently via `asyncio.gather`.
 | `character_franchise_search.py` | CHARACTER_FRANCHISE entity-flow executor. 7-tier reranking. |
 | `non_character_franchise_search.py` | NON_CHARACTER_FRANCHISE executor. Primary+secondary franchise buckets. |
 | `studio_search.py` | STUDIO entity-flow executor. LLM translation + popularity sort. |
-| `actor_search.py` | ACTOR entity-flow executor. 4-bucket prominence + popularity sort. |
-| `actor_zones.py` | Sqrt-adaptive cast-zone primitives shared between actor_search and entity_query_execution. |
+| `person_search.py` | PERSON entity-flow executor. Role-agnostic union across actor/director/writer/producer/composer postings. 4-bucket prominence (actor billing only) + (overlap_count DESC, popularity DESC) within-bucket sort. |
+| `actor_zones.py` | Sqrt-adaptive cast-zone primitives shared between person_search (actor table) and entity_query_execution. |
 | `popularity_sort.py` | Shared popularity-sort helper for entity-flow executors. |
 | `implicit_expectations.py` | Implicit-prior state management (quality/popularity priors). |
 | `vague_temporal_vocabulary.py` | Shared vague-time/duration mappings injected into Steps 2/3 and metadata handler. |
@@ -632,8 +688,17 @@ through every V2 pipeline primitive at retrieval time:
   filter-relevant; the orchestrator marks this branch with a comment.
 - **Shorts subtraction not filtered.** Shorts are a blocklist; applying the
   filter to them would let out-of-range shorts survive as candidates.
-- **Semantic elbow probe filtered.** `_run_corpus_topn` accepts the filter
-  so the calibrated score threshold uses the filtered distribution.
+- **Semantic elbow calibration unfiltered, candidate pool filtered.**
+  `_run_corpus_topn` is unconditionally unfiltered — the elbow is an
+  absolute "is-about-X" bar that's a property of the global corpus,
+  not the filtered slice; calibrating against a filtered slice would
+  inflate the elbow toward the filtered noise floor and manufacture
+  false positives. `_run_corpus_topn_filtered` is the separate filtered
+  probe used to populate the candidate pool on carver-unrestricted /
+  qualifier-promoted generator paths. In the no-filter case those
+  paths fire a single probe per space (byte-identical to pre-fix
+  behavior); in the filter-active case they fire calibration and pool
+  probes in parallel per space.
 - **Trending via Postgres round-trip.** `execute_trending_query` calls
   `fetch_movie_ids_matching_filters` to intersect the Redis hash against
   an eligible-movie-card scan in one Postgres round-trip.

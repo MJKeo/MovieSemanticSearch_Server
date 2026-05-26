@@ -1,10 +1,13 @@
 # Shared popularity-sort helper for Step-0 entity-flow executors.
 #
-# Multiple executors (character_franchise_search, studio_search, and
-# eventually actor_search) bucket matched movie_ids and then sort each
-# bucket by popularity DESC. The sort key convention — NULLS LAST under
-# DESC with a movie_id DESC tiebreaker — is identical across them, so
-# the helper lives here rather than duplicated in each search module.
+# Multiple executors (character_franchise_search, studio_search)
+# bucket matched movie_ids and then sort each bucket by popularity
+# DESC. The sort key convention — NULLS LAST under DESC with a
+# movie_id DESC tiebreaker — is identical across them, so the helper
+# lives here rather than duplicated in each search module. (The
+# person flow inlines an equivalent key because it composes
+# overlap_count as the primary within-bucket sort component on top
+# of popularity.)
 #
 # The popularity dict shape mirrors db.postgres.fetch_quality_popularity_signals:
 # {movie_id: (popularity_score | None, reception_score | None)}.
