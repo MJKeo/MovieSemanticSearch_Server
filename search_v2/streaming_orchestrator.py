@@ -348,17 +348,19 @@ async def stream_full_pipeline(
         )
     if exact_title_firing:
         et = exact_title_flow_data
-        # exact-title query text IS the resolved entity expression, so
-        # `query` and `label` share the same builder.
-        exact_title_text = _exact_title_label(
+        # Label gets the "Specific Title(s):" UI prefix; query carries
+        # just the bare title text since that IS the resolved entity
+        # expression. Both fall through `_exact_title_text` so the
+        # per-title format stays in sync.
+        bare_title = _exact_title_text(
             et.exact_title_to_search, et.release_year
         )
         fetches.append(
             {
                 "id": _FETCH_ID_EXACT_TITLE,
                 "type": "exact_title",
-                "label": exact_title_text,
-                "query": exact_title_text,
+                "label": f"Specific Title(s): {bare_title}",
+                "query": bare_title,
                 "title": et.exact_title_to_search,
                 "release_year": et.release_year,
             }
@@ -386,7 +388,7 @@ async def stream_full_pipeline(
             {
                 "id": _FETCH_ID_NON_CHARACTER_FRANCHISE,
                 "type": "non_character_franchise",
-                "label": canonical,
+                "label": f"Franchise: {canonical}",
                 "query": _non_character_franchise_query(canonical),
                 "canonical_name": canonical,
             }
@@ -397,7 +399,7 @@ async def stream_full_pipeline(
             {
                 "id": _FETCH_ID_CHARACTER_FRANCHISE,
                 "type": "character_franchise",
-                "label": canonical,
+                "label": f"Character Franchise: {canonical}",
                 "query": _character_franchise_query(canonical),
                 "canonical_name": canonical,
             }
@@ -428,6 +430,12 @@ async def stream_full_pipeline(
                 "canonical_names": person_canonical_names,
             }
         )
+
+    # Non-standard flows always precede standard-flow branches in the
+    # wire payload — the UI surfaces them with priority. Stable sort
+    # preserves within-group order: non-standard flows keep their
+    # append order above, standard branches keep their planning order.
+    fetches.sort(key=lambda f: f["type"] == "standard")
 
     yield ("fetches_ready", {"fetches": fetches})
 
@@ -1006,7 +1014,8 @@ def _kind_from_fetch_id(fetch_id: str) -> BranchKind:
     return kind  # type: ignore[return-value]
 
 
-def _exact_title_label(title: str, release_year: int | None) -> str:
+def _exact_title_text(title: str, release_year: int | None) -> str:
+    """Format a single exact-title reference: 'Inception (2010)' or 'Inception' (no year)."""
     if release_year is not None:
         return f"{title} ({release_year})"
     return title

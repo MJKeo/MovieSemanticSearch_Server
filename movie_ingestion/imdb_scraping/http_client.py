@@ -107,10 +107,11 @@ query MovieData($id: ID!) {
     writers: credits(first: 100000, filter: { categories: ["writer"] }) {
       edges { node { name { nameText { text } } } }
     }
-    cast: credits(first: 100000, filter: { categories: ["actor", "actress"] }) {
+    cast: credits(first: 100000, filter: { categories: ["actor", "actress", "self"] }) {
       edges {
         node {
           name { nameText { text } }
+          category { id }
           ... on Cast { characters { name } }
         }
       }

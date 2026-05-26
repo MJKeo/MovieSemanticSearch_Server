@@ -488,7 +488,12 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
         if name and isinstance(name, str) and name.strip():
             writers_set.add(name.strip())
 
-    # Cast — actors preserve billing order, characters flattened
+    # Cast — actors preserve billing order, characters flattened.
+    # The GraphQL filter merges actor / actress / self credits into one
+    # edge list ordered by IMDB's canonical billing, so documentary
+    # subjects, concert performers, and archive-footage appearances of
+    # deceased people (all of which IMDB classifies under category=self)
+    # land in `actors` alongside narrative-film cast.
     cast_edges = _safe_get(title_data, ["cast", "edges"]) or []
     actors: list[str] = []
     characters: list[str] = []
@@ -496,6 +501,14 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
         actor_name = _safe_get(edge, ["node", "name", "nameText", "text"])
         if actor_name and isinstance(actor_name, str) and actor_name.strip():
             actors.append(actor_name.strip())
+        # Skip character extraction for `self` credits — IMDB's
+        # `characters` field on self edges holds role-context labels
+        # ("Self", "Themselves", "Self - Ecologist", "Narrator"), not
+        # character entities. Routing them into lex.inv_character_postings
+        # would dilute character search with thousands of "Self" rows.
+        category_id = _safe_get(edge, ["node", "category", "id"])
+        if category_id == "self":
+            continue
         # Characters are a list of {"name": "..."} objects on Cast nodes
         for char in _safe_get(edge, ["node", "characters"]) or []:
             char_name = char.get("name") if isinstance(char, dict) else None

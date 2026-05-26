@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Iterable, Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
+from implementation.classes.enums import MaturityRating
 from implementation.classes.schemas import MetadataFilters
 from schemas.api_responses import MovieCard
 from schemas.award_category_tags import tags_for_category
@@ -1958,6 +1959,7 @@ async def fetch_movie_card_summaries(movie_ids: list[int]) -> list[MovieCard]:
                 title=row.get("title"),
                 release_date=_release_ts_to_date(row.get("release_ts")),
                 poster_url=row.get("poster_url"),
+                maturity_rating=_maturity_rank_to_label(row.get("maturity_rank")),
             )
         )
     return cards
@@ -1968,6 +1970,29 @@ def _release_ts_to_date(release_ts: int | None) -> str | None:
     if release_ts is None:
         return None
     return datetime.fromtimestamp(release_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+# Rank -> canonical MPAA display label, derived from the MaturityRating enum
+# so the mapping stays in lockstep with the source of truth in enums.py.
+# UNRATED is intentionally excluded — the frontend renders no rating segment.
+_MATURITY_RANK_TO_LABEL: dict[int, str] = {
+    member.maturity_rank: member.value.upper()
+    for member in MaturityRating
+    if member is not MaturityRating.UNRATED
+}
+
+
+def _maturity_rank_to_label(maturity_rank: int | None) -> str | None:
+    """Convert a stored `maturity_rank` to its canonical MPAA label.
+
+    Returns None for null ranks, the UNRATED sentinel, and any
+    unknown rank value — all of which signal "no rating to show".
+    Ingest normalizes UNRATED to NULL before insert, but we still
+    guard here so legacy/stray rows don't surface a bogus label.
+    """
+    if maturity_rank is None:
+        return None
+    return _MATURITY_RANK_TO_LABEL.get(maturity_rank)
 
 
 async def fetch_movie_ids_missing_card(candidate_ids: list[int]) -> list[int]:
