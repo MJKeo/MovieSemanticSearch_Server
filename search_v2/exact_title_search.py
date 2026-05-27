@@ -16,12 +16,19 @@
 # is modified.
 #
 # Scoring scheme (final score = max over contributions):
-#   1.000  exact title (and matching year, if year was given)
-#   0.750  seed's lineage entry found in candidate's own lineage
-#   0.625  seed's lineage entry found in candidate's own universe
-#   0.500  exact title where the user's year was given but doesn't match
-#   0.250  seed's universe entry found in candidate's own universe
-#   0.125  seed's universe entry found in candidate's own lineage
+#   1.000        exact title (and matching year, if year was given)
+#   0.800-0.950  close title match: query tokens are a strict subset
+#                of the candidate's tokens; score decays as the
+#                candidate accumulates extra tokens beyond the query
+#                (year matches, or no year was given)
+#   0.750        seed's lineage entry found in candidate's own lineage
+#   0.625        seed's lineage entry found in candidate's own universe
+#   0.500        exact title where the user's year was given but doesn't match
+#   0.400-0.475  close title match where the user's year was given but
+#                doesn't match (base * 0.5 — mirrors the exact 1.0→0.5
+#                year penalty)
+#   0.250        seed's universe entry found in candidate's own universe
+#   0.125        seed's universe entry found in candidate's own lineage
 
 from __future__ import annotations
 
@@ -29,6 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from db.postgres import (
+    fetch_close_title_candidates,
     fetch_franchise_entries_for_movies,
     fetch_franchise_movie_ids,
     fetch_movie_cards,
@@ -56,17 +64,33 @@ _SCORE_TITLE_ONLY           = 0.5
 _SCORE_UNIVERSE_TO_UNIVERSE = 0.25
 _SCORE_UNIVERSE_TO_LINEAGE  = 0.125
 
+# Close-title-match band parameters. The score is
+#     base = floor + slope * (len(query_tokens) / len(doc_tokens))
+# which lives in [floor, floor+slope] = [0.80, 0.95]. The upper bound
+# sits just under _SCORE_SEED (1.0) so an exact match always outranks
+# a close match, and the lower bound sits above _SCORE_LINEAGE_TO_LINEAGE
+# (0.75) so a close match outranks a pure lineage sibling — close-match
+# is "almost the same movie," lineage is "same franchise." When the
+# user's year was supplied and doesn't match, we multiply by
+# _CLOSE_TITLE_YEAR_PENALTY (0.5) — the same ratio the exact tier uses
+# between _SCORE_SEED and _SCORE_TITLE_ONLY.
+_CLOSE_TITLE_BASE_FLOOR     = 0.80
+_CLOSE_TITLE_BASE_SLOPE     = 0.15
+_CLOSE_TITLE_YEAR_PENALTY   = 0.50
+
 
 # Source-label constants — surfaced in score_source for diagnostics. The
 # franchise labels read "seed_axis→candidate_axis" so the cross-axis
 # demotion semantics are visible at a glance.
-_SRC_SEED_YEAR_MATCH    = "seed_year_match"
-_SRC_SEED_TITLE_MATCH   = "seed_title_match"
-_SRC_TITLE_ONLY         = "title_only"
-_SRC_LINEAGE_LINEAGE    = "lineage→lineage"
-_SRC_LINEAGE_UNIVERSE   = "lineage→universe"
-_SRC_UNIVERSE_UNIVERSE  = "universe→universe"
-_SRC_UNIVERSE_LINEAGE   = "universe→lineage"
+_SRC_SEED_YEAR_MATCH            = "seed_year_match"
+_SRC_SEED_TITLE_MATCH           = "seed_title_match"
+_SRC_TITLE_ONLY                 = "title_only"
+_SRC_CLOSE_TITLE_YEAR_MATCH     = "close_title_year_match"
+_SRC_CLOSE_TITLE_YEAR_MISMATCH  = "close_title_year_mismatch"
+_SRC_LINEAGE_LINEAGE            = "lineage→lineage"
+_SRC_LINEAGE_UNIVERSE           = "lineage→universe"
+_SRC_UNIVERSE_UNIVERSE          = "universe→universe"
+_SRC_UNIVERSE_LINEAGE           = "universe→lineage"
 
 
 @dataclass
@@ -84,6 +108,22 @@ class ExactTitleSearchResult:
 
     ranked: list[tuple[int, float]] = field(default_factory=list)
     score_source: dict[int, str] = field(default_factory=dict)
+
+
+def _title_token_set(normalized: str) -> frozenset[str]:
+    """Split a normalized title into the unordered set of tokens used by
+    the close-title-match check.
+
+    Splits on whitespace AND hyphens, so "spider-man" and "spider man"
+    tokenize identically — without this, a query like "spider man" would
+    fail the strict-subset check against a title stored as "spider-man".
+    normalize_string is responsible for everything else (case folding,
+    diacritics, punctuation), so the input here is already lowercased
+    ASCII-ish text with single spaces.
+    """
+    if not normalized:
+        return frozenset()
+    return frozenset(t for t in normalized.replace("-", " ").split() if t)
 
 
 def _year_of(release_ts: int | None) -> int | None:
@@ -151,11 +191,16 @@ async def run_exact_title_search(
     # the same function at query time keeps the two sides on a single
     # contract (an invariant from docs/conventions.md). escape_like
     # neutralizes %/_/\ so the bare-LIKE call below collapses to
-    # equality regardless of user-typed punctuation.
-    pattern = escape_like(normalize_string(title))
-    if not pattern:
+    # equality regardless of user-typed punctuation. We keep the raw
+    # normalized form too because step 6.5 uses it directly with the
+    # pg_trgm `%>` operator (not a LIKE) — that operator wants the
+    # un-escaped text since it treats the input as raw, not as a
+    # wildcard pattern.
+    normalized = normalize_string(title)
+    if not normalized:
         # All-punctuation or all-whitespace title — nothing to search on.
         return ExactTitleSearchResult()
+    pattern = escape_like(normalized)
 
     # ---- 3. Title fetch ---------------------------------------------------
     # UI hard filter applies to the initial title-match scan only. Once
@@ -205,6 +250,61 @@ async def run_exact_title_search(
     for mid in title_only:
         score[mid] = _SCORE_TITLE_ONLY
         source[mid] = _SRC_TITLE_ONLY
+
+    # ---- 6.5 Close-title-match scan --------------------------------------
+    # Catches titles like "Phantom of the Opera 25th Anniversary Edition"
+    # for a query of "Phantom of the Opera" — same movie, extra tokens.
+    # The pg_trgm `%>` operator does a coarse trigram-region pre-filter
+    # (uses idx_movie_card_title_normalized_trgm), and the strict gate
+    # below requires every query token to appear in the candidate's
+    # token set. Score decays with the candidate's extra tokens via the
+    # ratio formula; the band sits in [0.80, 0.95] for year-OK candidates
+    # and is halved (mirroring the exact 1.0→0.5 year penalty) when the
+    # user supplied a year that doesn't match.
+    #
+    # Close-match candidates do NOT seed franchise fan-out — only true
+    # 1.0 seeds do — so they're scored here once and then handled by
+    # the same max-with-bookkeeping (`_apply`) the rest of the function
+    # uses. If a close-match candidate also wins via franchise fan-out
+    # below, the higher score wins.
+    query_tokens = _title_token_set(normalized)
+    if query_tokens:
+        close_candidates = await fetch_close_title_candidates(
+            normalized,
+            metadata_filters=metadata_filters,
+            exclude_movie_ids=set(title_match_ids),
+        )
+
+        # Apply the strict token-superset gate first so we only pay for
+        # card hydration on candidates we'll actually score.
+        surviving: list[tuple[int, frozenset[str]]] = []
+        for mid, doc_title in close_candidates:
+            doc_tokens = _title_token_set(doc_title)
+            if doc_tokens and query_tokens.issubset(doc_tokens):
+                surviving.append((mid, doc_tokens))
+
+        # Hydrate years for survivors not already in id_to_year. We only
+        # need this when a release_year was supplied — otherwise every
+        # close match is in the year-OK branch and we save a round trip.
+        if surviving and release_year is not None:
+            new_ids = [mid for mid, _ in surviving if mid not in id_to_year]
+            if new_ids:
+                extra_cards = await fetch_movie_cards(new_ids)
+                for card in extra_cards:
+                    id_to_year[card["movie_id"]] = _year_of(card["release_ts"])
+
+        for mid, doc_tokens in surviving:
+            # query_tokens is a non-empty subset of doc_tokens here, so
+            # 1 <= len(query_tokens) <= len(doc_tokens) and 0 < ratio <= 1.
+            ratio = len(query_tokens) / len(doc_tokens)
+            base = _CLOSE_TITLE_BASE_FLOOR + _CLOSE_TITLE_BASE_SLOPE * ratio
+            if release_year is None or id_to_year.get(mid) == release_year:
+                final_score = base
+                label = _SRC_CLOSE_TITLE_YEAR_MATCH
+            else:
+                final_score = base * _CLOSE_TITLE_YEAR_PENALTY
+                label = _SRC_CLOSE_TITLE_YEAR_MISMATCH
+            _apply(score, source, mid, final_score, label)
 
     # ---- 7. Franchise fan-out --------------------------------------------
     # Only seeds anchor the fan-out. Title-only candidates can still be

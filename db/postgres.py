@@ -2156,9 +2156,10 @@ async def fetch_quality_popularity_seed(
 async def fetch_neutral_reranker_seed_ids(
     *,
     limit: int = NEUTRAL_RERANKER_SEED_LIMIT,
+    restrict_movie_ids: Optional[set[int]] = None,
     metadata_filters: Optional[MetadataFilters] = None,
 ) -> list[int]:
-    """Top `limit` movie_ids for reranker-only fallback seeding.
+    """Top `limit` movie_ids ranked by the neutral 80/20 prior.
 
     Orders by the deterministic neutral prior:
 
@@ -2171,16 +2172,50 @@ async def fetch_neutral_reranker_seed_ids(
     `reception_score` is stored on a 0-100 scale, so normalize by
     dividing by 100 and clamp both components defensively.
 
-    This is the **no-LLM fallback path** the user explicitly called
-    out — when zero candidate generators fire, this seed is the only
-    pool downstream rerankers see. The hard filter must apply here
-    or filters get silently bypassed on this path.
+    Two call sites today:
+
+    1. **V2 no-LLM fallback path** — when zero candidate generators
+       fire, this seed is the only pool downstream rerankers see.
+       Pass only `limit` (and `metadata_filters` if set); leave
+       `restrict_movie_ids` as None for an unrestricted pool.
+    2. **`/attribute_search` endpoint** — pre-computes a candidate
+       movie_id set from people/posting-table intersections, then
+       passes that set as `restrict_movie_ids` so the same ranking
+       runs against only those movies.
+
+    `restrict_movie_ids` semantics: when None the query scans the
+    whole `movie_card` table (today's behavior); when set, the SQL
+    adds `AND movie_id = ANY(%s::bigint[])` so ranking happens over
+    just that candidate pool. An empty set is treated as "no movies
+    to rank" — the query short-circuits and returns `[]` without
+    hitting Postgres, since `ANY(empty array)` would otherwise scan
+    the table only to produce zero rows.
+
+    The hard `metadata_filters` clause is independent of
+    `restrict_movie_ids` — both apply simultaneously when supplied.
     """
+    # Empty restrict set has a single unambiguous meaning ("rank over
+    # nothing") and never returns rows; short-circuit so we don't pay
+    # a round-trip for a result we already know.
+    if restrict_movie_ids is not None and not restrict_movie_ids:
+        return []
+
     filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+
+    # Optional restrict clause. Splice into the WHERE before the
+    # ORDER BY so the planner can use the movie_card PK b-tree on the
+    # ANY(...) lookup before sorting. Param order: filter_params,
+    # restrict_param (if any), pop_weight, rec_weight, limit.
+    restrict_clause = ""
+    restrict_params: tuple = ()
+    if restrict_movie_ids is not None:
+        restrict_clause = " AND movie_id = ANY(%s::bigint[])"
+        restrict_params = (list(restrict_movie_ids),)
+
     query = f"""
         SELECT movie_id
         FROM public.movie_card
-        WHERE TRUE{filter_clause}
+        WHERE TRUE{filter_clause}{restrict_clause}
         ORDER BY (
             %s * COALESCE(
                 LEAST(1.0, GREATEST(0.0, popularity_score)),
@@ -2199,6 +2234,7 @@ async def fetch_neutral_reranker_seed_ids(
         query,
         (
             *filter_params,
+            *restrict_params,
             NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT,
             NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT,
             limit,
@@ -3414,6 +3450,152 @@ async def fetch_movie_ids_with_titles_matching_any(
     """
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}
+
+
+async def fetch_close_title_candidates(
+    normalized_query: str,
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
+    exclude_movie_ids: Optional[set[int]] = None,
+) -> list[tuple[int, str]]:
+    """Return (movie_id, title_normalized) pairs whose normalized title
+    contains the query as a near-contiguous trigram region.
+
+    Backs the close-title-match tier in search_v2/exact_title_search.py.
+    The SQL gate is intentionally coarse (pg_trgm word_similarity, default
+    GUC threshold 0.6) — the strict semantic gate is a token-superset
+    check the caller runs in Python on the returned (movie_id, title)
+    pairs. We return title_normalized so the caller can tokenize without
+    a second round trip.
+
+    The `<%` operator (asymmetric word_similarity) is true when the LHS
+    has a similar word inside the RHS — i.e., `query <% title_normalized`
+    asks "is the query embedded in this title?", which is exactly what
+    we need. The trigram GIN index
+    (idx_movie_card_title_normalized_trgm) supports `<%` directly. The
+    literal '%' character is escaped as '%%' because psycopg's
+    client-side parameter parsing treats '%' as a format sigil — see
+    the psycopg v3 parameters docs. (Note: the commutator `%>` exists
+    and is tempting since it puts the indexed column on the left, but
+    `query %> doc` means "is doc embedded in query?" — the wrong
+    direction. The `<%` form keeps the operand order semantically
+    obvious.)
+
+    Args:
+        normalized_query: Title normalized via implementation.misc.helpers
+            .normalize_string. Must NOT contain LIKE wildcards — `%>` is
+            an operator, not a LIKE.
+        metadata_filters: Optional UI-filter set, applied the same way
+            as the exact title scan.
+        exclude_movie_ids: Movies already scored by the exact-match pass;
+            we don't want to re-score them at the (lower) close-match
+            tier and risk downgrading their seed score on a stale max.
+
+    Returns:
+        List of (movie_id, title_normalized) tuples. Ordering is
+        unspecified; the caller scores and sorts.
+    """
+    params: list = [normalized_query]
+    exclude_clause = ""
+    if exclude_movie_ids:
+        exclude_clause = " AND movie_id <> ALL(%s::bigint[])"
+        params.append(list(exclude_movie_ids))
+
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    params.extend(filter_params)
+
+    query = f"""
+        SELECT movie_id, title_normalized
+        FROM public.movie_card
+        WHERE %s <%% title_normalized{exclude_clause}{filter_clause}
+    """
+    rows = await _execute_read(query, params)
+    return [(row[0], row[1]) for row in rows]
+
+
+async def fetch_title_search_movie_ids(
+    *,
+    starts_with_pattern: str,
+    token_prefix_pattern: str,
+    substring_pattern: str,
+    limit: int,
+) -> list[int]:
+    """Two-tier typeahead title search → ranked movie_ids.
+
+    Backs the `GET /title_search` endpoint. Runs a single SQL query that
+    matches `title_normalized` against three caller-prepared LIKE
+    patterns and assigns a tier:
+      - tier 1 (token-prefix): the query is a prefix of the title OR
+        is preceded by a whitespace token boundary in the title.
+      - tier 2 (substring): the query appears anywhere in the title but
+        not at a token boundary.
+
+    Both tiers are captured by the broader `substring_pattern` in the
+    WHERE clause (so the trigram GIN index can do the work), and the
+    CASE in the SELECT just classifies the row. Results are ranked by:
+      tier ASC,
+      0.8 * popularity_score + 0.2 * reception_score/100 DESC,
+      movie_id DESC.
+    This guarantees Tier 1 results always rank above Tier 2 regardless
+    of popularity, then within-tier we use the same 80/20 neutral prior
+    /attribute_search uses, with `movie_id DESC` as a stable tie-break.
+
+    Args:
+        starts_with_pattern: LIKE pattern matching titles whose first
+            token starts with the query (e.g. ``"matrix%"``).
+        token_prefix_pattern: LIKE pattern matching the query at a
+            mid-title whitespace boundary (e.g. ``"% matrix%"``).
+        substring_pattern: LIKE pattern matching the query anywhere in
+            the title (e.g. ``"%matrix%"``). Must be a superset of the
+            two prefix patterns so all matches are captured by a single
+            WHERE clause.
+        limit: Maximum number of movie_ids to return. Caller-bounded.
+
+    Returns:
+        Ordered list of ``movie_id``s — tier 1 first (token-prefix
+        matches), then tier 2 (substring-only), with the neutral 80/20
+        popularity-reception prior breaking ties inside each tier.
+    """
+    # Single statement: tier classification in the SELECT, tier-aware
+    # ordering in the ORDER BY, and a tight LIMIT so the planner can
+    # short-circuit. Both popularity and reception are normalized
+    # defensively (popularity is already [0, 1]; reception is on the
+    # 0-100 scale and divides through, matching fetch_neutral_reranker_seed_ids).
+    query = """
+        SELECT movie_id
+        FROM public.movie_card
+        WHERE title_normalized LIKE %s
+        ORDER BY
+            CASE
+                WHEN title_normalized LIKE %s OR title_normalized LIKE %s THEN 1
+                ELSE 2
+            END ASC,
+            (
+                %s * COALESCE(
+                    LEAST(1.0, GREATEST(0.0, popularity_score)),
+                    0.0
+                )
+                +
+                %s * COALESCE(
+                    LEAST(1.0, GREATEST(0.0, reception_score / 100.0)),
+                    0.0
+                )
+            ) DESC,
+            movie_id DESC
+        LIMIT %s
+    """
+    rows = await _execute_read(
+        query,
+        (
+            substring_pattern,
+            starts_with_pattern,
+            token_prefix_pattern,
+            NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT,
+            NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT,
+            limit,
+        ),
+    )
+    return [row[0] for row in rows]
 
 
 # ===============================

@@ -123,34 +123,44 @@ it.
 """
 
 _COVERAGE_PRINCIPLE = """\
-COVERAGE PRINCIPLE — entity flows require the entity to be the entire \
-query
+COVERAGE PRINCIPLE — entity flows require the entity to cover all \
+non-packaging content
 
 For an entity flow to apply, the entity span must equal the entire \
-query after normalizing whitespace and punctuation. Any token outside \
-the entity span disqualifies entity routing — entity flows are \
-reserved for queries that ARE the entity, not queries that CONTAIN \
-the entity. A query like "<entity> in space" carries leftover content \
-("in space") that pushes it to none_of_the_above.
+query AFTER dropping packaging tokens per the QUALIFIER RULE. \
+Packaging includes politeness, speech-act framing, conversational \
+filler and discourse markers, vacuous quantifiers, bare result-type \
+words (e.g. "movies", "films", "series", "stuff", "recs"), and \
+similarity-frame phrasing where that frame is the entity reading \
+being recognized. Only real qualifiers — phrases that change the \
+meaning of the search relative to a bare-entity lookup — disqualify \
+entity routing. A query like "tom hanks movies" routes to the person \
+flow because "movies" is a bare result-type word; a query like \
+"<entity> in space" carries leftover content ("in space") that pushes \
+it to none_of_the_above. When in doubt, apply the operating test from \
+the QUALIFIER RULE: would removing this token meaningfully change the \
+result set, ranking, or selection criteria? If no, it is packaging \
+and does not disqualify entity routing.
 
 The same coverage rule applies to similarity_to_titles, with one \
 allowance: the similarity-frame phrasing itself ("movies like", \
 "similar to", "in the vein of", "meets", "crossed with", "X but Y" \
 when Y is itself a film reference) is part of the frame, not leftover \
 content. The reference titles still have to be the only content \
-inside the frame.
+inside the frame after packaging is dropped.
 
 The studio and person flows are also list-shaped: a query may name \
 one entity ("Pixar", "Tom Hanks", "Christopher Nolan") or several \
 joined by a neutral conjunction ("Pixar and Studio Ghibli", "Tom \
 Hanks and Woody Harrelson", "Spielberg and John Williams"). The \
 connectors "and", "&", and comma-separated lists are part of the \
-list shape, not leftover content. ANY other content — descriptors, \
-role markers, mixed entity kinds, similarity framing — disqualifies \
-the studio / person flow and pushes the query to none_of_the_above. \
-A list-shaped studio or person flow must be homogeneous: all entries \
-must be studios, or all entries must be people. Mixing kinds (e.g. \
-one person and one studio) is none_of_the_above.
+list shape, not leftover content. ANY other content that survives \
+the packaging-drop step — descriptors, role markers, mixed entity \
+kinds, similarity framing — disqualifies the studio / person flow \
+and pushes the query to none_of_the_above. A list-shaped studio or \
+person flow must be homogeneous: all entries must be studios, or all \
+entries must be people. Mixing kinds (e.g. one person and one \
+studio) is none_of_the_above.
 
 Role markers in the query ("directed by", "starring", "score by", \
 "written by", "produced by") count as content, not packaging — they \

@@ -12,7 +12,7 @@ and API endpoints for search and movie detail retrieval.
 
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI app setup, lifespan context manager, health check endpoint, `/query_search`, `/similarity_search`, `/movie_details/{tmdb_id}`, `MetadataFiltersInput` request model, and `_build_movie_details` translator. |
+| `main.py` | FastAPI app setup, lifespan context manager, health check endpoint, `/query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `MetadataFiltersInput` request model, and `_build_movie_details` translator. |
 | `cli_search.py` | CLI tool to run the full search pipeline from the terminal. Supports genre, maturity, runtime, and release date filters. Run via `python -m api.cli_search "query"`. |
 
 ## Boundaries
@@ -50,6 +50,57 @@ and API endpoints for search and movie detail retrieval.
   similarity score. Bypasses the natural-language pipeline.
 - Errors: empty `tmdb_ids` → 422 (pydantic), unknown IDs → 422,
   invalid anchor → 400.
+
+### `POST /attribute_search`
+- **Request**: `AttributeSearchBody` — both fields optional:
+  - `filters`: same `MetadataFiltersInput` shape used by `/query_search`
+    (genres, audio_languages, streaming_services, release_date /
+    runtime / maturity ranges). Same 422 path on unknown enum values.
+  - `people`: list of `PersonInput` entries, each `{name: str,
+    role?: "actor"|"director"|"writer"|"producer"|"composer"}`. Name
+    is normalized server-side. When `role` is omitted the credit
+    lookup unions across all five role posting tables (any credit on
+    the movie qualifies); when set, the lookup is restricted to that
+    one role's posting table. Multiple `people` entries intersect
+    (AND) — a movie must satisfy every person filter. Empty list and
+    `null` are treated identically.
+- **Response**: Array of `MovieCard` objects, capped at 250, ranked
+  by descending 80×popularity_score + 20×reception_score (the same
+  neutral prior used by the V2 reranker-only fallback path).
+  Unresolvable person names produce zero matches silently — the
+  response is an empty `[]`, not an error.
+- **No NLP / no LLM / no vector search** — pure deterministic browse
+  path. All filters apply at the SQL layer (posting-table lookups
+  intersect with `movie_card`-side `MetadataFilters`, then the same
+  filters re-apply on the final ranking query).
+
+### `GET /title_search`
+- **Request**: query params
+  - `q` (string, required): title query. Trimmed server-side; values
+    over ~100 chars are truncated before normalization.
+  - `limit` (int, optional): max results. Default 10, hard cap 25.
+- **Response**: Array of up to `limit` `MovieCard` summaries (same
+  shape as `/similarity_search` and `/attribute_search`). Empty list
+  on no matches (never 404). `Cache-Control: public, max-age=300`.
+- **Matching**: NFC + diacritic-folded + lowercased (via the shared
+  `normalize_string` used for ingest-time `title_normalized`). Two
+  priority tiers — Tier 1 (token-prefix: query is a prefix of any
+  whitespace-delimited token in the title) and Tier 2 (substring at
+  any position). Tier 1 always ranks above Tier 2. Within each tier
+  results are ordered by the same 80/20 popularity/reception blend
+  used by `/attribute_search`, with `movie_id DESC` as a stable
+  tie-break. Tier 3 fuzzy (edit-distance ≤ 2) is deliberately omitted
+  for v1 — the spec marked it optional and it doesn't fit the
+  p50<20ms target.
+- **Errors**:
+  - 422 `{ "detail": "q must be non-empty" }` when `q` is missing or
+    whitespace-only after trim.
+  - 422 `{ "detail": "limit out of range" }` when `limit < 1` or
+    `limit > 25`.
+- **No NLP / no LLM / no vector search / no Redis** — single Postgres
+  query against `movie_card.title_normalized` (trigram GIN +
+  text_pattern_ops indexes). Backs the frontend's typeahead picker
+  in "pick similar-to" mode, called on every debounced keystroke.
 
 ### `GET /movie_details/{tmdb_id}`
 - **Response**: Curated `MovieDetails` msgspec struct (see

@@ -1,0 +1,42 @@
+ #  query                                       expected                          V1 baseline                               V2 softened                               V3 +few-shot                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ 1  leonardo dicaprio movies                    person                            OK person[Leonardo DiCaprio]              OK person[Leonardo DiCaprio]              OK person[Leonardo DiCaprio]            
+ 2  frances mcdormand?                          person                            OK person[Frances McDormand]              OK person[Frances McDormand]              OK person[Frances McDormand]            
+ 3  wes anderson                                person                            OK person[Wes Anderson]                   OK person[Wes Anderson]                   OK person[Wes Anderson]                 
+ 4  ryan gosling and emma stone                 person                            OK person[Ryan Gosling,Emma Stone]        OK person[Ryan Gosling,Emma Stone]        OK person[Ryan Gosling,Emma Stone]      
+ 5  tarantino's films                           person                            X  none+std                               OK person[Quentin Tarantino]              OK person[Quentin Tarantino]            
+ 6  got any warner bros recs?                   studio                            OK studio[Warner Bros.]                   OK studio[Warner Bros.]                   OK studio[Warner Bros.]                 
+ 7  queue up some focus features                studio                            OK studio[Focus Features]                 OK studio[Focus Features]                 OK studio[Focus Features]               
+ 8  shrek movies                                character_franchise               X  non_character_franchise[Shrek]         OK character_franchise[Shrek]             OK character_franchise[Shrek]           
+ 9  looking for captain america                 character_franchise               OK character_franchise[Captain America]   OK character_franchise[Captain America]   OK character_franchise[Captain America] 
+10  the conjuring movies                        non_character_franchise           OK non_character_franchise[The Conjuring]  OK non_character_franchise[The Conjuring Universe]  OK non_character_franchise[The Conjuring Universe]
+11  anything from the twilight series           non_character_franchise           OK non_character_franchise[Twilight]      OK non_character_franchise[Twilight]      OK non_character_franchise[Twilight]    
+12  watch interstellar                          specific_title                    OK specific_title[Interstellar]           OK specific_title[Interstellar]           OK specific_title[Interstellar]         
+13  movies like the social network              similarity_to_titles              OK similarity_to_titles[The Social Network]  OK similarity_to_titles[The Social Network]  OK similarity_to_titles[The Social Network]
+14  schindler's list and saving private ryan    similarity_to_titles              OK similarity_to_titles[Schindler's List,Saving Private Ryan]  OK similarity_to_titles[Schindler's List,Saving Private Ryan]  OK similarity_to_titles[Schindler's List,Saving Private Ryan]
+15  the holiday                                 specific_title+std                OK specific_title[The Holiday]+std        OK specific_title[The Holiday]+std        OK specific_title[The Holiday]+std      
+16  scream                                      character_franchise+std           X  none+std                               X  non_character_franchise[Scream]        X  specific_title[Scream]               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+totals: V1=13/16  V2=15/16  V3=15/16
+
+=== reasoning for disagreements ===
+[V1] "tarantino's films": flow=none_of_the_above fire_std=True
+      flow_reasoning: The query contains the qualifier 'films' alongside the person entity, which prevents it from being a bare person name lookup.
+      ambig_reasoning: The selected entity flow is none_of_the_above.
+      qualifiers: ['films']
+[V1] 'shrek movies': flow=non_character_franchise fire_std=False
+      flow_reasoning: The query consists of the franchise name 'Shrek' followed by the bare result-type word 'movies', which is conversational packaging and does not qualify as a descriptor. Therefore, it routes directly to the non-character franchise flow.
+      ambig_reasoning: The term 'Shrek' is overwhelmingly understood as referring to the animated film franchise or character, leaving no defensible non-entity primary reading.
+      qualifiers: []
+[V1] 'scream': flow=none_of_the_above fire_std=True
+      flow_reasoning: The query is exactly the title of a specific film, but because it is also a multi-installment franchise, the bare name has multiple canonical resolutions.
+      ambig_reasoning: The query is routed to none_of_the_above because the bare title 'Scream' refers to multiple distinct films in a franchise, violating the resolution principle.
+      qualifiers: []
+[V2] 'scream': flow=non_character_franchise fire_std=False
+      flow_reasoning: The query is a bare name matching a major multi-installment franchise, with no qualifiers or packaging.
+      ambig_reasoning: The term 'scream' is also a common verb/noun, but in a movie search context, the franchise reading is overwhelmingly dominant.
+      qualifiers: []
+[V3] 'scream': flow=specific_title fire_std=False
+      flow_reasoning: The query is a bare title matching a specific film, with no qualifiers or other content.
+      ambig_reasoning: The word 'scream' is a common verb/noun, but in a movie search context, it overwhelmingly refers to the iconic horror franchise or its original 1996 film.
+      qualifiers: []

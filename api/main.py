@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
-from fastapi import FastAPI, HTTPException
+from typing import Literal, Optional
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -18,9 +18,11 @@ from db.postgres import (
 from db.qdrant import qdrant_client, check_qdrant
 from db.redis import (
     cache_movie_details,
+    cache_similar_movies,
     check_redis,
     close_redis,
     get_cached_movie_details,
+    get_cached_similar_movies,
     init_redis,
 )
 from db.tmdb import (
@@ -44,8 +46,19 @@ from schemas.api_responses import (
     MovieDetails,
     WatchProvider,
 )
+from schemas.entity_translation import PersonCategory
+from search_v2.attribute_search import (
+    DEFAULT_ATTRIBUTE_SEARCH_LIMIT,
+    PersonSpec,
+    run_attribute_search,
+)
 from search_v2.similar_movies import run_similar_movies_for_ids
 from search_v2.streaming_orchestrator import stream_full_pipeline
+from search_v2.title_search import (
+    TITLE_SEARCH_DEFAULT_LIMIT,
+    TITLE_SEARCH_MAX_LIMIT,
+    run_title_search,
+)
 
 # Shared msgspec JSON encoder. msgspec.Struct types (e.g. MovieCard)
 # encode natively without Pydantic's model_dump round-trip; ~10-50×
@@ -248,6 +261,89 @@ class SimilaritySearchBody(BaseModel):
     tmdb_ids: list[int] = Field(min_length=1)
 
 
+# Map the wire role string straight onto PersonCategory. Pydantic's
+# Literal validator on PersonInput.role already rejects anything
+# outside these five values, so the dict lookup is total over the
+# accepted type.
+_ROLE_LITERAL_TO_CATEGORY: dict[str, PersonCategory] = {
+    "actor": PersonCategory.ACTOR,
+    "director": PersonCategory.DIRECTOR,
+    "writer": PersonCategory.WRITER,
+    "producer": PersonCategory.PRODUCER,
+    "composer": PersonCategory.COMPOSER,
+}
+
+
+class PersonInput(BaseModel):
+    """One named-person filter on POST /attribute_search.
+
+    `name` is the raw display name (we normalize server-side; the
+    caller need not pre-normalize). `role`, when set, restricts the
+    credit lookup to that one role's posting table; when omitted,
+    any credit on the movie qualifies (union across actor /
+    director / writer / producer / composer).
+    """
+
+    name: str = Field(min_length=1)
+    role: Optional[
+        Literal["actor", "director", "writer", "producer", "composer"]
+    ] = None
+
+
+# Upper bound on the number of person filters per request. Each
+# unrestricted-role person fans out to 5 parallel posting-table
+# lookups, so a tight cap keeps a single request from saturating
+# the Postgres pool (max_size=10 per conventions.md). 20 is far
+# beyond any legitimate browse-UI use case while still leaving
+# headroom for "all-time favorite filmmakers" lists.
+_MAX_ATTRIBUTE_SEARCH_PEOPLE = 20
+
+
+class AttributeSearchBody(BaseModel):
+    """Request body for POST /attribute_search.
+
+    Both fields are optional. Sending an empty body (`{}`) returns
+    the top movies overall ranked by the 80/20 popularity/reception
+    prior — same shape as a "browse the catalog" request.
+
+    `people=None` and `people=[]` are treated identically.
+    """
+
+    filters: Optional[MetadataFiltersInput] = None
+    people: Optional[list[PersonInput]] = Field(
+        default=None, max_length=_MAX_ATTRIBUTE_SEARCH_PEOPLE,
+    )
+
+
+def _to_person_specs(
+    people_input: Optional[list[PersonInput]],
+) -> list[PersonSpec]:
+    """Translate wire-level PersonInput list into the internal PersonSpec list.
+
+    - Strips whitespace from each name; drops persons whose name is
+      blank after strip (defensive normalization at the boundary —
+      mirrors the `clarification` handling in /query_search).
+    - Resolves `role` (string Literal | None) to a `PersonCategory`,
+      with the missing-role case landing on PersonCategory.UNKNOWN
+      so the orchestrator's role dispatch is total.
+    """
+    if not people_input:
+        return []
+
+    specs: list[PersonSpec] = []
+    for entry in people_input:
+        stripped = entry.name.strip()
+        if not stripped:
+            continue
+        role = (
+            _ROLE_LITERAL_TO_CATEGORY[entry.role]
+            if entry.role is not None
+            else PersonCategory.UNKNOWN
+        )
+        specs.append(PersonSpec(name=stripped, role=role))
+    return specs
+
+
 @app.post("/query_search")
 async def query_search(body: QuerySearchBody):
     """
@@ -343,8 +439,28 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
       - Empty `tmdb_ids` → 422 (pydantic).
       - Unknown TMDB IDs → 422 with the missing IDs in the detail.
     """
+    # Canonicalize anchors (dedup + sort) so the cache key is order- and
+    # duplicate-insensitive. run_similar_movies_for_ids dedups again
+    # internally and doesn't depend on input ordering.
+    canonical_ids = sorted(dict.fromkeys(int(mid) for mid in body.tmdb_ids))
+
+    # Redis warm path. Per the graceful-degradation convention
+    # (docs/conventions.md), a Redis failure must NOT fail the request —
+    # fall through to the cold path instead.
     try:
-        result = await run_similar_movies_for_ids(body.tmdb_ids)
+        cached = await get_cached_similar_movies(canonical_ids)
+    except Exception:
+        logger.warning(
+            "similar_movies cache read failed for tmdb_ids=%s",
+            canonical_ids,
+            exc_info=True,
+        )
+        cached = None
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
+    try:
+        result = await run_similar_movies_for_ids(canonical_ids)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:
@@ -358,9 +474,145 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
     # Pydantic/jsonable_encoder for this hot path.
     ranked_ids = [r.movie_id for r in result.ranked]
     cards = await fetch_movie_card_summaries(ranked_ids)
+    encoded = _json_encoder.encode(cards)
+
+    # Cache-write failures must NOT lose the response we already built —
+    # log and continue.
+    try:
+        await cache_similar_movies(canonical_ids, encoded)
+    except Exception:
+        logger.warning(
+            "similar_movies cache write failed for tmdb_ids=%s",
+            canonical_ids,
+            exc_info=True,
+        )
+    return Response(content=encoded, media_type="application/json")
+
+
+@app.post("/attribute_search")
+async def attribute_search(body: AttributeSearchBody) -> Response:
+    """
+    Hard-attribute browse search — no NLP, no LLM, no vector search.
+
+    Intersects the supplied filters (genres, audio languages,
+    streaming services, release/runtime/maturity ranges, and named
+    people with optional role restriction) and returns the top
+    matches ranked by the 80/20 popularity/reception neutral prior.
+
+    Multiple `people` entries intersect (AND). A `role` on a person
+    restricts the credit lookup to that one posting table; omitting
+    `role` unions across all five role tables (any credit qualifies).
+    Unresolvable person names produce zero matches silently — the
+    response is an empty `[]` rather than an error.
+
+    Returns:
+      HTTP 200 with an array of MovieCard objects
+      (tmdb_id, title, release_date, poster_url, maturity_rating),
+      ranked by descending neutral-prior score, capped at 250.
+      HTTP 422 on unknown genre / audio_language / streaming_service
+      enum values (handled inside `_to_metadata_filters`).
+    """
+    # Translate the wire mirror into MetadataFilters once at the
+    # boundary. Raises 422 on any unknown enum value; collapses to
+    # None if every filter field is unset so the orchestrator's
+    # SQL stays filter-clause-free on unfiltered queries.
+    metadata_filters = _to_metadata_filters(body.filters)
+
+    # Convert wire-level PersonInput list (strings + optional role
+    # Literal) into the internal PersonSpec list (stripped name +
+    # resolved PersonCategory). Blank-after-strip entries are
+    # dropped here so the orchestrator never sees them.
+    people_specs = _to_person_specs(body.people)
+
+    ranked_ids = await run_attribute_search(
+        people=people_specs,
+        metadata_filters=metadata_filters,
+        limit=DEFAULT_ATTRIBUTE_SEARCH_LIMIT,
+    )
+
+    # Hydrate ranked movie_ids into MovieCard summaries. Order is
+    # preserved by `fetch_movie_card_summaries`, so the response
+    # stays sorted by descending neutral-prior score. Same
+    # msgspec-encode hot path as /similarity_search.
+    cards = await fetch_movie_card_summaries(ranked_ids)
     return Response(
         content=_json_encoder.encode(cards),
         media_type="application/json",
+    )
+
+
+# Cache-Control header for /title_search responses. Five minutes is
+# long enough to absorb a typeahead burst across sessions without
+# making the cache visibly stale during ingest (which runs on a
+# daily-ish cadence — see movie_ingestion/tmdb_fetching/daily_export.py).
+# `public` so any intermediate cache (CDN, browser, reverse proxy) can
+# serve the response without revalidation.
+_TITLE_SEARCH_CACHE_CONTROL = "public, max-age=300"
+
+
+@app.get("/title_search")
+async def title_search(
+    q: str = Query(..., description="Title query (trimmed server-side)"),
+    limit: int = Query(
+        TITLE_SEARCH_DEFAULT_LIMIT,
+        description="Maximum number of results to return.",
+    ),
+) -> Response:
+    """Lightweight title-only typeahead lookup.
+
+    Backs the frontend's "pick similar-to" picker: called on every
+    debounced keystroke, so the contract is minimal and the hot path
+    is a single Postgres query against the trigram-indexed
+    `title_normalized` column. No LLM, no vector search, no Qdrant,
+    no Redis.
+
+    Matching uses two priority tiers:
+      1. Token-prefix — query is a prefix of any whitespace-delimited
+         token in the title ("dark" → "The Dark Knight").
+      2. Substring — query appears anywhere in the title but not at a
+         token boundary ("ark kni" → "The Dark Knight").
+    Within each tier results are ranked by the same 80/20
+    popularity/reception blend `/attribute_search` uses, with
+    `tmdb_id DESC` as a stable tie-break.
+
+    Args:
+      q: User input. Trimmed server-side; whitespace-only is rejected.
+        Inputs longer than ~100 chars are truncated.
+      limit: Max results to return. Default 10, hard cap 25. Out-of-
+        range values 422.
+
+    Errors:
+      - 422 if `q` is empty / whitespace-only after trim.
+      - 422 if `limit` is < 1 or > 25.
+
+    Returns:
+      HTTP 200 with an array of MovieCard objects (tmdb_id, title,
+      release_date, poster_url, maturity_rating). Empty array on no
+      matches (never 404). `Cache-Control: public, max-age=300` so
+      identical queries are absorbed by intermediate caches.
+    """
+    # Validate the trimmed query at the boundary. Whitespace-only and
+    # missing values both collapse to the same "empty" condition.
+    trimmed = q.strip()
+    if not trimmed:
+        raise HTTPException(status_code=422, detail="q must be non-empty")
+
+    # `limit` is validated as a closed range matching the spec. The
+    # orchestrator trusts its caller for clamping, so we have to do it
+    # here.
+    if limit < 1 or limit > TITLE_SEARCH_MAX_LIMIT:
+        raise HTTPException(status_code=422, detail="limit out of range")
+
+    # Resolve to ranked movie_ids; then hydrate to the wire-format
+    # MovieCard via the same single-query summary fetch all sibling
+    # endpoints use. Order is preserved by `fetch_movie_card_summaries`
+    # so the tier-then-popularity ordering survives intact.
+    ranked_ids = await run_title_search(trimmed, limit=limit)
+    cards = await fetch_movie_card_summaries(ranked_ids)
+    return Response(
+        content=_json_encoder.encode(cards),
+        media_type="application/json",
+        headers={"Cache-Control": _TITLE_SEARCH_CACHE_CONTROL},
     )
 
 

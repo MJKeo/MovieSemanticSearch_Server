@@ -175,3 +175,43 @@ async def cache_movie_details(tmdb_id: int, payload: bytes) -> None:
     client = get_redis_client()
     key = redis_key(*_MOVIE_DETAILS_KEY_PARTS, str(tmdb_id))
     await client.set(key, payload, ex=_MOVIE_DETAILS_TTL_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# Similar-movies response cache (backs the /similarity_search API endpoint)
+# ---------------------------------------------------------------------------
+#
+# Caches the msgspec-encoded list[MovieCard] payload keyed off the sorted,
+# deduped TMDB anchor IDs. Warm hits skip the full similarity pipeline
+# (Postgres signals, Qdrant vector queries, blending, reranking) AND the
+# fetch_movie_card_summaries hydration step. 24h TTL matches the
+# movie_details cache.
+
+_SIMILAR_MOVIES_KEY_PARTS: tuple[str, ...] = ("similar", "movies")
+_SIMILAR_MOVIES_TTL_SECONDS = 24 * 60 * 60  # 24h
+
+
+def _similar_movies_key(canonical_tmdb_ids: list[int]) -> str:
+    """Build the Redis key for a canonical (deduped + sorted) anchor set.
+
+    Caller is responsible for normalization — passing different orderings
+    or duplicates would produce different keys.
+    """
+    joined = ",".join(str(mid) for mid in canonical_tmdb_ids)
+    return redis_key(*_SIMILAR_MOVIES_KEY_PARTS, joined)
+
+
+async def get_cached_similar_movies(canonical_tmdb_ids: list[int]) -> bytes | None:
+    """Return cached MovieCard-list bytes for the given anchor set, or None."""
+    client = get_redis_client()
+    return await client.get(_similar_movies_key(canonical_tmdb_ids))
+
+
+async def cache_similar_movies(canonical_tmdb_ids: list[int], payload: bytes) -> None:
+    """Write encoded MovieCard-list payload to Redis with a 24h TTL."""
+    client = get_redis_client()
+    await client.set(
+        _similar_movies_key(canonical_tmdb_ids),
+        payload,
+        ex=_SIMILAR_MOVIES_TTL_SECONDS,
+    )
