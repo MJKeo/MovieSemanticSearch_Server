@@ -132,3 +132,46 @@ async def read_trending_scores() -> dict[int, float]:
         return {}
 
     return {int(k): float(v) for k, v in raw.items()}
+
+
+# ---------------------------------------------------------------------------
+# Movie details cache (backs the /movie_details API endpoint)
+# ---------------------------------------------------------------------------
+#
+# Caches the *curated* msgspec-encoded MovieDetails payload (not the raw
+# TMDB response), so warm hits skip both the TMDB round-trip and the
+# build/encode step. 24h TTL is short enough that locked-in fields
+# (reception_score, watch providers) stay reasonably fresh without
+# hammering TMDB on every detail view.
+#
+# Namespace: `tmdb:movie:{id}` per docs/conventions.md. The cached value
+# is the curated wire payload (not raw TMDB JSON), but the namespace
+# stays under `tmdb:movie:` because that's the documented home for
+# per-movie TMDB-derived cache entries.
+
+_MOVIE_DETAILS_KEY_PARTS: tuple[str, ...] = ("tmdb", "movie")
+_MOVIE_DETAILS_TTL_SECONDS = 24 * 60 * 60  # 24h
+
+
+async def get_cached_movie_details(tmdb_id: int) -> bytes | None:
+    """Return the cached MovieDetails JSON bytes for `tmdb_id`, or None.
+
+    Returns the raw payload exactly as written by `cache_movie_details`
+    so the API layer can pass it straight to a Response body — no
+    decode/re-encode round trip on the warm path.
+    """
+    client = get_redis_client()
+    key = redis_key(*_MOVIE_DETAILS_KEY_PARTS, str(tmdb_id))
+    return await client.get(key)
+
+
+async def cache_movie_details(tmdb_id: int, payload: bytes) -> None:
+    """Write the encoded MovieDetails payload to Redis with a 24h TTL.
+
+    `payload` must be the bytes the API endpoint will return verbatim
+    (msgspec-encoded MovieDetails). Cache is serialization-agnostic —
+    we never decode it here.
+    """
+    client = get_redis_client()
+    key = redis_key(*_MOVIE_DETAILS_KEY_PARTS, str(tmdb_id))
+    await client.set(key, payload, ex=_MOVIE_DETAILS_TTL_SECONDS)

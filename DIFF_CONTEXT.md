@@ -114,6 +114,29 @@ Testing notes:
 - Backfill rollout is out of scope for this commit — track as a separate operations task. Could be staged: documentary/biography/music genres first (where self credits matter most), then a full sweep for narrative-film cameos.
 - Outlier billing case: ~2 of 10 docs in the probe (Super Size Me, Stop Making Sense) had IMDB ordering `self` credits alphabetically rather than by prominence, so the subject lands in BUCKET_MAJOR/RELEVANT instead of BUCKET_LEAD. Still strictly better than zero results — the bucket model handles it gracefully.
 
+## Add `/movie_details/{tmdb_id}` endpoint (TMDB + reception_score, 24h Redis cache)
+Files: api/main.py, db/tmdb.py, db/redis.py, db/postgres.py, schemas/api_responses.py
+
+### Intent
+New `GET /movie_details/{tmdb_id}` endpoint that returns a curated detail payload for a single movie — overview, runtime, MPAA rating, cast/crew, watch providers, trailer, our reception_score, and outbound TMDB/IMDb links. Backs the click-through detail view from a search result tile. Cached for 24h in Redis to keep the warm path off TMDB.
+
+### Key Decisions
+- **404 on movies absent from `public.movie_card`.** The endpoint is for our index, not a generic TMDB proxy — keeps the contract single-shape and matches `/similarity_search`'s "must exist locally" stance. The Postgres lookup also supplies reception_score.
+- **Curated msgspec.Struct, not pass-through.** New `MovieDetails`, `CastMember`, `CrewMember`, `WatchProvider` in `schemas/api_responses.py`. Stable wire contract decoupled from TMDB's payload churn; ~10× smaller than the raw response. `WatchProvider` field order: required fields (provider_id, name, access_type) precede optional logo_url — msgspec rejects optional-before-required at class build time.
+- **Cache the encoded curated payload, not raw TMDB JSON.** Warm hits skip both the TMDB round-trip and the build/encode step. Cache key `{REDIS_ENV}:movie_details:{tmdb_id}`, value is the exact bytes returned to the client. Cold-path and warm-path responses are byte-identical.
+- **New TMDB helper, not parameterized expansion of the existing one.** `fetch_movie_details_for_endpoint` in `db/tmdb.py` mirrors the ingestion-side `fetch_movie_details` but appends `credits,videos,images,external_ids,watch/providers,release_dates` (different from ingestion's `release_dates,keywords,watch/providers,credits,reviews`). Keeping the two paths separate prevents the API view from bloating ingestion payloads or vice versa.
+- **Shared httpx client + AdaptiveRateLimiter on `app.state`.** Built once in the lifespan handler via the new `build_api_tmdb_client()` factory (centralizes Bearer-auth + timeout config so API and ingestion can't drift). Single instance amortizes TLS handshake across all detail requests.
+- **TMDB-fresh watch providers, not Postgres `watch_offer_keys`.** Streaming availability changes frequently; the Postgres data is frozen at ingest time. The 24h Redis cache softens the freshness vs latency trade-off.
+- **`fetch_movie_card_row` delegates to `fetch_movie_cards`.** Simple single-row variant — column projection wasn't worth duplicating the SQL.
+- **502 (not 500) on TMDB fetch failure.** Lets the frontend distinguish upstream-down from us-broken for retry/UX.
+
+### Testing Notes
+- End-to-end: `GET /movie_details/27205` (Inception) → 200 with overview, `directors[0].name == "Christopher Nolan"`, reception_score populated, trailer_url is a YouTube link, tmdb_url is `https://www.themoviedb.org/movie/27205`.
+- Cache path: second call returns same body; `redis-cli KEYS "*movie_details*"` shows the key with TTL ≈ 86400.
+- 404 paths: id not in `movie_card` → "movie not found"; id present locally but deleted on TMDB → "movie not found on TMDB" (latter is rare; needs stubbed TMDB response to verify).
+- 502 path: invalidate `TMDB_ACCESS_TOKEN` → endpoint returns 502, Redis cache untouched.
+- Smoke-tested the builder against a synthetic payload covering certifications, multi-role crew (Nolan as director+writer), top-billed cast truncation, providers across flatrate/buy/rent, and an empty homepage string normalizing to None.
+
 ## Surgical rebuild script for `lex.inv_actor_postings`
 Files: movie_ingestion/final_ingestion/rebuild_actor_postings.py (new)
 Why: Operational counterpart to the `self`-credit code change above. After the re-scrape, ~109K movies sit at `status='imdb_scraped'` with fresh `actors` lists in the tracker, but `lex.inv_actor_postings` is still populated from the prior narrower scrape. Running the full Stage 8 ingest would needlessly re-embed 8 vector spaces and re-upsert movie_card / character postings / brand postings / awards — all of which are still correct. The script targets exactly the one stale table.

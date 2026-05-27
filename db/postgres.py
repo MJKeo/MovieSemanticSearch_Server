@@ -1929,6 +1929,18 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     return [dict(zip(columns, row)) for row in search_results]
 
 
+async def fetch_movie_card_row(movie_id: int) -> dict | None:
+    """Fetch a single `movie_card` row for the `/movie_details` endpoint.
+
+    Single-row variant of `fetch_movie_cards` used by the detail endpoint
+    to (a) confirm the movie is in our index (404 fast-path) and (b)
+    surface `reception_score` for the response payload. Returns the row
+    dict or ``None`` when the movie is not in `movie_card`.
+    """
+    rows = await fetch_movie_cards([movie_id])
+    return rows[0] if rows else None
+
+
 async def fetch_movie_card_summaries(movie_ids: list[int]) -> list[MovieCard]:
     """Bulk-fetch `MovieCard` API response objects for the given tmdb_ids.
 

@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, HTTPException
@@ -6,13 +7,28 @@ from pydantic import BaseModel, Field
 
 import msgspec
 
+logger = logging.getLogger(__name__)
+
 from db.postgres import (
     check_postgres,
+    fetch_movie_card_row,
     fetch_movie_card_summaries,
     pool,
 )
 from db.qdrant import qdrant_client, check_qdrant
-from db.redis import init_redis, close_redis, check_redis
+from db.redis import (
+    cache_movie_details,
+    check_redis,
+    close_redis,
+    get_cached_movie_details,
+    init_redis,
+)
+from db.tmdb import (
+    AdaptiveRateLimiter,
+    TMDBFetchError,
+    build_api_tmdb_client,
+    fetch_movie_details_for_endpoint,
+)
 from implementation.classes.enums import Genre, StreamingAccessType
 from implementation.classes.languages import Language
 from implementation.classes.schemas import MetadataFilters
@@ -22,6 +38,12 @@ from implementation.classes.watch_providers import (
 )
 from implementation.misc.event_loop import install_uvloop
 from implementation.misc.helpers import create_watch_provider_offering_key
+from schemas.api_responses import (
+    CastMember,
+    CrewMember,
+    MovieDetails,
+    WatchProvider,
+)
 from search_v2.similar_movies import run_similar_movies_for_ids
 from search_v2.streaming_orchestrator import stream_full_pipeline
 
@@ -57,8 +79,16 @@ async def lifespan(app: FastAPI):
     await pool.check()
     # Open the Redis pool and validate connectivity
     await init_redis()
+    # Build the shared TMDB httpx client + rate limiter used by /movie_details.
+    # Stored on app.state (not module globals) so test clients can override
+    # them via FastAPI's lifespan/dependency machinery if needed. TLS handshake
+    # cost dominates per-request client construction, so we share one instance
+    # across the process lifetime.
+    app.state.tmdb_client = build_api_tmdb_client()
+    app.state.tmdb_rate_limiter = AdaptiveRateLimiter()
     yield
     # Gracefully close all connections on shutdown
+    await app.state.tmdb_client.aclose()
     await qdrant_client.close()
     await close_redis()
     await pool.close()
@@ -311,3 +341,357 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
         content=_json_encoder.encode(cards),
         media_type="application/json",
     )
+
+
+# ---------------------------------------------------------------------------
+# /movie_details endpoint
+# ---------------------------------------------------------------------------
+
+# Base URLs for TMDB-hosted images and the public movie page. The TMDB
+# payload carries relative paths (e.g. "/abc.jpg"); we join them onto the
+# CDN base here so the frontend can render <img src=...> directly.
+# Per-asset size suffixes (e.g. "w185", "w500", "w1280") slot into the
+# {size} segment; the frontend almost always downscales, so we serve the
+# nearest-larger TMDB-resized variant rather than the full-resolution
+# "original" to cut payload weight on the cast/provider thumbnails.
+_TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
+_TMDB_MOVIE_PAGE_BASE = "https://www.themoviedb.org/movie"
+_IMDB_TITLE_PAGE_BASE = "https://www.imdb.com/title"
+_YOUTUBE_WATCH_BASE = "https://www.youtube.com/watch"
+_VIMEO_WATCH_BASE = "https://vimeo.com"
+
+# TMDB image sizes, matched to expected render context. The frontend can
+# always swap to a different size later by replacing the segment — but
+# defaulting to the right size keeps the cold-path response small.
+_POSTER_SIZE = "w500"      # poster art (movie tile / detail header)
+_BACKDROP_SIZE = "w1280"   # hero banner — large but not full-res
+_PROFILE_SIZE = "w185"     # cast/crew headshots (small thumbnail)
+_LOGO_SIZE = "w92"         # provider logos (tiny icon)
+
+# Cap the cast list at the top-billed N. TMDB returns the full crew which
+# can be hundreds of entries on big productions; the detail page only
+# needs the headliners.
+_CAST_LIMIT = 12
+
+# Per-bucket cap for crew lists. Most movies have 1–2 directors, but
+# blockbusters can list 10+ producers / writers. Limit per bucket so
+# the response stays small without dropping the primary credits.
+_CREW_BUCKET_LIMIT = 5
+
+# Job titles TMDB uses for each crew bucket. "Screenplay" and "Story"
+# both contribute to the writers list since TMDB splits them out;
+# "Executive Producer" rolls up into producers.
+_WRITER_JOBS = {"Writer", "Screenplay", "Story"}
+_PRODUCER_JOBS = {"Producer", "Executive Producer"}
+_DIRECTOR_JOBS = {"Director"}
+
+
+def _image_url(path: str | None, size: str) -> str | None:
+    """Join a TMDB relative image path onto the CDN base at the given size.
+
+    `size` must be a TMDB-served size segment ("w185", "w500", "w1280",
+    "original", etc.). Returns ``None`` for empty/missing paths so the
+    field is omitted via `omit_defaults` on the wire.
+    """
+    if not path:
+        return None
+    return f"{_TMDB_IMAGE_BASE}/{size}{path}"
+
+
+def _extract_us_certification(release_dates: dict | None) -> str | None:
+    """Return the US MPAA-style certification ("PG-13" etc.) or None.
+
+    TMDB's release_dates payload is a list of country buckets, each with
+    a list of dated releases. We pick the first US entry with a non-empty
+    `certification` field — the others are typically blanks for
+    non-theatrical release windows.
+    """
+    if not release_dates:
+        return None
+    for country in release_dates.get("results", []):
+        if country.get("iso_3166_1") != "US":
+            continue
+        for entry in country.get("release_dates", []):
+            cert = entry.get("certification")
+            if cert:
+                return cert
+    return None
+
+
+_SUPPORTED_VIDEO_SITES = {"YouTube", "Vimeo"}
+
+
+def _video_url(site: str | None, key: str | None) -> str | None:
+    """Build a watchable URL for a TMDB video entry, or None if unsupported.
+
+    Only YouTube and Vimeo are wired up — those are the two hosts TMDB
+    uses for ~99% of trailer entries. Other sites (e.g. self-hosted
+    Lionsgate URLs occasionally appearing on indie releases) need
+    bespoke URL templates we don't keep here.
+    """
+    if not key:
+        return None
+    if site == "YouTube":
+        return f"{_YOUTUBE_WATCH_BASE}?v={key}"
+    if site == "Vimeo":
+        return f"{_VIMEO_WATCH_BASE}/{key}"
+    return None
+
+
+def _extract_trailer_url(videos: dict | None) -> str | None:
+    """Pick the best trailer URL from TMDB's videos payload.
+
+    Preference order: official Trailer → any Trailer → any Teaser.
+    Within each tier YouTube wins over Vimeo because YouTube embeds are
+    cheaper / more widely supported on the client side. Returns ``None``
+    when nothing usable exists (e.g. older films with no video assets
+    uploaded to TMDB).
+    """
+    if not videos:
+        return None
+    # Pre-filter to supported hosts and categorize by type in one pass.
+    trailers_official: list[dict] = []
+    trailers: list[dict] = []
+    teasers: list[dict] = []
+    for v in videos.get("results", []):
+        if v.get("site") not in _SUPPORTED_VIDEO_SITES:
+            continue
+        kind = v.get("type")
+        if kind == "Trailer":
+            if v.get("official"):
+                trailers_official.append(v)
+            else:
+                trailers.append(v)
+        elif kind == "Teaser":
+            teasers.append(v)
+
+    # Within a tier, prefer YouTube over Vimeo via a stable sort. Python's
+    # sort is stable, so TMDB's original ordering breaks further ties.
+    def _youtube_first(v: dict) -> int:
+        return 0 if v.get("site") == "YouTube" else 1
+
+    for bucket in (trailers_official, trailers, teasers):
+        if not bucket:
+            continue
+        bucket.sort(key=_youtube_first)
+        url = _video_url(bucket[0].get("site"), bucket[0].get("key"))
+        if url is not None:
+            return url
+    return None
+
+
+def _extract_credits(
+    credits: dict | None,
+) -> tuple[list[CrewMember], list[CrewMember], list[CrewMember], list[CastMember]]:
+    """Split TMDB's credits block into (directors, writers, producers, cast).
+
+    Single pass over crew with set-membership lookups for bucketing.
+    Cast is taken in TMDB's native order (already sorted by billing
+    position), truncated to _CAST_LIMIT.
+    """
+    if not credits:
+        return [], [], [], []
+
+    directors: list[CrewMember] = []
+    writers: list[CrewMember] = []
+    producers: list[CrewMember] = []
+    for entry in credits.get("crew", []):
+        job = entry.get("job") or ""
+        name = entry.get("name")
+        if not name:
+            continue
+        member = CrewMember(
+            name=name,
+            job=job,
+            profile_url=_image_url(entry.get("profile_path"), _PROFILE_SIZE),
+        )
+        if job in _DIRECTOR_JOBS and len(directors) < _CREW_BUCKET_LIMIT:
+            directors.append(member)
+        elif job in _WRITER_JOBS and len(writers) < _CREW_BUCKET_LIMIT:
+            writers.append(member)
+        elif job in _PRODUCER_JOBS and len(producers) < _CREW_BUCKET_LIMIT:
+            producers.append(member)
+
+    cast: list[CastMember] = []
+    for entry in credits.get("cast", [])[:_CAST_LIMIT]:
+        name = entry.get("name")
+        if not name:
+            continue
+        cast.append(
+            CastMember(
+                name=name,
+                character=entry.get("character") or None,
+                profile_url=_image_url(entry.get("profile_path"), _PROFILE_SIZE),
+            )
+        )
+
+    return directors, writers, producers, cast
+
+
+def _extract_us_watch_providers(watch_providers: dict | None) -> list[WatchProvider]:
+    """Flatten the US region of TMDB's watch/providers payload.
+
+    TMDB groups providers by access type (flatrate/buy/rent) inside the
+    region bucket. We flatten them into a single list, tagging each with
+    its `access_type` so the frontend can group / colour as it likes.
+    Other regions are ignored — the UI is US-only.
+    """
+    if not watch_providers:
+        return []
+    us = watch_providers.get("results", {}).get("US")
+    if not us:
+        return []
+    out: list[WatchProvider] = []
+    # Order matches what most users care about: subscription first, then
+    # rent (typically cheaper than buy), then buy.
+    for access_type in ("flatrate", "rent", "buy"):
+        for p in us.get(access_type, []) or []:
+            provider_id = p.get("provider_id")
+            name = p.get("provider_name")
+            if provider_id is None or not name:
+                continue
+            out.append(
+                WatchProvider(
+                    provider_id=int(provider_id),
+                    name=name,
+                    logo_url=_image_url(p.get("logo_path"), _LOGO_SIZE),
+                    access_type=access_type,
+                )
+            )
+    return out
+
+
+def _build_movie_details(
+    tmdb_id: int,
+    payload: dict,
+    card_row: dict,
+) -> MovieDetails:
+    """Translate a TMDB detail payload + movie_card row into MovieDetails.
+
+    Pure function — no I/O. All field mapping happens here so the endpoint
+    handler stays focused on orchestration (cache → DB → TMDB → encode).
+
+    `payload` is the TMDB JSON dict (with append_to_response sub-resources
+    inlined). `card_row` is the matching row from public.movie_card and
+    supplies the locally-computed reception_score.
+    """
+    directors, writers, producers, cast = _extract_credits(payload.get("credits"))
+
+    # IMDb link: prefer external_ids.imdb_id (always present in the append
+    # response when known), fall back to the top-level imdb_id field which
+    # is sometimes populated when the appended block isn't.
+    external_ids = payload.get("external_ids") or {}
+    imdb_id = external_ids.get("imdb_id") or payload.get("imdb_id")
+
+    # `homepage` is occasionally an empty string in TMDB; normalize to None
+    # so the frontend can rely on omit_defaults behaviour.
+    homepage = payload.get("homepage") or None
+
+    return MovieDetails(
+        tmdb_id=tmdb_id,
+        title=payload.get("title"),
+        original_title=payload.get("original_title"),
+        overview=payload.get("overview") or None,
+        tagline=payload.get("tagline") or None,
+        release_date=payload.get("release_date") or None,
+        # TMDB encodes "unknown runtime" as 0 (older films, recent indie
+        # releases, foreign titles); collapse to None so the frontend can
+        # omit the field instead of rendering "0 min".
+        runtime_minutes=payload.get("runtime") or None,
+        maturity_rating=_extract_us_certification(payload.get("release_dates")),
+        genres=[g["name"] for g in payload.get("genres", []) if g.get("name")],
+        spoken_languages=[
+            lang.get("english_name") or lang.get("name")
+            for lang in payload.get("spoken_languages", [])
+            if lang.get("english_name") or lang.get("name")
+        ],
+        poster_url=_image_url(payload.get("poster_path"), _POSTER_SIZE),
+        backdrop_url=_image_url(payload.get("backdrop_path"), _BACKDROP_SIZE),
+        trailer_url=_extract_trailer_url(payload.get("videos")),
+        reception_score=card_row.get("reception_score"),
+        tmdb_vote_average=payload.get("vote_average"),
+        tmdb_vote_count=payload.get("vote_count"),
+        directors=directors,
+        writers=writers,
+        producers=producers,
+        cast=cast,
+        watch_providers=_extract_us_watch_providers(payload.get("watch/providers")),
+        tmdb_url=f"{_TMDB_MOVIE_PAGE_BASE}/{tmdb_id}",
+        imdb_url=f"{_IMDB_TITLE_PAGE_BASE}/{imdb_id}" if imdb_id else None,
+        homepage=homepage,
+    )
+
+
+@app.get("/movie_details/{tmdb_id}")
+async def movie_details(tmdb_id: int) -> Response:
+    """Return the full detail payload for a single movie.
+
+    Pipeline:
+      1. Try Redis (24h cache of the encoded MovieDetails bytes).
+      2. Confirm the movie is in our index (`public.movie_card`); 404 if not.
+      3. Fetch TMDB `/movie/{id}` with credits/videos/images/external_ids/
+         watch-providers/release-dates appended.
+      4. Build the curated MovieDetails struct (TMDB data + reception_score).
+      5. Cache the encoded payload, return it.
+
+    Errors:
+      - 404 if `tmdb_id` is not in our `movie_card` index, or TMDB itself
+        no longer serves the movie.
+      - 502 if the TMDB fetch fails after retries (network / 5xx).
+    """
+    # 1. Redis warm path. Return cached bytes verbatim — they're already
+    # the encoded MovieDetails the frontend expects. Per the
+    # graceful-degradation convention (docs/conventions.md), a Redis
+    # failure here must NOT fail the request — fall through to the
+    # cold path instead.
+    try:
+        cached = await get_cached_movie_details(tmdb_id)
+    except Exception:
+        logger.warning(
+            "movie_details cache read failed for tmdb_id=%s", tmdb_id, exc_info=True
+        )
+        cached = None
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
+    # 2. Reject unknown movies before hitting TMDB. This is also the
+    # source of our locally-computed reception_score.
+    card_row = await fetch_movie_card_row(tmdb_id)
+    if card_row is None:
+        raise HTTPException(status_code=404, detail="movie not found")
+
+    # 3. Fetch from TMDB. The shared client + rate limiter live on
+    # app.state (initialized in the lifespan handler).
+    try:
+        tmdb_payload = await fetch_movie_details_for_endpoint(
+            app.state.tmdb_client,
+            app.state.tmdb_rate_limiter,
+            tmdb_id,
+        )
+    except TMDBFetchError as exc:
+        # Surface upstream failures as 502 (bad gateway) rather than 500
+        # so the frontend can distinguish "TMDB is unhappy" from "our
+        # server is broken" — different retry/UX semantics.
+        raise HTTPException(
+            status_code=502, detail=f"TMDB fetch failed: {exc}"
+        ) from exc
+    if tmdb_payload is None:
+        # 404 from TMDB: the movie was removed upstream. Treat the same
+        # as "not in our index" from the client's perspective.
+        raise HTTPException(status_code=404, detail="movie not found on TMDB")
+
+    # 4. Translate to the curated wire format.
+    details = _build_movie_details(tmdb_id, tmdb_payload, card_row)
+
+    # 5. Encode once, cache + return the same bytes so the warm-path
+    # response is byte-identical to the cold-path response. Cache-write
+    # failures must NOT lose the response we already built — log and
+    # continue.
+    encoded = _json_encoder.encode(details)
+    try:
+        await cache_movie_details(tmdb_id, encoded)
+    except Exception:
+        logger.warning(
+            "movie_details cache write failed for tmdb_id=%s", tmdb_id, exc_info=True
+        )
+    return Response(content=encoded, media_type="application/json")

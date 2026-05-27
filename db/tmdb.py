@@ -300,6 +300,120 @@ async def fetch_movie_details(
 
 
 # ---------------------------------------------------------------------------
+# fetch_movie_details_for_endpoint — API-facing detail fetch
+# ---------------------------------------------------------------------------
+
+
+# Appended sub-resources for the /movie_details API endpoint. Differs from
+# the ingestion-side fetch_movie_details() above: the API view needs videos
+# (for trailer URLs), images (for extra backdrops), and external_ids (for
+# the IMDb link), but does not need reviews. Keeping the two append sets
+# separate prevents one path's needs from inflating the other's payload.
+_API_DETAILS_APPEND = (
+    "credits,videos,images,external_ids,watch/providers,release_dates"
+)
+
+
+async def fetch_movie_details_for_endpoint(
+    client: httpx.AsyncClient,
+    rate_limiter: AdaptiveRateLimiter,
+    tmdb_id: int,
+    max_attempts: int = 3,
+) -> dict | None:
+    """Fetch the full TMDB detail payload backing the `/movie_details` API.
+
+    Same retry / 429 / cooldown semantics as `fetch_movie_details` — the
+    two functions diverge only in their `append_to_response` set. Returns
+    the parsed JSON dict on 200, ``None`` for 404 (movie removed on
+    TMDB), or raises ``TMDBFetchError`` after exhausting retries.
+
+    Args:
+        client:       Shared httpx async client carrying Bearer auth.
+        rate_limiter: Shared adaptive rate limiter; 429s back off globally.
+        tmdb_id:      TMDB movie ID to fetch.
+        max_attempts: Maximum transient-error retries before giving up.
+
+    Returns:
+        Parsed JSON dict on 200, ``None`` on 404.
+
+    Raises:
+        TMDBFetchError: After all retries exhausted or on non-retryable status.
+    """
+    url = f"{_TMDB_BASE_URL}/movie/{tmdb_id}"
+    params = {"append_to_response": _API_DETAILS_APPEND}
+
+    # Transient-error counter; 429s do NOT consume this budget — they
+    # signal the rate limiter and retry indefinitely under the global
+    # cooldown. See fetch_movie_details() for the same pattern.
+    transient_attempts = 0
+
+    while transient_attempts < max_attempts:
+        await rate_limiter.acquire()
+
+        try:
+            response = await client.get(url, params=params)
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            transient_attempts += 1
+            if transient_attempts >= max_attempts:
+                raise TMDBFetchError(
+                    f"Transport error for tmdb_id={tmdb_id} after "
+                    f"{max_attempts} attempts: {exc}"
+                ) from exc
+            await asyncio.sleep(_RETRY_BACKOFF_BASE * 2 ** (transient_attempts - 1))
+            continue
+
+        if response.status_code == 200:
+            return response.json()
+
+        if response.status_code == 404:
+            return None
+
+        if response.status_code == 429:
+            retry_after = float(response.headers.get("Retry-After", 2))
+            rate_limiter.report_429(retry_after)
+            continue
+
+        if response.status_code >= 500:
+            transient_attempts += 1
+            if transient_attempts >= max_attempts:
+                raise TMDBFetchError(
+                    f"Server error {response.status_code} for tmdb_id={tmdb_id} "
+                    f"after {max_attempts} attempts"
+                )
+            await asyncio.sleep(_RETRY_BACKOFF_BASE * 2 ** (transient_attempts - 1))
+            continue
+
+        raise TMDBFetchError(
+            f"Unexpected HTTP {response.status_code} for tmdb_id={tmdb_id}"
+        )
+
+    raise TMDBFetchError(
+        f"Exhausted {max_attempts} retries for tmdb_id={tmdb_id}"
+    )
+
+
+def build_api_tmdb_client() -> httpx.AsyncClient:
+    """Construct the shared httpx client used by the API service for TMDB.
+
+    Centralizes Bearer-auth header construction and timeout so the API
+    and ingestion paths can't drift on auth/timeout config. A single
+    instance lives on `app.state` for the lifetime of the process; do
+    NOT create per-request clients (TLS handshake cost dominates).
+    """
+    return httpx.AsyncClient(
+        headers={
+            "Authorization": f"Bearer {access_token()}",
+            "Accept": "application/json",
+        },
+        # Generous-but-bounded timeout: TMDB's p99 single-detail latency
+        # sits around 1–2s, so 10s covers slow paths without hanging the
+        # caller indefinitely. Connect timeout shorter because TLS to
+        # api.themoviedb.org should always be fast.
+        timeout=httpx.Timeout(10.0, connect=5.0),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Trending endpoint (pre-existing daily functionality)
 # ---------------------------------------------------------------------------
 

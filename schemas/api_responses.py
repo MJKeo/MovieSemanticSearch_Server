@@ -35,3 +35,93 @@ class MovieCard(msgspec.Struct, omit_defaults=True, frozen=True):
     release_date: str | None = None
     poster_url: str | None = None
     maturity_rating: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# /movie_details endpoint payload
+# ---------------------------------------------------------------------------
+#
+# The detail view is a curated projection of TMDB's /movie/{id} response
+# (with appended credits/videos/images/external_ids/watch-providers/release-dates)
+# merged with our locally-computed reception_score. The wire format is
+# deliberately narrower than TMDB's raw payload — the frontend only needs
+# a handful of fields, and a stable, typed contract keeps the API decoupled
+# from upstream schema drift.
+
+
+class CastMember(msgspec.Struct, omit_defaults=True, frozen=True):
+    """One entry in the top-billed cast list (TMDB credits.cast)."""
+
+    name: str
+    character: str | None = None
+    profile_url: str | None = None  # full https URL, not raw `profile_path`
+
+
+class CrewMember(msgspec.Struct, omit_defaults=True, frozen=True):
+    """One entry in a crew bucket (directors / writers / producers).
+
+    `job` carries the canonical TMDB job label so the same struct can
+    serve every crew bucket without proliferating types.
+    """
+
+    name: str
+    job: str
+    profile_url: str | None = None
+
+
+class WatchProvider(msgspec.Struct, omit_defaults=True, frozen=True):
+    """One US streaming/rental/purchase offering for the movie.
+
+    `access_type` is the bucket the provider was found in on TMDB's
+    watch/providers payload (`flatrate` for subscription, `buy`, `rent`).
+    """
+
+    provider_id: int
+    name: str
+    access_type: str
+    logo_url: str | None = None
+
+
+class MovieDetails(msgspec.Struct, omit_defaults=True, frozen=True):
+    """Full movie detail payload for the `/movie_details/{tmdb_id}` endpoint.
+
+    Combines TMDB's live data (overview, cast/crew, providers, trailer,
+    images) with our locally-computed `reception_score`. Every optional
+    field falls back to `None` / `[]` when TMDB omits it — the frontend
+    must tolerate sparse payloads.
+    """
+
+    tmdb_id: int
+    title: str | None = None
+    original_title: str | None = None
+    overview: str | None = None
+    tagline: str | None = None
+    release_date: str | None = None       # ISO YYYY-MM-DD
+    runtime_minutes: int | None = None
+    maturity_rating: str | None = None    # US certification ("PG-13", etc.)
+    genres: list[str] = []
+    spoken_languages: list[str] = []
+
+    # Media
+    poster_url: str | None = None
+    backdrop_url: str | None = None
+    trailer_url: str | None = None        # YouTube URL of primary trailer
+
+    # Ratings
+    reception_score: float | None = None  # 0–100, our custom score
+    tmdb_vote_average: float | None = None
+    tmdb_vote_count: int | None = None
+
+    # People (curated from credits)
+    directors: list[CrewMember] = []
+    writers: list[CrewMember] = []
+    producers: list[CrewMember] = []
+    cast: list[CastMember] = []           # top 12 by `order`
+
+    # Streaming availability (US region only)
+    watch_providers: list[WatchProvider] = []
+
+    # External links
+    tmdb_url: str = ""                    # always set
+    imdb_url: str | None = None
+    homepage: str | None = None
