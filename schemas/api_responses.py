@@ -106,6 +106,10 @@ class MovieDetails(msgspec.Struct, omit_defaults=True, frozen=True):
     poster_url: str | None = None
     backdrop_url: str | None = None
     trailer_url: str | None = None        # YouTube URL of primary trailer
+    # Up to 5 extra artwork URLs for a gallery. Backdrops first (ranked by
+    # TMDB vote_count), topped up with posters only if the movie has fewer
+    # than 5 backdrops on file.
+    additional_images: list[str] = []
 
     # Ratings
     reception_score: float | None = None  # 0–100, our custom score

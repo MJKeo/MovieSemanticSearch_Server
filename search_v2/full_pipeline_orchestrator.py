@@ -60,7 +60,7 @@ from schemas.media_type_translation import (
     MediaTypeQuerySpec,
 )
 from schemas.step_0_flow_routing import Step0Response
-from schemas.step_1 import Step1Response
+from schemas.step_1 import Step1ClarificationResponse, Step1Response
 from schemas.step_2 import QueryAnalysis, Trait
 from schemas.step_3 import CategoryCall
 from schemas.trait_category import CategoryName
@@ -223,7 +223,7 @@ class FullPipelineResult:
     query: str
     skipped_steps_0_1: bool
     step0_response: Step0Response | None
-    step1_response: Step1Response | None
+    step1_response: Step1Response | Step1ClarificationResponse | None
     step1_error: str | None
     exact_title_flow_executed: bool
     similarity_flow_executed: bool
@@ -332,8 +332,10 @@ def _non_standard_firing_count(step0: Step0Response) -> int:
 
 def _plan_step2_branches(
     step0: Step0Response,
-    step1: Step1Response | None,
+    step1: Step1Response | Step1ClarificationResponse | None,
     raw_query: str,
+    *,
+    clarification: str | None = None,
 ) -> list[tuple[BranchKind, str, str]]:
     if not step0.fire_standard_flow:
         return []
@@ -342,11 +344,30 @@ def _plan_step2_branches(
 
     branches: list[tuple[BranchKind, str, str]] = []
 
-    # Slot 1 — original-query branch always comes first when the
-    # standard flow fires. Step 1 no longer emits a label for the
-    # raw query (its output is just the two spins), so the static
-    # "Original Query" string is used in all cases.
-    branches.append(("original", raw_query, "Original Query"))
+    # Slot 1 — the "main" branch. Three shapes:
+    #   - Clarification mode, Step 1 succeeded: use the faithful merge
+    #     produced in step1.main_rewrite. UI shows what we're actually
+    #     searching.
+    #   - Clarification mode, Step 1 failed: Step 1's rewrite is
+    #     missing, but the user's correction signal must not be
+    #     silently dropped — searching the verbatim original would
+    #     return the same results that already missed the mark. Fall
+    #     back to a crude concatenation so Step 2 sees both inputs.
+    #   - No clarification (Step 1 succeeded or failed): no rewrite to
+    #     use, so slot 1 carries the raw user query in both fields.
+    if isinstance(step1, Step1ClarificationResponse):
+        branches.append(
+            (
+                "original",
+                step1.main_rewrite.query,
+                step1.main_rewrite.ui_label,
+            )
+        )
+    elif step1 is None and clarification:
+        merged = f"{raw_query}. {clarification}"
+        branches.append(("original", merged, merged))
+    else:
+        branches.append(("original", raw_query, raw_query))
 
     if step1 is None:
         return branches[:budget]
@@ -925,16 +946,24 @@ def _popularity_signal(
 async def run_full_pipeline(
     query: str,
     *,
+    clarification: str | None = None,
     skip_bypass_steps_0_1: bool = False,
 ) -> FullPipelineResult:
     """Run the full front-half query-understanding pipeline.
 
     Args:
         query: raw user query (non-empty after stripping).
+        clarification: optional follow-up correction the user supplied
+            to refine the original query. When present, threads into
+            Steps 0 and 1, which use clarification-mode prompts.
+            Step 1's clarification response carries a main_rewrite
+            (faithful merge of original + clarification) that replaces
+            the raw-query slot in the branch plan.
         skip_bypass_steps_0_1: when True, skip Steps 0 + 1 entirely
             and feed the raw query straight into Step 2 as a single
             "original" branch. Use for testing / replay flows that
-            already know they want the standard flow.
+            already know they want the standard flow. Ignores
+            `clarification` (bypass is a debug-only path).
 
     Returns:
         FullPipelineResult with per-branch results. Each trait carries
@@ -951,6 +980,8 @@ async def run_full_pipeline(
     if not query:
         raise ValueError("query must be a non-empty string.")
 
+    clarification = clarification.strip() if clarification else None
+
     total_start = time.perf_counter()
 
     if skip_bypass_steps_0_1:
@@ -958,7 +989,7 @@ async def run_full_pipeline(
         # "original" branch. No flow routing, no spin generation.
         # No fan-out needed for a single branch — skip gather's
         # task-scheduling overhead.
-        branch_list = [await _run_branch("original", query, "Original Query")]
+        branch_list = [await _run_branch("original", query, query)]
         # One branch → one auxiliary list. Same helper as the
         # multi-branch standard path uses, just trivially scalar.
         auxiliary_per_branch = [_compute_branch_auxiliary(branch_list[0])]
@@ -992,10 +1023,16 @@ async def run_full_pipeline(
     # full Step-1 wall-clock window off those queries without
     # affecting the cache-warm Step 1 path.
     step0_task = asyncio.create_task(
-        _call_with_retry(lambda: run_step_0(query), label="step_0")
+        _call_with_retry(
+            lambda: run_step_0(query, clarification=clarification),
+            label="step_0",
+        )
     )
     step1_task = asyncio.create_task(
-        _call_with_retry(lambda: run_step_1(query), label="step_1")
+        _call_with_retry(
+            lambda: run_step_1(query, clarification=clarification),
+            label="step_1",
+        )
     )
 
     try:
@@ -1010,7 +1047,7 @@ async def run_full_pipeline(
         raise
     step0_response = step0_result[0]
 
-    step1_response: Step1Response | None
+    step1_response: Step1Response | Step1ClarificationResponse | None
     step1_error: str | None
     if _step1_needed(step0_response):
         try:
@@ -1129,7 +1166,12 @@ async def run_full_pipeline(
 
     # Standard flow — plan branches per the budget rule and run them
     # in parallel with per-branch error isolation.
-    branch_plan = _plan_step2_branches(step0_response, step1_response, query)
+    branch_plan = _plan_step2_branches(
+        step0_response,
+        step1_response,
+        query,
+        clarification=clarification,
+    )
     branches: list[Step2BranchResult] = []
     if branch_plan:
         branches = await asyncio.gather(

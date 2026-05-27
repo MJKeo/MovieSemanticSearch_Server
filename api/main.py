@@ -233,6 +233,12 @@ class QuerySearchBody(BaseModel):
     """Request body for POST /query_search."""
 
     query: str = Field(min_length=1)
+    # Optional follow-up correction the user supplied after receiving
+    # a prior result set. When present and non-blank, Steps 0 and 1
+    # of the search pipeline switch to clarification-mode prompts and
+    # Step 1's main_rewrite replaces the verbatim raw query as the
+    # primary search branch.
+    clarification: Optional[str] = None
     filters: Optional[MetadataFiltersInput] = None
 
 
@@ -275,6 +281,19 @@ async def query_search(body: QuerySearchBody):
     if not query:
         raise HTTPException(status_code=400, detail="query must be non-empty.")
 
+    # Normalize clarification at the boundary: treat empty strings and
+    # whitespace-only input the same as omitted. This keeps the
+    # no-clarification fast path stable — the pipeline only switches to
+    # clarification-mode prompts when there is real correction text.
+    # Downstream layers (stream_full_pipeline, run_full_pipeline,
+    # run_step_0/1) re-normalize too; each is a separate public surface
+    # also reachable from CLI runners, so each defends its own contract.
+    clarification: Optional[str] = (
+        body.clarification.strip() if body.clarification else None
+    )
+    if not clarification:
+        clarification = None
+
     # Translate the wire mirror into the internal MetadataFilters
     # dataclass once, at the boundary. Raises 422 on any unknown enum
     # value (genre / language / streaming_service); collapses to None
@@ -291,7 +310,9 @@ async def query_search(body: QuerySearchBody):
         # on client disconnect; the orchestrator's `finally` block
         # cancels any in-flight tasks before unwinding.
         async for event_name, payload in stream_full_pipeline(
-            query, metadata_filters=metadata_filters,
+            query,
+            clarification=clarification,
+            metadata_filters=metadata_filters,
         ):
             body = _json_encoder.encode(payload).decode("utf-8")
             yield f"event: {event_name}\ndata: {body}\n\n"
@@ -367,6 +388,14 @@ _POSTER_SIZE = "w500"      # poster art (movie tile / detail header)
 _BACKDROP_SIZE = "w1280"   # hero banner — large but not full-res
 _PROFILE_SIZE = "w185"     # cast/crew headshots (small thumbnail)
 _LOGO_SIZE = "w92"         # provider logos (tiny icon)
+# Gallery artwork served alongside the hero. Backdrops and posters share
+# the w780 size — it's the largest size TMDB supports for both shapes,
+# so the frontend can render a unified grid without per-image size logic.
+_ADDITIONAL_IMAGE_SIZE = "w780"
+
+# Cap on the additional_images gallery. Five is enough for a strip below
+# the hero without bloating the cold-path response.
+_ADDITIONAL_IMAGES_LIMIT = 5
 
 # Cap the cast list at the top-billed N. TMDB returns the full crew which
 # can be hundreds of entries on big productions; the detail page only
@@ -528,6 +557,61 @@ def _extract_credits(
     return directors, writers, producers, cast
 
 
+def _extract_additional_images(
+    images: dict | None,
+    exclude_paths: set[str],
+) -> list[str]:
+    """Pick up to N gallery image URLs from the TMDB `images` sub-resource.
+
+    Strategy:
+      1. Sort backdrops by TMDB `vote_count` descending; take URLs in order,
+         skipping any whose `file_path` is already surfaced as the primary
+         poster/backdrop (passed in via `exclude_paths`) and any duplicates.
+      2. If we still have headroom (fewer than the cap), top up from posters
+         using the same sort + dedupe rule. Posters are only used as a
+         fallback so the gallery stays predominantly landscape backdrops.
+
+    Returns the deduped URL list, capped at `_ADDITIONAL_IMAGES_LIMIT`.
+    Returns an empty list when `images` is missing or both sub-lists are
+    empty.
+    """
+    if not images:
+        return []
+
+    # `seen` tracks file_paths already chosen (or excluded as primary media)
+    # so we never emit the same image twice even if TMDB lists it in both
+    # backdrops and posters (rare but possible for square-ish artwork).
+    seen: set[str] = set(exclude_paths)
+    picked: list[str] = []
+
+    def _take_from(bucket: list[dict] | None) -> None:
+        if not bucket:
+            return
+        # Sort by vote_count desc — TMDB's community-vetted popularity
+        # signal. Missing/None vote_count sorts to the bottom (treated as 0).
+        ranked = sorted(
+            bucket,
+            key=lambda entry: entry.get("vote_count") or 0,
+            reverse=True,
+        )
+        for entry in ranked:
+            if len(picked) >= _ADDITIONAL_IMAGES_LIMIT:
+                return
+            path = entry.get("file_path")
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            picked.append(f"{_TMDB_IMAGE_BASE}/{_ADDITIONAL_IMAGE_SIZE}{path}")
+
+    _take_from(images.get("backdrops"))
+    # Only consult posters if backdrops didn't fill the quota — keeps the
+    # gallery shape-consistent for movies with rich backdrop coverage.
+    if len(picked) < _ADDITIONAL_IMAGES_LIMIT:
+        _take_from(images.get("posters"))
+
+    return picked
+
+
 def _extract_us_watch_providers(watch_providers: dict | None) -> list[WatchProvider]:
     """Flatten the US region of TMDB's watch/providers payload.
 
@@ -587,6 +671,13 @@ def _build_movie_details(
     # so the frontend can rely on omit_defaults behaviour.
     homepage = payload.get("homepage") or None
 
+    # Build the dedupe set for additional_images using the *raw* TMDB paths
+    # (not the joined CDN URLs) so the comparison matches regardless of the
+    # size segment chosen for each surface.
+    primary_image_paths = {
+        p for p in (payload.get("poster_path"), payload.get("backdrop_path")) if p
+    }
+
     return MovieDetails(
         tmdb_id=tmdb_id,
         title=payload.get("title"),
@@ -608,6 +699,9 @@ def _build_movie_details(
         poster_url=_image_url(payload.get("poster_path"), _POSTER_SIZE),
         backdrop_url=_image_url(payload.get("backdrop_path"), _BACKDROP_SIZE),
         trailer_url=_extract_trailer_url(payload.get("videos")),
+        additional_images=_extract_additional_images(
+            payload.get("images"), primary_image_paths
+        ),
         reception_score=card_row.get("reception_score"),
         tmdb_vote_average=payload.get("vote_average"),
         tmdb_vote_count=payload.get("vote_count"),

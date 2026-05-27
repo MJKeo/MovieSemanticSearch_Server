@@ -91,7 +91,7 @@ from schemas.step_0_flow_routing import (
     Step0Response,
     StudioFlowData,
 )
-from schemas.step_1 import Step1Response
+from schemas.step_1 import Step1ClarificationResponse, Step1Response
 from schemas.step_2 import Trait
 
 from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec import (
@@ -229,12 +229,17 @@ class _FetchOutcome:
 async def stream_full_pipeline(
     query: str,
     *,
+    clarification: str | None = None,
     metadata_filters: MetadataFilters | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Run the full pipeline and yield `(event_name, payload)` tuples.
 
     Args:
         query: raw user query (non-empty after stripping).
+        clarification: optional follow-up correction from the user. When
+            present, Steps 0 and 1 switch to clarification-mode prompts;
+            Step 1's main_rewrite becomes the slot-1 branch the pipeline
+            searches (replacing the verbatim raw query).
         metadata_filters: Optional UI hard filters applied at every
             candidate-generation / reranker primitive. Threaded through
             standard Stage 4 branches and the entity-flow runners
@@ -255,6 +260,8 @@ async def stream_full_pipeline(
     if not query:
         raise ValueError("query must be a non-empty string.")
 
+    clarification = clarification.strip() if clarification else None
+
     t0 = time.perf_counter()
 
     # ------------------------------------------------------------------
@@ -265,10 +272,16 @@ async def stream_full_pipeline(
     # Step 0 failure is fatal — without routing nothing dispatches.
     # ------------------------------------------------------------------
     step0_task = asyncio.create_task(
-        _call_with_retry(lambda: run_step_0(query), label="step_0")
+        _call_with_retry(
+            lambda: run_step_0(query, clarification=clarification),
+            label="step_0",
+        )
     )
     step1_task = asyncio.create_task(
-        _call_with_retry(lambda: run_step_1(query), label="step_1")
+        _call_with_retry(
+            lambda: run_step_1(query, clarification=clarification),
+            label="step_1",
+        )
     )
 
     try:
@@ -285,7 +298,7 @@ async def stream_full_pipeline(
 
     step0_response: Step0Response = step0_result[0]
 
-    step1_response: Step1Response | None
+    step1_response: Step1Response | Step1ClarificationResponse | None
     if _step1_needed(step0_response):
         try:
             step1_result = await step1_task
@@ -305,7 +318,12 @@ async def stream_full_pipeline(
     # ------------------------------------------------------------------
     # Build the fetch list: standard branches + non-standard flows.
     # ------------------------------------------------------------------
-    branch_plan = _plan_step2_branches(step0_response, step1_response, query)
+    branch_plan = _plan_step2_branches(
+        step0_response,
+        step1_response,
+        query,
+        clarification=clarification,
+    )
 
     # Map the new mutually-exclusive entity-flow choice back onto the
     # executors that exist today. Every entity flow now has its own

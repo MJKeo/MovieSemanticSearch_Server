@@ -374,6 +374,92 @@ SYSTEM_PROMPT = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Clarification-mode prompt. Same body as SYSTEM_PROMPT — only the
+# task-and-outcome opening is replaced to teach the model that the
+# search intent is composed of an original query plus a follow-up
+# clarification. The rest of the prompt (zone structure, coverage,
+# resolution, qualifier, ambiguity, similarity, output-field guidance)
+# applies identically once the merged intent is in hand.
+# ---------------------------------------------------------------------------
+
+_CLARIFICATION_TASK_AND_OUTCOME = """\
+You route a movie search query into one of seven entity-flow \
+outcomes and decide whether the standard (descriptor-based) flow \
+should co-fire. The user has supplied TWO inputs: an original query \
+and a follow-up clarification correcting or refining it. Treat the \
+two together as a single search intent.
+- The clarification is authoritative on any conflict with the \
+  original — when they disagree, the clarification wins.
+- The original is preserved where the clarification is silent — the \
+  user has not retracted material the clarification does not touch.
+- When the clarification retracts part of the original, drop that \
+  material from the search intent before routing.
+- A clarification can shift the flow entirely. If the original \
+  pointed at an entity flow but the clarification turns the search \
+  into an attribute-shaped ask (or vice versa), re-evaluate the flow \
+  from the merged intent — do not anchor on what the original alone \
+  would have routed to.
+
+The entity-flow outcomes are mutually exclusive — pick exactly one:
+
+- specific_title — the merged intent, as expressed, IS the name of \
+  one specific film
+- similarity_to_titles — the merged intent is an explicit similarity \
+  frame pointing at one or more reference films
+- character_franchise — the merged intent, as expressed, IS the name \
+  of a character whose identity persists across multiple films
+- non_character_franchise — the merged intent, as expressed, IS the \
+  name of a series, property, or IP umbrella
+- studio — the merged intent, as expressed, IS the name of one or \
+  more film studios / production companies
+- person — the merged intent, as expressed, IS the name of one or \
+  more real humans credited in films in any filmmaking role: actor, \
+  director, writer, producer, or composer. No preferred role.
+- none_of_the_above — the merged intent does not cleanly resolve to \
+  any of the above
+
+Your job is:
+- observe every entity-shaped span across both inputs and classify \
+  each by kind
+- observe every non-entity descriptor phrase across both inputs as a \
+  qualifier
+- merge the two inputs into a single search intent per the \
+  authoritative-clarification rule above
+- pick the single mutually-exclusive entity flow the merged intent \
+  belongs to (or none_of_the_above)
+- reason about whether the chosen entity reading has a genuinely \
+  defensible non-entity primary reading of comparable likelihood, \
+  and set the standard-co-fire boolean accordingly
+
+Your job is NOT:
+- to rewrite or paraphrase either input into a single combined \
+  string
+- to enrich the merged intent with proxy traits, quality signals, \
+  or inferred narrowings the user did not state
+- to invent titles, characters, franchises, studios, or people \
+  from descriptions — only recognize entities the inputs are \
+  already pointing to
+- to decide whether the standard flow fires when no entity was \
+  chosen — that case is handled in code
+
+---
+
+"""
+
+
+CLARIFICATION_SYSTEM_PROMPT = (
+    _CLARIFICATION_TASK_AND_OUTCOME
+    + _ZONE_STRUCTURE
+    + _COVERAGE_PRINCIPLE
+    + _RESOLUTION_PRINCIPLE
+    + _QUALIFIER_RULE
+    + _AMBIGUITY_PRINCIPLE
+    + _SIMILARITY_FRAME_RULE
+    + _OUTPUT_FIELD_GUIDANCE
+)
+
+
 # Step 0 is pinned to Gemini 3.5 Flash with minimal thinking
 # (`thinking_level="minimal"` — the lowest non-disabled level, below
 # "low") and a very low temperature. Flow routing runs on every
@@ -389,7 +475,10 @@ _STEP_0_KWARGS: dict = {
 }
 
 
-async def run_step_0(query: str) -> tuple[Step0Response, int, int]:
+async def run_step_0(
+    query: str,
+    clarification: str | None = None,
+) -> tuple[Step0Response, int, int]:
     """Route a raw user query into search flows via LLM structured output.
 
     Provider, model, and provider-specific kwargs are fixed at the
@@ -398,6 +487,13 @@ async def run_step_0(query: str) -> tuple[Step0Response, int, int]:
 
     Args:
         query: the raw user search query (non-empty after stripping).
+        clarification: optional follow-up clarification text the user
+            supplied to correct or refine the original query. When
+            present, swaps in the clarification-mode system prompt and
+            passes both inputs as separate labeled fields so the model
+            can resolve precedence deterministically (clarification
+            wins on conflict). When None, behavior is identical to the
+            no-clarification path.
 
     Returns:
         A tuple of (Step0Response, input_tokens, output_tokens).
@@ -406,12 +502,24 @@ async def run_step_0(query: str) -> tuple[Step0Response, int, int]:
     if not query:
         raise ValueError("query must be a non-empty string.")
 
-    user_prompt = f"Query: {query}"
+    clarification = clarification.strip() if clarification else None
+
+    if clarification:
+        # Two labeled fields, not concatenated — the system prompt
+        # teaches the model how to resolve precedence between them.
+        user_prompt = (
+            f"Original query: {query}\n"
+            f"Clarification: {clarification}"
+        )
+        system_prompt = CLARIFICATION_SYSTEM_PROMPT
+    else:
+        user_prompt = f"Query: {query}"
+        system_prompt = SYSTEM_PROMPT
 
     response, input_tokens, output_tokens = await generate_llm_response_async(
         provider=_STEP_0_PROVIDER,
         user_prompt=user_prompt,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         response_format=Step0Response,
         model=_STEP_0_MODEL,
         **_STEP_0_KWARGS,

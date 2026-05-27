@@ -78,3 +78,44 @@ class Step1Response(BaseModel):
         min_length=2,
         max_length=2,
     )
+
+
+# Structured output for the step-1 clarification-mode call. Fires
+# only when the user has supplied a follow-up clarification on top
+# of their original query. Adds a main_rewrite slot above the spins:
+# main_rewrite is a faithful merge of original + clarification that
+# replaces the verbatim-original slot in the branch plan; spins keep
+# their creative role but now explore around the rewritten intent.
+class Step1ClarificationResponse(BaseModel):
+    exploration: str = Field(
+        ...,
+        description=(
+            "Reasoning scratchpad. First read how the clarification "
+            "reshapes the original — what it adds, retracts, or "
+            "polarity-flips — then sketch the rewritten intent in "
+            "plain words, then surface adjacent searches the same "
+            "viewer might also want. 2-3 compact telegraphic "
+            "sentences."
+        ),
+    )
+    main_rewrite: Spin = Field(
+        ...,
+        description=(
+            "The merged search representing the user's most likely "
+            "intent given the original query plus the follow-up "
+            "clarification, expressed as a natural-language search "
+            "the user could have typed themselves."
+        ),
+    )
+    spins: List[Spin] = Field(
+        ...,
+        description=(
+            "Exactly two creative alternative searches that explore "
+            "adjacent territory the rewritten intent (NOT the raw "
+            "original) would otherwise miss. Each spin's result set "
+            "must be visibly different from main_rewrite and from "
+            "the sibling spin."
+        ),
+        min_length=2,
+        max_length=2,
+    )

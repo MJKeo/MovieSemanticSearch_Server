@@ -39,7 +39,7 @@ from implementation.llms.generic_methods import (
     LLMProvider,
     generate_llm_response_async,
 )
-from schemas.step_1 import Step1Response
+from schemas.step_1 import Step1ClarificationResponse, Step1Response
 
 
 # ===============================================================
@@ -197,6 +197,177 @@ SYSTEM_PROMPT = _TASK_AND_OUTCOME + _HOW_TO_THINK + _OUTPUT_GUIDANCE
 
 
 # ===============================================================
+#               Clarification-mode system prompt
+# ===============================================================
+#
+# Fires only when the user supplied a follow-up clarification on
+# top of the original query. The step now emits THREE things:
+#   1. main_rewrite — a faithful merge of original + clarification
+#      that replaces the verbatim-original slot in the branch plan.
+#   2 & 3. two creative spins exploring around the rewritten intent.
+#
+# The principles that govern main_rewrite are different from the
+# principles that govern spins: main must be a faithful translation
+# (no hallucinated details, no abstractions, no attempts to resolve
+# descriptions into specific titles), while spins keep their
+# divergence discipline but operate over the rewritten intent rather
+# than the raw original. Both responsibilities are taught here so a
+# single LLM call can hold both stances at once.
+
+
+_CLARIFICATION_TASK_AND_OUTCOME = """\
+You are the query-refinement step in a movie search pipeline. The \
+user just received search results, found them off the mark, and \
+supplied a follow-up clarification correcting or refining their \
+original query. Your job is to emit THREE things:
+
+1. main_rewrite — the merged search representing the user's most \
+   likely intent given the original query plus the clarification. \
+   This becomes the primary branch the pipeline searches.
+2-3. two creative spins exploring adjacent territory the rewritten \
+   intent would otherwise miss. The spins broaden browsing the same \
+   way they would for a fresh query — only the source intent has \
+   shifted from the raw original to the rewritten merge.
+
+main_rewrite is faithful; the spins take creative liberties. These \
+are different stances and must not bleed into each other. Refine \
+main_rewrite to capture exactly what the user asked for; refine \
+spins to surface what a same-taste viewer might ALSO want to see \
+that the rewritten search would not return.
+
+---
+
+"""
+
+
+_CLARIFICATION_HOW_TO_THINK = """\
+HOW TO THINK ABOUT main_rewrite
+
+main_rewrite is a faithful translation of (original + clarification) \
+into one natural-language search the user could have typed if they \
+had known what to ask for the first time. The discipline:
+
+- Treat the clarification as authoritative on any conflict with the \
+  original. Where they disagree, the clarification wins.
+- Preserve everything in the original the clarification is silent \
+  about. Silence is not retraction; only explicit contradiction or \
+  replacement counts as retraction, and retracted material must be \
+  dropped from the rewrite.
+- When the clarification flips polarity on something present in the \
+  original, carry the flipped direction into the rewrite — do not \
+  drop the underlying anchor, invert its sign.
+- Stay inside the user's vocabulary. If they described an experience \
+  in concrete terms, keep concrete terms. Do not abstract specifics \
+  into broader categories, and do not narrow general descriptors \
+  into specific genres or labels they did not state.
+- Do not add facts, entities, qualifiers, or details that are not \
+  directly present in one of the two inputs. The rewrite is a merge, \
+  not an enrichment.
+- Do not try to ANSWER the search by naming specific film titles. If \
+  the user described a film through plot fragments, characters, or \
+  era cues, leave those descriptions in the rewrite for the database \
+  to resolve. Replacing descriptive phrasing with a specific title \
+  is the most damaging failure mode — it destroys the user's intent \
+  by collapsing a search into a guess.
+- Match the length to (original + clarification) combined. A faithful \
+  merge is not a paragraph; it is the smallest natural phrasing that \
+  carries both inputs' signal.
+
+ui_label for main_rewrite is a short Title Case label following the \
+same style as spin ui_labels — pithy, scannable. The UI surfaces the \
+full rewrite separately, so the label does not need to convey the \
+full content.
+
+---
+
+HOW TO THINK ABOUT spins (clarification mode)
+
+Spins behave the same way they do without a clarification, with one \
+shift: their source intent is the rewritten merge, NOT the raw \
+original. The original is already retracted/refined by the \
+clarification, so spinning off the original would surface results \
+the user just told you to move away from.
+
+Reasoning happens in three steps. Each step informs the next.
+
+Step 1 — read the (rewritten) user. Work out what kind of viewer is \
+making this rewritten ask. Ground the read in cues from the rewrite: \
+its vocabulary, anchors, level of specificity, what is left implicit.
+
+Step 2 — find adjacent territory around the rewrite. Given who this \
+viewer is and what the rewrite is asking for, what OTHER searches \
+would they likely also enjoy seeing results for? Apply the same \
+vague-vs-specific logic as the no-clarification flow: vague rewrites \
+get spins that commit to concrete readings the rewrite left open; \
+specific rewrites get from-scratch siblings built from the underlying \
+taste, not textual edits of the rewrite.
+
+Step 3 — pressure-test redundancy. Each spin's result set must be \
+visibly different from main_rewrite and from the sibling spin. If \
+two would surface largely the same titles, only one is doing useful \
+work.
+
+Avoid:
+- Spins that paraphrase main_rewrite or carry the same anchors. They \
+  collapse onto the same result set and waste branches.
+- Spins that re-introduce material the clarification retracted. The \
+  user said move away from that; do not bring it back through a spin.
+- Naming specific movie or show titles inside a spin query. Brand, \
+  studio, director, and actor names are allowed only when the spin \
+  pivots on such an entity as a NEW load-bearing center the merged \
+  intent did not already name.
+- Evaluative quality language in spin queries or labels (prestige, \
+  popularity, judgment words). They leak opinion into the search, \
+  carry no retrieval signal, and collapse the spin onto a "good \
+  movies in this space" filter.
+
+---
+
+"""
+
+
+_CLARIFICATION_OUTPUT_GUIDANCE = """\
+OUTPUT
+
+Emit fields in order: exploration, then main_rewrite, then the two \
+spins.
+
+exploration — 2-3 compact telegraphic sentences that (a) read how \
+the clarification reshapes the original (additions, retractions, \
+polarity flips), (b) sketch the rewritten intent in plain words, \
+(c) surface candidate adjacent angles for spins. Do not write a \
+labeled preview of the spins; surface multiple candidate angles \
+openly and weigh which would genuinely diverge from the rewrite.
+
+main_rewrite — the faithful merge, with:
+- query: full natural-language search phrase the user could have \
+  typed themselves, applying the main_rewrite discipline above.
+- ui_label: short Title Case label, spin-style.
+
+spins — exactly two committed alternatives, each refining one of the \
+candidate angles surfaced in exploration. Refine, do not copy. The \
+spin's content must trace back to a candidate from exploration. \
+Compare the second spin's query against the first's — if they would \
+return substantially the same result set, refine from a different \
+exploration candidate instead.
+
+For each spin:
+- query: full natural-language search phrase, the kind of thing the \
+  user could have typed themselves. Natural enough that step 2 can \
+  read and decompose it.
+- ui_label: short Title Case label that captures the spin's angle at \
+  a glance.
+"""
+
+
+CLARIFICATION_SYSTEM_PROMPT = (
+    _CLARIFICATION_TASK_AND_OUTCOME
+    + _CLARIFICATION_HOW_TO_THINK
+    + _CLARIFICATION_OUTPUT_GUIDANCE
+)
+
+
+# ===============================================================
 #                      Executor
 # ===============================================================
 #
@@ -216,30 +387,57 @@ _MODEL_KWARGS: dict = {
 }
 
 
-async def run_step_1(query: str) -> tuple[Step1Response, int, int, float]:
+async def run_step_1(
+    query: str,
+    clarification: str | None = None,
+) -> tuple[Step1Response | Step1ClarificationResponse, int, int, float]:
     """Run the step-1 spin-generation LLM on a single query.
 
     Args:
         query: the raw user query.
+        clarification: optional follow-up clarification text. When
+            present, swaps in the clarification-mode prompt and schema:
+            the response carries a main_rewrite slot (faithful merge of
+            original + clarification) alongside the two creative spins.
+            When None, behavior is identical to the no-clarification
+            path and the response is a Step1Response.
 
     Returns:
         (response, input_tokens, output_tokens, elapsed_seconds) —
         elapsed measures wall-clock time spent inside the LLM call
-        only, not prompt setup.
+        only, not prompt setup. The response type discriminates on
+        clarification presence.
     """
     query = query.strip()
     if not query:
         raise ValueError("query must be a non-empty string.")
 
-    user_prompt = f"Query: {query}"
+    clarification = clarification.strip() if clarification else None
+
+    if clarification:
+        # Two labeled fields keep precedence resolution deterministic —
+        # the prompt teaches "clarification wins on conflict" and the
+        # model has to know which is which to apply that.
+        user_prompt = (
+            f"Original query: {query}\n"
+            f"Clarification: {clarification}"
+        )
+        system_prompt = CLARIFICATION_SYSTEM_PROMPT
+        response_format: type[Step1Response] | type[Step1ClarificationResponse] = (
+            Step1ClarificationResponse
+        )
+    else:
+        user_prompt = f"Query: {query}"
+        system_prompt = SYSTEM_PROMPT
+        response_format = Step1Response
 
     # perf_counter: monotonic, high-res wall-clock for short intervals.
     start = time.perf_counter()
     response, input_tokens, output_tokens = await generate_llm_response_async(
         provider=_PROVIDER,
         user_prompt=user_prompt,
-        system_prompt=SYSTEM_PROMPT,
-        response_format=Step1Response,
+        system_prompt=system_prompt,
+        response_format=response_format,
         model=_MODEL,
         **_MODEL_KWARGS,
     )
