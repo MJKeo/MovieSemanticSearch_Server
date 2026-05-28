@@ -103,9 +103,9 @@ the entity alone does not constrain, expresses a preference about \
 ranking or quality, attaches a comparison or condition the entity \
 flow cannot honor, or otherwise shifts the semantics of what counts \
 as a match. The surface form (genre, mood, era, runtime, streaming, \
-rating, plot or concept phrase, non-installment cast or director \
-reference, etc.) is secondary — the test is whether removing the \
-token would change what the search should return.
+rating, plot or concept phrase, cast or director reference, etc.) is \
+secondary — the test is whether removing the token would change what \
+the search should return.
 
 Phrases that do NOT change meaning, and therefore must be excluded, \
 include politeness, speech-act framing, conversational filler and \
@@ -116,10 +116,12 @@ These tokens are present in the query but do not shift what the \
 search should return relative to a bare-entity lookup.
 
 Similarity-frame phrasing is also excluded — it is captured \
-structurally by the entity-flow choice. Cast / director / year \
-markers that exist specifically to disambiguate a film installment \
-are excluded as well — they belong to the corresponding candidate's \
-canonical_name or release_year_if_stated.
+structurally by the entity-flow choice. An explicit release year \
+stated next to a title is excluded as well — it belongs to the \
+corresponding candidate's release_year_if_stated. Cast and director \
+references are always qualifiers, including when they appear to be \
+disambiguating which installment of a same-title set the user means \
+— the schema has no slot to carry them into the entity flows.
 
 A non-empty list forces selected_entity_flow to none_of_the_above. \
 That invariant is the reason this list must contain only phrases \
@@ -145,15 +147,19 @@ Pick which kind of entity this span names. The kind drives the global \
 routing decision, so commit deliberately.
 
 specific_title — the typed span, after normalizing whitespace, equals \
-the canonical title of exactly one movie record. Disqualified when: \
-(a) the closest match requires adding or dropping descriptor words \
-such as the plural "movies" or "films" (those plural markers signal a \
-descriptor query, not a title); (b) multiple distinct films share the \
-same canonical title string and resolution requires picking one of \
-them; (c) the typed span only matches a film's title under partial-word \
-or nickname-style overlap; (d) you would need to consult your own \
-knowledge of franchise installments to decide which canonical record \
-applies.
+the canonical title of one or more real movie records. Resolve \
+canonical_name to the most common canonical form of the title — the \
+downstream exact-title search returns every film sharing that title, \
+plus remakes and lineage entries, so you do NOT need to pick a single \
+installment when several films share the same title. A stated year \
+sharpens intent toward that installment but is not required. \
+Disqualified when: (a) the closest match requires adding or dropping \
+descriptor words such as the plural "movies" or "films" (those plural \
+markers signal a descriptor query, not a title); (b) the typed span \
+only matches a film's title under partial-word or nickname-style \
+overlap; (c) the typed span doesn't actually correspond to any real \
+canonical title and you would be guessing which film the user means \
+from context.
 
 character_franchise — the typed span names a fictional protagonist \
 whose identity persists across multiple films, where the franchise is \

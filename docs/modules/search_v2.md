@@ -684,8 +684,16 @@ through every V2 pipeline primitive at retrieval time:
 
 - **Applied at primitive, not pre-resolved IDs.** Each Postgres and Qdrant
   primitive folds conditions into its own WHERE / payload-Filter.
-- **Similarity branch excluded by design.** Anchor-based searches are not
-  filter-relevant; the orchestrator marks this branch with a comment.
+- **Similarity branch threaded with filters.** Both `run_similarity_search`
+  (Step-0 `similarity_to_titles`) and the standalone
+  `run_similar_movies_for_ids` (backing `/similarity_search`) accept a
+  `metadata_filters` arg that flows into every candidate-generation lane
+  (Postgres director / franchise / studio / source / quality / themes /
+  rare-medium) and into the Qdrant shape search via `build_qdrant_filter`.
+  When the filter is active the shape lane's `qdrant_limit` and the
+  quality lane's `LIMIT` are both 2×'d so the post-filter pool stays
+  usefully sized (filtered HNSW returns fewer points per traversal step,
+  and the quality LIMIT is applied before the filter on the SQL side).
 - **Shorts subtraction not filtered.** Shorts are a blocklist; applying the
   filter to them would let out-of-range shorts survive as candidates.
 - **Semantic elbow calibration unfiltered, candidate pool filtered.**

@@ -2395,8 +2395,18 @@ async def fetch_director_movie_terms(
     term_ids: set[int],
     *,
     restrict_movie_ids: set[int] | None = None,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> dict[int, set[int]]:
-    """Fetch movies and matching director term IDs for a director-term set."""
+    """Fetch movies and matching director term IDs for a director-term set.
+
+    Args:
+        term_ids: Director term IDs to look up against the postings table.
+        restrict_movie_ids: Optional candidate-pool restriction.
+        metadata_filters: Optional user hard filters. Translated into an
+            inline ``AND movie_id IN (SELECT ... FROM movie_card WHERE ...)``
+            subquery — the FROM is the lex.inv_director_postings posting
+            table, so a self-IN against movie_card is the right shape.
+    """
     if not term_ids:
         return {}
 
@@ -2408,10 +2418,13 @@ async def fetch_director_movie_terms(
         restrict_clause = " AND movie_id = ANY(%s::bigint[])"
         params.append(list(restrict_movie_ids))
 
+    filter_clause, filter_params = _build_inline_movie_card_filter_clause(metadata_filters)
+    params.extend(filter_params)
+
     query = f"""
         SELECT movie_id, term_id
         FROM lex.inv_director_postings
-        WHERE term_id = ANY(%s::bigint[]){restrict_clause}
+        WHERE term_id = ANY(%s::bigint[]){restrict_clause}{filter_clause}
     """
     rows = await _execute_read(query, params)
     out: dict[int, set[int]] = {}
@@ -2438,17 +2451,27 @@ async def fetch_production_company_ids_by_normalized_strings(
 
 async def fetch_similarity_source_candidates(
     source_material_type_ids: set[int],
+    *,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
-    """Movie IDs whose source-material type array overlaps the input set."""
+    """Movie IDs whose source-material type array overlaps the input set.
+
+    Args:
+        source_material_type_ids: Source-material type IDs to overlap.
+        metadata_filters: Optional user hard filters. AND-folded into the
+            same WHERE clause (FROM is already movie_card, so no self-IN
+            subquery is needed).
+    """
     if not source_material_type_ids:
         return set()
 
-    query = """
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    query = f"""
         SELECT movie_id
         FROM public.movie_card
-        WHERE source_material_type_ids && %s::int[]
+        WHERE source_material_type_ids && %s::int[]{filter_clause}
     """
-    rows = await _execute_read(query, (list(source_material_type_ids),))
+    rows = await _execute_read(query, (list(source_material_type_ids), *filter_params))
     return {row[0] for row in rows}
 
 
@@ -2457,8 +2480,17 @@ async def fetch_similarity_franchise_candidates(
     lineage_entry_ids: set[int],
     shared_universe_entry_ids: set[int],
     subgroup_entry_ids: set[int],
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
-    """Movie IDs overlapping any supplied franchise lineage/universe signal."""
+    """Movie IDs overlapping any supplied franchise lineage/universe signal.
+
+    Args:
+        lineage_entry_ids: Franchise lineage entry IDs to overlap.
+        shared_universe_entry_ids: Shared-universe entry IDs to overlap.
+        subgroup_entry_ids: Subgroup entry IDs to overlap.
+        metadata_filters: Optional user hard filters. AND-folded into the
+            same WHERE clause (FROM is movie_card, so no self-IN needed).
+    """
     clauses: list[str] = []
     params: list = []
     if lineage_entry_ids:
@@ -2483,7 +2515,9 @@ async def fetch_similarity_franchise_candidates(
         return set()
 
     where_clause = " OR ".join(f"({clause})" for clause in clauses)
-    query = f"SELECT movie_id FROM public.movie_card WHERE {where_clause}"
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+    params.extend(filter_params)
+    query = f"SELECT movie_id FROM public.movie_card WHERE ({where_clause}){filter_clause}"
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}
 
@@ -2492,46 +2526,58 @@ async def fetch_similarity_quality_candidates(
     *,
     bucket: str,
     limit: int,
+    metadata_filters: Optional[MetadataFilters] = None,
 ) -> set[int]:
     """Fetch an independent quality/reception candidate lane.
 
     ``bucket`` accepts ``"cult_garbage"`` or ``"prestige"``. Middle-bucket
     anchors do not use the quality lane in the similar-movies flow.
+
+    ``metadata_filters`` (when active) constrains the lane to movies that
+    additionally pass the user's hard filters; conditions are AND-folded
+    into each bucket's WHERE because the FROM is already movie_card.
     """
     if bucket not in {"cult_garbage", "prestige"}:
         raise ValueError(f"unsupported similarity quality bucket: {bucket!r}")
 
+    # Same conditions for both buckets — column names are unqualified in
+    # the helper but each query aliases movie_card as `mc`. The conditions
+    # reference base column names (release_ts, runtime_minutes, genre_ids,
+    # etc.) which resolve unambiguously against `mc` since no joined
+    # table shares those names.
+    filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
+
     if bucket == "cult_garbage":
-        query = """
+        query = f"""
             SELECT mc.movie_id
             FROM public.movie_card mc
             JOIN public.mv_popularity_percentile mvp
               ON mvp.movie_id = mc.movie_id
             WHERE mc.reception_score <= 50
-              AND mvp.percentile >= 0.75
+              AND mvp.percentile >= 0.75{filter_clause}
             ORDER BY
               (0.5 * LEAST(1.0, GREATEST(0.0, (50 - mc.reception_score) / 30.0))
                + 0.5 * LEAST(1.0, GREATEST(0.0, (mvp.percentile - 0.75) / 0.20))) DESC,
               mc.movie_id ASC
             LIMIT %s
         """
-        rows = await _execute_read(query, (limit,))
+        rows = await _execute_read(query, (*filter_params, limit))
         return {row[0] for row in rows}
 
     non_razzie_ids = [
         c.ceremony_id for c in AwardCeremony if c is not AwardCeremony.RAZZIE
     ]
-    query = """
+    query = f"""
         SELECT mc.movie_id
         FROM public.movie_card mc
         LEFT JOIN public.mv_popularity_percentile mvp
           ON mvp.movie_id = mc.movie_id
-        WHERE mc.reception_score >= 75
+        WHERE (mc.reception_score >= 75
            OR EXISTS (
                 SELECT 1
                 FROM unnest(mc.award_ceremony_win_ids) AS win_id
                 WHERE win_id = ANY(%s::smallint[])
-           )
+           )){filter_clause}
         ORDER BY
           (0.75 * LEAST(1.0, GREATEST(0.0, (COALESCE(mc.reception_score, 0) - 75) / 20.0))
            + 0.25 * GREATEST(
@@ -2548,7 +2594,7 @@ async def fetch_similarity_quality_candidates(
           mc.movie_id ASC
         LIMIT %s
     """
-    rows = await _execute_read(query, (non_razzie_ids, non_razzie_ids, limit))
+    rows = await _execute_read(query, (non_razzie_ids, *filter_params, non_razzie_ids, limit))
     return {row[0] for row in rows}
 
 
@@ -3534,11 +3580,16 @@ async def fetch_title_search_movie_ids(
     WHERE clause (so the trigram GIN index can do the work), and the
     CASE in the SELECT just classifies the row. Results are ranked by:
       tier ASC,
+      char_length(title_normalized) ASC,
       0.8 * popularity_score + 0.2 * reception_score/100 DESC,
       movie_id DESC.
-    This guarantees Tier 1 results always rank above Tier 2 regardless
-    of popularity, then within-tier we use the same 80/20 neutral prior
-    /attribute_search uses, with `movie_id DESC` as a stable tie-break.
+    Tier 1 always ranks above Tier 2 regardless of popularity. Inside a
+    tier, the shorter title wins — "John Wick" beats "John Wick: Chapter
+    2" for query "john wi" because the shorter title carries less
+    material beyond the query. Length ties fall through to the same
+    80/20 neutral prior `/attribute_search` uses (so the three "King
+    Kong" remakes, all length 9, order by popularity), with `movie_id
+    DESC` as a final stable tie-break.
 
     Args:
         starts_with_pattern: LIKE pattern matching titles whose first
@@ -3553,14 +3604,19 @@ async def fetch_title_search_movie_ids(
 
     Returns:
         Ordered list of ``movie_id``s — tier 1 first (token-prefix
-        matches), then tier 2 (substring-only), with the neutral 80/20
-        popularity-reception prior breaking ties inside each tier.
+        matches), then tier 2 (substring-only). Inside each tier,
+        shorter normalized titles rank above longer ones; the neutral
+        80/20 popularity-reception prior breaks length ties.
     """
-    # Single statement: tier classification in the SELECT, tier-aware
-    # ordering in the ORDER BY, and a tight LIMIT so the planner can
-    # short-circuit. Both popularity and reception are normalized
-    # defensively (popularity is already [0, 1]; reception is on the
-    # 0-100 scale and divides through, matching fetch_neutral_reranker_seed_ids).
+    # Single statement: tier classification in the SELECT, tier+length+
+    # popularity ordering in the ORDER BY, and a tight LIMIT so the
+    # planner can short-circuit. Length is measured against
+    # `title_normalized` (not the display `title`) so the metric stays
+    # symmetric with the matched column — punctuation collapsed to
+    # spaces by normalize_string doesn't artificially inflate length.
+    # Popularity/reception are normalized defensively (popularity is
+    # already [0, 1]; reception is on the 0-100 scale and divides
+    # through, matching fetch_neutral_reranker_seed_ids).
     query = """
         SELECT movie_id
         FROM public.movie_card
@@ -3570,6 +3626,7 @@ async def fetch_title_search_movie_ids(
                 WHEN title_normalized LIKE %s OR title_normalized LIKE %s THEN 1
                 ELSE 2
             END ASC,
+            char_length(title_normalized) ASC,
             (
                 %s * COALESCE(
                     LEAST(1.0, GREATEST(0.0, popularity_score)),

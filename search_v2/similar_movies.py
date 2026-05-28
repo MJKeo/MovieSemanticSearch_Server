@@ -40,11 +40,12 @@ from db.postgres import (
 )
 from search_v2.auteur_directors import fetch_auteur_term_ids
 from db.qdrant import qdrant_client
-from qdrant_client.http.models import QueryRequest
+from qdrant_client.http.models import Filter, QueryRequest
 from db.vector_scoring import normalize_blended_scores
-from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS
+from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS, build_qdrant_filter
 from implementation.classes.enums import VectorName
 from implementation.classes.overall_keywords import OverallKeyword
+from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
 from schemas.enums import AwardCeremony
@@ -1328,6 +1329,8 @@ async def _load_anchor_vectors(
 
 async def _query_spaces_batch(
     requests: list[tuple[VectorName, list[float], int]],
+    *,
+    qdrant_filter: Filter | None = None,
 ) -> list[list[tuple[int, float]]]:
     """Run N named-vector queries against Qdrant in a single round trip.
 
@@ -1337,6 +1340,11 @@ async def _query_spaces_batch(
     ``asyncio.gather(*_query_space)`` shape) into one network call —
     Qdrant runs the searches in parallel server-side and shares the
     HNSW page cache across them.
+
+    ``qdrant_filter`` (when not None) is applied to every per-space
+    QueryRequest in the batch so all spaces honor the same payload
+    filter — typically the user's hard filters translated via
+    ``build_qdrant_filter``. None is a no-op (no filter applied).
 
     Empty input returns ``[]`` so callers can short-circuit when no
     vector spaces are active without a special case here.
@@ -1348,6 +1356,7 @@ async def _query_spaces_batch(
             query=query_vector,
             using=vector_name.value,
             limit=limit,
+            filter=qdrant_filter,
             with_payload=False,
             with_vector=False,
             params=QDRANT_SEARCH_PARAMS,
@@ -1384,6 +1393,7 @@ async def _run_single_anchor_shape_search(
     anchor_vectors: dict[VectorName, list[float]],
     *,
     qdrant_limit: int,
+    metadata_filters: MetadataFilters | None = None,
 ) -> tuple[dict[int, float], dict[str, float]]:
     active_spaces = {
         space: VECTOR_BASE_WEIGHTS_SINGLE[space]
@@ -1394,14 +1404,28 @@ async def _run_single_anchor_shape_search(
     if not space_weights:
         return {}, {}
 
+    # Translate the user's hard filters into a Qdrant payload filter once;
+    # the same Filter object is reused across every space in the batch.
+    # `build_qdrant_filter` returns None when filters are inactive, which
+    # is exactly the no-op signal `_query_spaces_batch` expects.
+    qdrant_filter = build_qdrant_filter(metadata_filters) if metadata_filters else None
+
+    # Over-fetch when filters are active: HNSW + payload filter satisfies
+    # fewer points per traversal step, and the post-filter pool feeds
+    # downstream lanes by union, so a thin shape pool weakens shape's
+    # contribution to weaving. The multiplier matches the over-fetch
+    # discipline elsewhere in the V2 standard flow.
+    effective_qdrant_limit = qdrant_limit * 2 if qdrant_filter is not None else qdrant_limit
+
     # Single batched call instead of N individual queries — one round trip,
     # server-side parallelism, shared HNSW cache warmth across the batch.
     active_space_list = list(space_weights)
     rows_by_space = await _query_spaces_batch(
         [
-            (space, anchor_vectors[space], qdrant_limit + 1)
+            (space, anchor_vectors[space], effective_qdrant_limit + 1)
             for space in active_space_list
-        ]
+        ],
+        qdrant_filter=qdrant_filter,
     )
 
     scores: dict[int, float] = {}
@@ -1420,6 +1444,7 @@ async def _run_multi_anchor_shape_search(
     vectors_by_anchor: dict[int, dict[VectorName, list[float]]],
     *,
     qdrant_limit: int,
+    metadata_filters: MetadataFilters | None = None,
 ) -> tuple[dict[int, float], dict[str, float], dict[str, float], float]:
     """Run multi-anchor shape search and return scores + cohesion debug.
 
@@ -1496,14 +1521,24 @@ async def _run_multi_anchor_shape_search(
     if not space_weights:
         return {}, {}, cohesion_debug, mean_pairwise_cosine
 
+    # Same hard-filter translation as the single-anchor path (one Filter
+    # object shared across every space in the batch).
+    qdrant_filter = build_qdrant_filter(metadata_filters) if metadata_filters else None
+
+    # Same over-fetch rationale as single-anchor: filtered HNSW returns
+    # fewer points per step, and the downstream lanes consume this pool
+    # by union, so a thin filtered slice weakens shape's contribution.
+    effective_qdrant_limit = qdrant_limit * 2 if qdrant_filter is not None else qdrant_limit
+
     # Single batched call across active spaces; see _query_spaces_batch.
     active_space_list = list(space_weights)
-    per_space_limit = qdrant_limit + len(anchor_ids)
+    per_space_limit = effective_qdrant_limit + len(anchor_ids)
     rows_by_space = await _query_spaces_batch(
         [
             (space, centroid_by_space[space], per_space_limit)
             for space in active_space_list
-        ]
+        ],
+        qdrant_filter=qdrant_filter,
     )
 
     excluded = set(anchor_ids)
@@ -2482,6 +2517,7 @@ async def run_similarity_search(
     *,
     limit: int = 50,
     qdrant_limit: int = DEFAULT_QDRANT_LIMIT,
+    metadata_filters: MetadataFilters | None = None,
 ) -> SimilarMoviesSearchResult:
     """Run Step-0's title-based similarity flow.
 
@@ -2489,6 +2525,11 @@ async def run_similarity_search(
     hands the deduped anchor list to run_similar_movies_for_ids, which
     routes single-anchor vs. multi-anchor pipelines internally. Returns
     an empty result when no reference resolves.
+
+    ``metadata_filters`` (when active) constrains every candidate-
+    generation lane and the Qdrant shape search to movies that pass the
+    user's hard filters — matching the behavior of the other Step-0
+    entity flows (exact_title, franchise, studio, person).
     """
     if not flow_data.should_be_searched:
         raise ValueError(
@@ -2510,6 +2551,7 @@ async def run_similarity_search(
         anchor_ids,
         limit=limit,
         qdrant_limit=qdrant_limit,
+        metadata_filters=metadata_filters,
     )
 
 
@@ -2519,8 +2561,15 @@ async def run_similar_movies_for_ids(
     limit: int = 50,
     qdrant_limit: int = DEFAULT_QDRANT_LIMIT,
     quality_limit: int = DEFAULT_QUALITY_LIMIT,
+    metadata_filters: MetadataFilters | None = None,
 ) -> SimilarMoviesSearchResult:
-    """Run similar-movies search for one or more anchor TMDB IDs."""
+    """Run similar-movies search for one or more anchor TMDB IDs.
+
+    ``metadata_filters`` is threaded into every candidate-generation lane
+    (Postgres lanes via inline / direct ``movie_card`` filter clauses; the
+    Qdrant shape search via ``build_qdrant_filter``) so a filter that's
+    inactive at the request boundary stays a no-op end to end.
+    """
     anchor_ids = list(dict.fromkeys(int(mid) for mid in tmdb_ids))
     if not anchor_ids:
         raise ValueError("tmdb_ids must contain at least one movie ID.")
@@ -2553,6 +2602,7 @@ async def run_similar_movies_for_ids(
             limit=limit,
             qdrant_limit=qdrant_limit,
             quality_limit=quality_limit,
+            metadata_filters=metadata_filters,
         )
 
     return await _run_multi_anchor_similarity(
@@ -2564,6 +2614,7 @@ async def run_similar_movies_for_ids(
         limit=limit,
         qdrant_limit=qdrant_limit,
         quality_limit=quality_limit,
+        metadata_filters=metadata_filters,
     )
 
 
@@ -2577,6 +2628,7 @@ async def _run_single_anchor_similarity(
     limit: int,
     qdrant_limit: int,
     quality_limit: int,
+    metadata_filters: MetadataFilters | None = None,
 ) -> SimilarMoviesSearchResult:
     anchor_row = anchor_rows[anchor_id]
     quality_bucket = _quality_bucket(anchor_row)
@@ -2614,19 +2666,38 @@ async def _run_single_anchor_similarity(
         anchor_id,
         vectors_by_anchor.get(anchor_id, {}),
         qdrant_limit=qdrant_limit,
+        metadata_filters=metadata_filters,
     )
-    director_task = fetch_director_movie_terms(anchor_directors)
+    director_task = fetch_director_movie_terms(
+        anchor_directors, metadata_filters=metadata_filters,
+    )
     franchise_task = fetch_similarity_franchise_candidates(
         lineage_entry_ids=anchor_lineage,
         shared_universe_entry_ids=anchor_universe,
         subgroup_entry_ids=anchor_subgroups,
+        metadata_filters=metadata_filters,
     )
-    studio_task = fetch_movie_ids_by_production_company_ids(anchor_studio_company_ids)
-    source_task = fetch_similarity_source_candidates(anchor_source_ids)
+    studio_task = fetch_movie_ids_by_production_company_ids(
+        anchor_studio_company_ids, metadata_filters=metadata_filters,
+    )
+    source_task = fetch_similarity_source_candidates(
+        anchor_source_ids, metadata_filters=metadata_filters,
+    )
     # Quality candidate lane is recall-repair only — middle-bucket flow
-    # leans on candidates surfaced by other lanes plus shape.
+    # leans on candidates surfaced by other lanes plus shape. When hard
+    # filters are active the LIMIT clause caps the result before the
+    # filter applies, so the post-filter set can be much thinner than
+    # `quality_limit`. Over-fetch 2× when filters are active so the
+    # eligible-post-filter pool stays usefully sized.
+    effective_quality_limit = (
+        quality_limit * 2 if metadata_filters is not None else quality_limit
+    )
     quality_task = (
-        fetch_similarity_quality_candidates(bucket=quality_bucket, limit=quality_limit)
+        fetch_similarity_quality_candidates(
+            bucket=quality_bucket,
+            limit=effective_quality_limit,
+            metadata_filters=metadata_filters,
+        )
         if cult_or_prestige
         else _empty_set()
     )
@@ -2648,6 +2719,7 @@ async def _run_single_anchor_similarity(
             tid for (kind, tid) in anchor_themes_traits
             if kind == TRAIT_KIND_TMDB_GENRE
         ],
+        metadata_filters=metadata_filters,
     )
 
     (
@@ -2695,7 +2767,9 @@ async def _run_single_anchor_similarity(
         and tag != LIVE_ACTION_TAG_ID
     }
     rare_medium_candidate_ids: set[int] = (
-        await fetch_movie_ids_by_overall_keywords(list(rare_medium_tags))
+        await fetch_movie_ids_by_overall_keywords(
+            list(rare_medium_tags), metadata_filters=metadata_filters,
+        )
         if rare_medium_tags
         else set()
     )
@@ -2992,6 +3066,7 @@ async def _run_multi_anchor_similarity(
     limit: int,
     qdrant_limit: int,
     quality_limit: int,
+    metadata_filters: MetadataFilters | None = None,
 ) -> SimilarMoviesSearchResult:
     """V2 multi-anchor similarity flow.
 
@@ -3080,7 +3155,10 @@ async def _run_multi_anchor_similarity(
     source_ids = set().union(*source_trait_sets) if source_trait_sets else set()
 
     shape_task = _run_multi_anchor_shape_search(
-        anchor_ids, vectors_by_anchor, qdrant_limit=qdrant_limit
+        anchor_ids,
+        vectors_by_anchor,
+        qdrant_limit=qdrant_limit,
+        metadata_filters=metadata_filters,
     )
     # V3 §2.1 fires the multi-anchor director lane on EITHER director
     # cohesion (≥2 anchors share a director) OR auteur presence (any
@@ -3103,7 +3181,9 @@ async def _run_multi_anchor_similarity(
         auteur = await fetch_auteur_term_ids()
         anchor_has_auteur = bool(director_terms & auteur)
         if director_cohesion_active or anchor_has_auteur:
-            director_result = await fetch_director_movie_terms(director_terms)
+            director_result = await fetch_director_movie_terms(
+                director_terms, metadata_filters=metadata_filters,
+            )
         else:
             director_result = {}
         return auteur, anchor_has_auteur, director_result
@@ -3114,23 +3194,36 @@ async def _run_multi_anchor_similarity(
             lineage_entry_ids=franchise_traits,
             shared_universe_entry_ids=set(),
             subgroup_entry_ids=set(),
+            metadata_filters=metadata_filters,
         )
         if cohesion_by_lane["franchise"] > 0.0
         else _empty_set()
     )
     studio_task = (
-        fetch_movie_ids_by_production_company_ids(studio_company_ids)
+        fetch_movie_ids_by_production_company_ids(
+            studio_company_ids, metadata_filters=metadata_filters,
+        )
         if cohesion_by_lane["studio"] > 0.0
         else _empty_set()
     )
     source_task = (
-        fetch_similarity_source_candidates(source_ids)
+        fetch_similarity_source_candidates(
+            source_ids, metadata_filters=metadata_filters,
+        )
         if cohesion_by_lane["source"] > 0.0
         else _empty_set()
     )
+    # Same over-fetch discipline as the single-anchor flow — when hard
+    # filters are active, raise the LIMIT so the post-filter pool stays
+    # usefully sized.
+    effective_quality_limit = (
+        quality_limit * 2 if metadata_filters is not None else quality_limit
+    )
     quality_task = (
         fetch_similarity_quality_candidates(
-            bucket=repeated_quality_bucket, limit=quality_limit
+            bucket=repeated_quality_bucket,
+            limit=effective_quality_limit,
+            metadata_filters=metadata_filters,
         )
         if repeated_quality_bucket is not None and cohesion_by_lane["quality"] > 0.0
         else _empty_set()
@@ -3196,6 +3289,7 @@ async def _run_multi_anchor_similarity(
                 tid for (kind, tid) in themes_recall_consensus
                 if kind == TRAIT_KIND_TMDB_GENRE
             ],
+            metadata_filters=metadata_filters,
         )
         if themes_recall_consensus
         else set()
@@ -3231,6 +3325,7 @@ async def _run_multi_anchor_similarity(
             qdrant_limit=qdrant_limit,
             quality_limit=quality_limit,
             mean_pairwise_cosine=mean_pairwise_cosine,
+            metadata_filters=metadata_filters,
         )
 
     # V3 raw lane weights. Shape scales with mean cohesion (range
@@ -4201,6 +4296,7 @@ async def _low_cohesion_fallback(
     qdrant_limit: int,
     quality_limit: int,
     mean_pairwise_cosine: float,
+    metadata_filters: MetadataFilters | None = None,
 ) -> SimilarMoviesSearchResult:
     """Fallback for chaotic anchor sets where the centroid lands in noise.
 
@@ -4222,6 +4318,7 @@ async def _low_cohesion_fallback(
                 limit=per_anchor_limit,
                 qdrant_limit=qdrant_limit,
                 quality_limit=quality_limit,
+                metadata_filters=metadata_filters,
             )
             for anchor_id in anchor_ids
         )

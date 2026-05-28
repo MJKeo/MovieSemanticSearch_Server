@@ -45,11 +45,25 @@ and API endpoints for search and movie detail retrieval.
   after the fact.
 
 ### `POST /similarity_search`
-- **Request**: `SimilaritySearchBody` — `tmdb_ids` (non-empty list of int).
+- **Request**: `SimilaritySearchBody` — `tmdb_ids` (non-empty list of
+  int), optional `filters` (`MetadataFiltersInput`, same shape as
+  `/query_search`).
 - **Response**: Array of `MovieCard` objects ranked by descending
   similarity score. Bypasses the natural-language pipeline.
+- **Filters**: when supplied and at least one field is set, every
+  candidate-generation lane (Postgres director / franchise / studio /
+  source / quality / themes / rare-medium and the Qdrant shape search)
+  is constrained to filter-eligible movies — same pattern as the other
+  Step-0 entity flows (`exact_title`, `franchise`, `studio`, `person`).
+  An all-None filters payload (or omitting the field) is the explicit
+  "no filter" signal and takes the same fast path as before.
+- **Cache**: unfiltered requests use the legacy anchor-id-only Redis
+  key. Filtered requests append a short stable BLAKE2b fingerprint of
+  the active filter config (`...:f:<hex>`), so filtered and unfiltered
+  warm hits live in disjoint key slots and pre-existing unfiltered
+  entries stay valid. 24h TTL on every variant.
 - Errors: empty `tmdb_ids` → 422 (pydantic), unknown IDs → 422,
-  invalid anchor → 400.
+  invalid anchor → 400, unknown filter enum value → 422.
 
 ### `POST /attribute_search`
 - **Request**: `AttributeSearchBody` — both fields optional:
@@ -86,12 +100,13 @@ and API endpoints for search and movie detail retrieval.
   `normalize_string` used for ingest-time `title_normalized`). Two
   priority tiers — Tier 1 (token-prefix: query is a prefix of any
   whitespace-delimited token in the title) and Tier 2 (substring at
-  any position). Tier 1 always ranks above Tier 2. Within each tier
-  results are ordered by the same 80/20 popularity/reception blend
-  used by `/attribute_search`, with `movie_id DESC` as a stable
-  tie-break. Tier 3 fuzzy (edit-distance ≤ 2) is deliberately omitted
-  for v1 — the spec marked it optional and it doesn't fit the
-  p50<20ms target.
+  any position). Tier 1 always ranks above Tier 2. Within each tier,
+  the shorter normalized title wins ("John Wick" outranks "John Wick:
+  Chapter 2" for query "john wi"); length ties fall through to the
+  same 80/20 popularity/reception blend used by `/attribute_search`,
+  with `movie_id DESC` as a final tie-break. Tier 3 fuzzy
+  (edit-distance ≤ 2) is deliberately omitted for v1 — the spec marked
+  it optional and it doesn't fit the p50<20ms target.
 - **Errors**:
   - 422 `{ "detail": "q must be non-empty" }` when `q` is missing or
     whitespace-only after trim.

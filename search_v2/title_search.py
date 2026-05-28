@@ -19,8 +19,12 @@
 #      token boundary — "ark kni" → "The Dark Knight".
 #
 # Tier 1 always ranks above tier 2 regardless of popularity. Within
-# each tier, ranking uses the neutral 80/20 popularity-reception
-# blend; ties break by `movie_id DESC` for stability.
+# each tier, the shorter normalized title wins — "John Wick" outranks
+# "John Wick: Chapter 2" for query "john wi" because it carries less
+# title material beyond the query. Length ties fall through to the
+# same 80/20 popularity-reception blend `/attribute_search` uses
+# (so the three "King Kong" remakes, all 9 chars, sort by popularity),
+# with `movie_id DESC` as a final stable tie-break.
 #
 # Fuzzy matching (edit-distance ≤ 2 on queries ≥ 4 chars) was marked
 # optional in the spec and is deliberately omitted from v1 — it would

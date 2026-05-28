@@ -242,10 +242,12 @@ async def stream_full_pipeline(
             searches (replacing the verbatim raw query).
         metadata_filters: Optional UI hard filters applied at every
             candidate-generation / reranker primitive. Threaded through
-            standard Stage 4 branches and the entity-flow runners
-            (exact_title, franchise, studio, person). Intentionally NOT
-            threaded into the similarity flow — anchor-based "movies
-            like X" is not filter-relevant.
+            standard Stage 4 branches and every entity-flow runner —
+            exact_title, similarity, franchise, studio, person. Honoring
+            filters in similarity matches the behavior the user sees
+            elsewhere: if they set "streaming on Netflix" or "post-2010"
+            and then issue a similarity query, those constraints still
+            apply.
 
     Yields:
         (event_name, payload) tuples. The endpoint encodes these as SSE
@@ -537,13 +539,11 @@ async def stream_full_pipeline(
             phase=_PHASE_NONSTANDARD,
         )
     if similarity_firing:
-        # Note: similarity flow intentionally NOT passed metadata_filters
-        # — anchor-based "movies like X" search is not filter-relevant
-        # (the user wants similar movies, not filtered ones).
         task = asyncio.create_task(
             _run_similarity_with_hydration(
                 similarity_flow_data,
                 emit_stage=_make_emitter(_FETCH_ID_SIMILARITY),
+                metadata_filters=metadata_filters,
             )
         )
         task_info[task] = _TaskInfo(
@@ -878,6 +878,8 @@ async def _run_stage4_with_implicit_prior(
 async def _run_similarity_with_hydration(
     flow_data: SimilarityFlowData,
     emit_stage: StageEmitter,
+    *,
+    metadata_filters: MetadataFilters | None = None,
 ) -> _FetchOutcome:
     """Run the similarity flow then hydrate the ranked tmdb_ids.
 
@@ -885,11 +887,13 @@ async def _run_similarity_with_hydration(
     task starts; we flip to `hydrating` between the similarity search
     and the Postgres card lookup so the UI sees the transition.
 
-    Intentionally does NOT accept a metadata_filters arg — anchor-based
-    similarity is not filter-relevant (user wants similar movies, not
-    filtered ones).
+    ``metadata_filters`` is threaded through to ``run_similarity_search``
+    so the UI's hard filters constrain anchor-based similarity the same
+    way they constrain every other Step-0 entity flow.
     """
-    result = await run_similarity_search(flow_data)
+    result = await run_similarity_search(
+        flow_data, metadata_filters=metadata_filters,
+    )
     emit_stage("hydrating")
     movie_ids = [int(r.movie_id) for r in result.ranked]
     cards = await fetch_movie_card_summaries(movie_ids)

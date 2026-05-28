@@ -24,6 +24,7 @@ from db.redis import (
     get_cached_movie_details,
     get_cached_similar_movies,
     init_redis,
+    metadata_filters_fingerprint,
 )
 from db.tmdb import (
     AdaptiveRateLimiter,
@@ -259,6 +260,12 @@ class SimilaritySearchBody(BaseModel):
     """Request body for POST /similarity_search."""
 
     tmdb_ids: list[int] = Field(min_length=1)
+    # Optional UI hard filters mirroring /query_search. When present and
+    # at least one field is set, the similarity pipeline restricts every
+    # candidate-generation lane (Postgres + Qdrant) to filter-eligible
+    # movies. None or all-None fields is the "no filter" signal and the
+    # request takes the same fast path as before.
+    filters: Optional[MetadataFiltersInput] = None
 
 
 # Map the wire role string straight onto PersonCategory. Pydantic's
@@ -435,20 +442,40 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
     release_date, poster_url), sorted by descending similarity score.
     Bypasses the natural-language pipeline entirely.
 
+    An optional ``filters`` field (same shape as /query_search) applies
+    UI hard filters — release range, runtime, maturity rank, genres,
+    audio languages, streaming services — to every candidate-generation
+    lane. Filtered requests get their own cache slot via a short stable
+    hash of the active filter config; unfiltered requests continue to
+    use the legacy anchor-id-only cache key.
+
     Errors:
       - Empty `tmdb_ids` → 422 (pydantic).
       - Unknown TMDB IDs → 422 with the missing IDs in the detail.
+      - Unknown enum value in `filters` → 422.
     """
     # Canonicalize anchors (dedup + sort) so the cache key is order- and
     # duplicate-insensitive. run_similar_movies_for_ids dedups again
     # internally and doesn't depend on input ordering.
     canonical_ids = sorted(dict.fromkeys(int(mid) for mid in body.tmdb_ids))
 
-    # Redis warm path. Per the graceful-degradation convention
-    # (docs/conventions.md), a Redis failure must NOT fail the request —
-    # fall through to the cold path instead.
+    # Translate wire filters at the boundary. Raises 422 on unknown enum
+    # values inside _to_metadata_filters; an all-None MetadataFiltersInput
+    # collapses back to None here.
+    metadata_filters = _to_metadata_filters(body.filters)
+
+    # Filtered queries get their own cache slot via a stable short hash
+    # of the active filter config; unfiltered queries continue to use
+    # the legacy anchor-id-only key shape so existing warm entries stay
+    # valid. Per the graceful-degradation convention (docs/conventions.md),
+    # a Redis failure must NOT fail the request — fall through to the
+    # cold path instead.
+    fingerprint = metadata_filters_fingerprint(metadata_filters)
+
     try:
-        cached = await get_cached_similar_movies(canonical_ids)
+        cached = await get_cached_similar_movies(
+            canonical_ids, filter_fingerprint=fingerprint,
+        )
     except Exception:
         logger.warning(
             "similar_movies cache read failed for tmdb_ids=%s",
@@ -460,7 +487,9 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
         return Response(content=cached, media_type="application/json")
 
     try:
-        result = await run_similar_movies_for_ids(canonical_ids)
+        result = await run_similar_movies_for_ids(
+            canonical_ids, metadata_filters=metadata_filters,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:
@@ -477,9 +506,12 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
     encoded = _json_encoder.encode(cards)
 
     # Cache-write failures must NOT lose the response we already built —
-    # log and continue.
+    # log and continue. The fingerprint keeps filtered and unfiltered
+    # writes in disjoint key slots.
     try:
-        await cache_similar_movies(canonical_ids, encoded)
+        await cache_similar_movies(
+            canonical_ids, encoded, filter_fingerprint=fingerprint,
+        )
     except Exception:
         logger.warning(
             "similar_movies cache write failed for tmdb_ids=%s",

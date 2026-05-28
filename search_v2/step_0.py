@@ -45,10 +45,16 @@ outcomes and decide whether the standard (descriptor-based) flow \
 should co-fire. The entity-flow outcomes are mutually exclusive — pick \
 exactly one:
 
-- specific_title — the query, as typed, IS the name of one specific \
-  film
-- similarity_to_titles — the query is an explicit similarity frame \
-  pointing at one or more reference films
+- specific_title — the query, as typed, IS a film title. Resolve \
+  canonical_name to the most common canonical form of the title and \
+  let the downstream search fan out — it surfaces every film sharing \
+  that title, remakes, and lineage entries automatically. A stated \
+  year (release_year_if_stated) sharpens intent toward that specific \
+  installment; without a year, all same-title matches surface.
+- similarity_to_titles — the query is a similarity frame pointing at \
+  one or more reference films, either an explicit frame ("movies \
+  like X", "in the vein of X") or a bare list of two or more film \
+  titles with no other content
 - character_franchise — the query, as typed, IS the name of a \
   character whose identity persists across multiple films
 - non_character_franchise — the query, as typed, IS the name of a \
@@ -162,37 +168,56 @@ person flow must be homogeneous: all entries must be studios, or all \
 entries must be people. Mixing kinds (e.g. one person and one \
 studio) is none_of_the_above.
 
-Role markers in the query ("directed by", "starring", "score by", \
-"written by", "produced by") count as content, not packaging — they \
-disqualify the person flow because they constrain the search beyond \
-the bare-name lookup. Surface them as qualifiers and route to \
-none_of_the_above. A query that is just a person's name (with no \
-role marker) fires the person flow regardless of which role that \
-person is most known for.
+Role-marker tokens in the query ("directed by", "starring", "score \
+by", "written by", "produced by") express a ranking preference the \
+person flow has no mechanism to honor — the executor unions every \
+credited role and cannot weight one over another. When a role-marker \
+token is present, surface it as a qualifier and route to \
+none_of_the_above so the standard flow can apply the preference. The \
+trigger is the marker token itself, NOT the identity of the named \
+person — a query that is just a person's name fires the person flow \
+regardless of which role that person is primarily or exclusively \
+known for. "Christopher Nolan" fires the person flow even though he \
+is best known as a director; "movies directed by Christopher Nolan" \
+routes to none_of_the_above because the marker is present.
 
 ---
 
 """
 
 _RESOLUTION_PRINCIPLE = """\
-RESOLUTION PRINCIPLE — the canonical resolution must be derivable from \
-the typed phrasing alone
+RESOLUTION PRINCIPLE — the typed phrasing must name a real entity of \
+the chosen kind
 
-Only choose a non-none_of_the_above entity flow when the canonical \
-resolution can be derived from the typed phrasing alone, without \
-consulting your own knowledge of which installment is most famous, \
-which person best matches, or which film best matches a character. If \
-your reasoning includes a step like "they probably mean the X version" \
-or "the most famous adaptation" to pick a canonical record, the \
-resolution is NOT derivable from the phrasing — fall back to \
-character_franchise / non_character_franchise (if the typed phrase \
-genuinely names a character or franchise) or none_of_the_above.
+Only choose a non-none_of_the_above entity flow when the typed \
+phrasing actually names an entity of that kind: a real film title \
+for specific_title, a real character or franchise for the franchise \
+flows, a real studio for studio, a real person for person. The \
+forbidden inference is choosing an entity flow when the typed \
+phrasing doesn't actually correspond to a real entity of that kind \
+and you would be guessing the user's intent from context.
 
-The resolution principle is the strongest gate against over-firing \
-specific_title on bare names that happen to coincide with one film in \
-a multi-installment franchise. When several distinct films share the \
-same canonical title string, specific_title does not apply — picking \
-one of them is exactly the inference this principle forbids.
+The principle is about whether the typed phrase points at a real \
+entity — NOT about whether multiple films share the matched title \
+or whether the surface form needs normalization. Both of those are \
+handled downstream:
+
+- specific_title naturally surfaces every film sharing the canonical \
+  title plus remakes and lineage siblings. You do NOT need to pick a \
+  single installment, and multiple films sharing one title is not a \
+  reason to fall back. Resolve canonical_name to the most common \
+  canonical form of the title and let the search fan out.
+- character_franchise and non_character_franchise both run downstream \
+  alias expansion (e.g. "MCU" → "Marvel Cinematic Universe", \
+  "Spider-Man" → cast aliases like "Peter Parker"). It is fine for \
+  the typed phrase to be an abbreviation, nickname, or partial form \
+  as long as it unambiguously names the franchise or character.
+
+The principle still forbids guessing which film the user means when \
+the typed phrasing doesn't actually name a film. Queries like "the \
+godfather one" or "that pixar movie about feelings" require you to \
+guess from context and the partial / descriptive phrasing doesn't \
+correspond to any canonical title — fall back to none_of_the_above.
 
 ---
 
@@ -232,22 +257,25 @@ entity name. They must be ignored when populating qualifiers, even \
 though they are present in the query.
 
 If qualifiers is non-empty, selected_entity_flow MUST be \
-none_of_the_above. There is no exception. A query that contains a \
-real qualifier needs the standard flow to apply it — entity flows \
-have no mechanism to filter results by descriptive content.
+none_of_the_above — entity flows have no mechanism to filter results \
+by descriptive content, so a query that contains a real qualifier \
+needs the standard flow to apply it.
 
-The similarity-frame phrasing itself ("like", "similar to", "in the \
-vein of", "meets") is not a qualifier — it is the frame the entity \
-reading depends on. But any descriptor attached to a similarity frame \
-IS a qualifier, which forces none_of_the_above.
+Two narrow exclusions, neither of which counts as a qualifier:
+- Similarity-frame phrasing itself ("like", "similar to", "in the \
+  vein of", "meets") is the frame the similarity_to_titles reading \
+  depends on, not a qualifier. Any descriptor attached to a \
+  similarity frame IS a qualifier and forces none_of_the_above.
+- An explicit release year stated next to a title is captured \
+  structurally by release_year_if_stated, not as a qualifier. The \
+  year is always recorded when the user states one — it sharpens the \
+  specific_title flow's intent toward that installment.
 
-Cast / director / explicit year markers that exist specifically to \
-identify which installment of a multi-installment title the user means \
-are NOT qualifiers — they are part of the title resolution. The \
-canonical_name resolves to the disambiguated film and release_year_if_\
-stated captures the year. Generic cast / director references not tied \
-to installment disambiguation ARE qualifiers and force \
-none_of_the_above.
+Cast and director references are always qualifiers and force \
+none_of_the_above, including when the user is clearly trying to \
+disambiguate which installment of a same-title set they mean. The \
+schema has no structural slot for cast or director hints, so the \
+standard flow is the only path that can honor them.
 
 ---
 
@@ -351,15 +379,22 @@ mutually exclusive.
 selected_entities — list of EntityReference. Cardinality is fixed by \
 the chosen flow: empty for none_of_the_above; exactly one entry for \
 specific_title, character_franchise, and non_character_franchise; one \
-or more entries for similarity_to_titles, studio, and person. Each \
+or more entries for similarity_to_titles, studio, and person. The \
+single entry for specific_title is the most likely target — the \
+canonical form of the title as typed. You do NOT need to enumerate \
+every same-title film: the downstream search fans out to other films \
+sharing that title, remakes, and lineage entries automatically. Each \
 entry's canonical_name must be non-empty and must resolve to a real \
-entity (title for title flows, character or franchise name for \
-franchise flows, studio name for studio flow, person's full name for \
-person flow — regardless of which role they're best known for). For \
-studio and person, list entries in the order they appear in the \
-query. release_year_if_stated follows the same explicit-only rule as \
-on candidates and should remain null for studio and person flows \
-(release year does not apply to a person or company entity).
+entity (title for title flows; character or franchise name for \
+franchise flows — abbreviations and nicknames are fine because \
+downstream alias expansion handles them; studio name for studio \
+flow; person's full name for person flow — regardless of which role \
+they're best known for). For studio and person, list entries in the \
+order they appear in the query. release_year_if_stated is captured \
+whenever the user explicitly states a year next to the title (it \
+sharpens the specific_title search's intent toward that installment) \
+and should remain null for studio and person flows (release year \
+does not apply to a person or company entity).
 
 primary_intent_ambiguity_reasoning — one short sentence stating \
 whether the chosen entity reading has a defensible non-entity primary \
@@ -413,10 +448,16 @@ two together as a single search intent.
 
 The entity-flow outcomes are mutually exclusive — pick exactly one:
 
-- specific_title — the merged intent, as expressed, IS the name of \
-  one specific film
-- similarity_to_titles — the merged intent is an explicit similarity \
-  frame pointing at one or more reference films
+- specific_title — the merged intent, as expressed, IS a film title. \
+  Resolve canonical_name to the most common canonical form of the \
+  title and let the downstream search fan out — it surfaces every \
+  film sharing that title, remakes, and lineage entries \
+  automatically. A stated year sharpens intent toward that specific \
+  installment.
+- similarity_to_titles — the merged intent is a similarity frame \
+  pointing at one or more reference films, either an explicit frame \
+  ("movies like X") or a bare list of two or more film titles with \
+  no other content
 - character_franchise — the merged intent, as expressed, IS the name \
   of a character whose identity persists across multiple films
 - non_character_franchise — the merged intent, as expressed, IS the \

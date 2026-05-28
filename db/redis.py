@@ -5,10 +5,13 @@ Uses redis.asyncio with an explicit ConnectionPool. decode_responses is False
 because the embedding cache stores raw packed binary — not strings.
 """
 
+import hashlib
 import logging
 import os
 import redis.asyncio as aioredis
 from redis.asyncio.connection import ConnectionPool
+
+from implementation.classes.schemas import MetadataFilters
 
 logger = logging.getLogger(__name__)
 
@@ -191,27 +194,84 @@ _SIMILAR_MOVIES_KEY_PARTS: tuple[str, ...] = ("similar", "movies")
 _SIMILAR_MOVIES_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 
-def _similar_movies_key(canonical_tmdb_ids: list[int]) -> str:
+def metadata_filters_fingerprint(filters: MetadataFilters | None) -> str | None:
+    """Return a short stable hash of the filter configuration, or None when inactive.
+
+    Used as an optional cache-key segment so filtered and unfiltered
+    responses don't collide on a single anchor-id-only key. None means
+    "no filter active" — callers omit the segment entirely (preserving
+    the legacy key shape for unfiltered queries).
+
+    The fingerprint is the first 16 hex chars of a BLAKE2b digest over
+    a deterministic field representation (sorted keys, primitive
+    values). 16 hex chars = 64 bits — collision-resistant well past the
+    1M-key scale this cache will ever see.
+    """
+    if filters is None or not filters.is_active:
+        return None
+    fields = (
+        ("min_release_ts", filters.min_release_ts),
+        ("max_release_ts", filters.max_release_ts),
+        ("min_runtime", filters.min_runtime),
+        ("max_runtime", filters.max_runtime),
+        ("min_maturity_rank", filters.min_maturity_rank),
+        ("max_maturity_rank", filters.max_maturity_rank),
+        ("genres", sorted(g.genre_id for g in filters.genres) if filters.genres else None),
+        (
+            "audio_languages",
+            sorted(lang.language_id for lang in filters.audio_languages)
+            if filters.audio_languages
+            else None,
+        ),
+        (
+            "watch_offer_keys",
+            sorted(filters.watch_offer_keys) if filters.watch_offer_keys else None,
+        ),
+    )
+    payload = repr(fields).encode("utf-8")
+    return hashlib.blake2b(payload, digest_size=8).hexdigest()
+
+
+def _similar_movies_key(
+    canonical_tmdb_ids: list[int],
+    *,
+    filter_fingerprint: str | None = None,
+) -> str:
     """Build the Redis key for a canonical (deduped + sorted) anchor set.
 
     Caller is responsible for normalization — passing different orderings
-    or duplicates would produce different keys.
+    or duplicates would produce different keys. When ``filter_fingerprint``
+    is None the key shape matches the pre-filter version, so unfiltered
+    callers keep their existing warm hits.
     """
     joined = ",".join(str(mid) for mid in canonical_tmdb_ids)
-    return redis_key(*_SIMILAR_MOVIES_KEY_PARTS, joined)
+    if filter_fingerprint is None:
+        return redis_key(*_SIMILAR_MOVIES_KEY_PARTS, joined)
+    return redis_key(*_SIMILAR_MOVIES_KEY_PARTS, joined, "f", filter_fingerprint)
 
 
-async def get_cached_similar_movies(canonical_tmdb_ids: list[int]) -> bytes | None:
+async def get_cached_similar_movies(
+    canonical_tmdb_ids: list[int],
+    *,
+    filter_fingerprint: str | None = None,
+) -> bytes | None:
     """Return cached MovieCard-list bytes for the given anchor set, or None."""
     client = get_redis_client()
-    return await client.get(_similar_movies_key(canonical_tmdb_ids))
+    return await client.get(
+        _similar_movies_key(canonical_tmdb_ids, filter_fingerprint=filter_fingerprint)
+    )
 
 
-async def cache_similar_movies(canonical_tmdb_ids: list[int], payload: bytes) -> None:
+async def cache_similar_movies(
+    canonical_tmdb_ids: list[int],
+    payload: bytes,
+    *,
+    filter_fingerprint: str | None = None,
+) -> None:
     """Write encoded MovieCard-list payload to Redis with a 24h TTL."""
     client = get_redis_client()
     await client.set(
-        _similar_movies_key(canonical_tmdb_ids),
+        _similar_movies_key(canonical_tmdb_ids, filter_fingerprint=filter_fingerprint),
         payload,
         ex=_SIMILAR_MOVIES_TTL_SECONDS,
     )
