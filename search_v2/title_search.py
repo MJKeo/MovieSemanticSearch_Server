@@ -26,18 +26,26 @@
 # (so the three "King Kong" remakes, all 9 chars, sort by popularity),
 # with `movie_id DESC` as a final stable tie-break.
 #
-# Fuzzy matching (edit-distance ≤ 2 on queries ≥ 4 chars) was marked
-# optional in the spec and is deliberately omitted from v1 — it would
-# require either a second SQL pass with `levenshtein()` or extending
-# the SELECT with a similarity threshold, both of which trade against
-# the p50<20ms latency target. Easy to add later if the UX warrants.
+# Fuzzy fallback tier: when the exact tiered scan above underfills
+# (≤ TITLE_SEARCH_EXACT_UNDERFILL_TRIGGER hits) and the normalized query
+# is long enough (≥ TITLE_SEARCH_FUZZY_MIN_QUERY_CHARS), a second pg_trgm
+# `word_similarity` pass backfills the dropdown with near-miss titles
+# ("intersteller" → "Interstellar", "race witch mountain" → "Race to
+# Witch Mountain"). It is kept strictly off the hot path: well-spelled
+# queries that fill the dropdown from the exact tiers pay zero extra
+# round trips, protecting the p50<20ms target. Fuzzy results are ranked
+# by word_similarity (then the same shorter-title / 80-20 prior the exact
+# tiers use) and appended BELOW the exact results, never interleaved.
 #
 # Wire-level validation (`q` non-empty after trim, `limit` in [1, 25])
 # lives in api/main.py — this module sees the already-validated query.
 
 from __future__ import annotations
 
-from db.postgres import fetch_title_search_movie_ids
+from db.postgres import (
+    fetch_title_search_fuzzy_movie_ids,
+    fetch_title_search_movie_ids,
+)
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
 
@@ -61,6 +69,28 @@ TITLE_SEARCH_DEFAULT_LIMIT = 10
 # malicious oversized inputs.
 TITLE_SEARCH_QUERY_MAX_CHARS = 100
 
+# Fuzzy fallback tier triggers only when the exact tiered scan returns at
+# most this many hits — i.e. the dropdown is underfilled and worth
+# backfilling with near-misses. Above it, the exact results already fill
+# the typeahead and the fuzzy round trip is skipped entirely.
+TITLE_SEARCH_EXACT_UNDERFILL_TRIGGER = 3
+
+# word_similarity(query, title) cutoff for the fuzzy tier. Deliberately
+# below pg_trgm's default of 0.6 so genuine typos clear the bar (a single
+# typo in a multi-word title scores ~0.72, a dropped middle word ~0.87,
+# messier multi-typo input ~0.45). Supplied to Postgres via a
+# transaction-local set_config because the trigram GIN index only
+# accelerates the `<%` operator, which reads this GUC — a bare
+# `word_similarity() >= x` predicate would force a seq scan. Tunable: this
+# is the one knob worth revisiting against real typeahead query logs.
+TITLE_SEARCH_FUZZY_THRESHOLD = 0.45
+
+# Minimum normalized-query length before the fuzzy tier engages. Below 3
+# chars there are too few trigrams for word_similarity to be discriminating
+# (one or two trigrams match a large fraction of the catalog), so short
+# queries stay on the exact tiers only.
+TITLE_SEARCH_FUZZY_MIN_QUERY_CHARS = 3
+
 
 async def run_title_search(query: str, *, limit: int) -> list[int]:
     """Resolve a typeahead title query → ranked movie_ids.
@@ -76,9 +106,13 @@ async def run_title_search(query: str, *, limit: int) -> list[int]:
     Returns:
       Ordered list of `movie_id`s, tier 1 (token-prefix matches) first
       and tier 2 (substring-only matches) second, with the 80/20
-      popularity-reception prior ordering within each tier. Empty list
-      when nothing matches OR when normalization collapses the query
-      to an empty string (e.g. punctuation-only input like "!!!").
+      popularity-reception prior ordering within each tier. When the exact
+      tiers underfill the dropdown (≤ TITLE_SEARCH_EXACT_UNDERFILL_TRIGGER
+      hits) and the query is long enough, a fuzzy word_similarity tier is
+      appended below the exact results to absorb typos and dropped words;
+      the total stays capped at `limit`. Empty list when nothing matches OR
+      when normalization collapses the query to an empty string (e.g.
+      punctuation-only input like "!!!").
     """
     # Truncate first so an oversized input doesn't blow up
     # normalize_string's regex work — the regex passes are linear in
@@ -115,9 +149,37 @@ async def run_title_search(query: str, *, limit: int) -> list[int]:
     token_prefix_pattern = f"% {escaped}%"
     substring_pattern = f"%{escaped}%"
 
-    return await fetch_title_search_movie_ids(
+    exact_ids = await fetch_title_search_movie_ids(
         starts_with_pattern=starts_with_pattern,
         token_prefix_pattern=token_prefix_pattern,
         substring_pattern=substring_pattern,
         limit=limit,
     )
+
+    # Fuzzy fallback only when the exact tiers underfilled the dropdown AND
+    # the query is long enough for trigram similarity to be meaningful. The
+    # common (well-filled) typeahead path returns here with zero extra round
+    # trips. `remaining` can be 0 even on the trigger path when the caller's
+    # own `limit` is ≤ the underfill trigger (e.g. limit=3, exact returned
+    # 3) — guard on it so we never issue a useless LIMIT 0 query.
+    remaining = limit - len(exact_ids)
+    if (
+        len(exact_ids) <= TITLE_SEARCH_EXACT_UNDERFILL_TRIGGER
+        and len(normalized) >= TITLE_SEARCH_FUZZY_MIN_QUERY_CHARS
+        and remaining > 0
+    ):
+        # Pass the RAW normalized query, not `escaped`: the fuzzy tier uses
+        # the pg_trgm `<%` operator, not LIKE, so `%`/`_` are not wildcards
+        # and escaping them would corrupt the trigram tokenization.
+        fuzzy_ids = await fetch_title_search_fuzzy_movie_ids(
+            normalized_query=normalized,
+            threshold=TITLE_SEARCH_FUZZY_THRESHOLD,
+            exclude_movie_ids=set(exact_ids),
+            limit=remaining,
+        )
+        # The fuzzy SQL already excludes the exact ids, so plain
+        # concatenation is duplicate-free and keeps fuzzy strictly below
+        # the exact tiers.
+        return exact_ids + fuzzy_ids
+
+    return exact_ids

@@ -232,6 +232,56 @@ async def _execute_on_conn(
         return result
 
 
+async def _execute_read_with_word_similarity_threshold(
+    query: str,
+    params: Sequence[object] | None,
+    *,
+    threshold: float,
+) -> list[tuple]:
+    """Run a read query under a transaction-local pg_trgm word_similarity
+    threshold.
+
+    The pg_trgm `<%` operator decides matches against
+    ``pg_trgm.word_similarity_threshold`` (a GUC), and the trigram GIN index
+    only accelerates the *operator* — a bare ``word_similarity() >= x``
+    predicate would force a sequential scan. So to probe at a non-default
+    cutoff we override the GUC and run the query in the SAME transaction.
+
+    The override is applied via ``set_config(..., is_local => true)`` (the
+    function form, because psycopg cannot bind a parameter into a bare
+    ``SET`` — it is a utility statement). ``is_local`` scopes the change to
+    the surrounding transaction, so it reverts on commit and NEVER leaks
+    back onto the pooled connection.
+
+    WARNING: the explicit ``conn.transaction()`` is load-bearing. The pool
+    is non-autocommit, so this binds the ``set_config`` and the ``SELECT``
+    into one transaction. Do not drop the transaction or switch the pool to
+    autocommit — either would let the 0.45-style override either fail to
+    apply or leak onto a recycled pooled connection (max_lifetime 1800s) and
+    silently corrupt other callers (e.g. ``fetch_close_title_candidates``,
+    which depends on the default 0.6).
+
+    Args:
+        query: SQL with %s placeholders. Must use the ``<%`` operator (or
+            another word_similarity operator) for the threshold to matter.
+        params: Parameters bound to ``query``.
+        threshold: word_similarity cutoff in [0, 1]; bound as text since
+            ``set_config``'s value argument is text.
+
+    Returns:
+        All rows from the query.
+    """
+    async with pool.connection() as conn:
+        async with conn.transaction():
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT set_config('pg_trgm.word_similarity_threshold', %s, true)",
+                    (str(threshold),),
+                )
+                await cur.execute(query, params)
+                return await cur.fetchall()
+
+
 # ===============================
 #     PRIVATE HELPER METHODS
 # ===============================
@@ -3651,6 +3701,104 @@ async def fetch_title_search_movie_ids(
             NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT,
             limit,
         ),
+    )
+    return [row[0] for row in rows]
+
+
+async def fetch_title_search_fuzzy_movie_ids(
+    *,
+    normalized_query: str,
+    threshold: float,
+    exclude_movie_ids: set[int],
+    limit: int,
+) -> list[int]:
+    """Fuzzy fallback tier for the `/title_search` endpoint → ranked movie_ids.
+
+    A pg_trgm word_similarity backfill for queries that the exact tiered
+    scan (fetch_title_search_movie_ids) underfilled — it absorbs typos
+    ("intersteller" → "Interstellar") and dropped words ("race witch
+    mountain" → "Race to Witch Mountain") that exact LIKE matching misses.
+
+    Gates each candidate on ``normalized_query <% title_normalized`` — the
+    asymmetric "does this title contain a word similar to the query?"
+    operator, GIN-accelerated by ``idx_movie_card_title_normalized_trgm``
+    and reading the caller-supplied ``threshold`` from a transaction-local
+    GUC (see _execute_read_with_word_similarity_threshold). Excludes
+    movie_ids the exact pass already returned, so the caller can concatenate
+    exact + fuzzy with no dedup.
+
+    Ranking (mirrors the exact tier's tie-breakers, with relevance on top):
+      word_similarity(query, title_normalized) DESC,
+      char_length(title_normalized) ASC,
+      0.8 * popularity_score + 0.2 * reception_score/100 DESC,
+      movie_id DESC.
+
+    Args:
+        normalized_query: ``normalize_string`` output. RAW — NOT
+            LIKE-escaped; ``<%`` is an operator, so ``%``/``_`` carry no
+            wildcard meaning and escaping them would corrupt the trigrams.
+            Must be the same value the ``<%`` gate and the ORDER BY
+            word_similarity both bind, and must be the FIRST argument of
+            word_similarity (the function is asymmetric — query first
+            normalizes by the query's trigram count, matching the ``<%``
+            semantics where ``q <% title`` ≡ ``word_similarity(q, title) >=
+            threshold``).
+        threshold: word_similarity cutoff, applied transaction-locally so it
+            does not leak to other pooled-connection callers.
+        exclude_movie_ids: ids already returned by the exact pass; never
+            re-emitted here.
+        limit: max fuzzy rows (the caller's remaining slot budget).
+
+    Returns:
+        Ordered list of movie_ids, all distinct from ``exclude_movie_ids``.
+    """
+    params: list = [normalized_query]
+    exclude_clause = ""
+    if exclude_movie_ids:
+        # `<> ALL(ARRAY[]::bigint[])` is TRUE for every row, so an empty set
+        # would be a harmless no-op; we still omit the clause entirely in
+        # that case to keep the planner's job clean (mirrors
+        # fetch_close_title_candidates).
+        exclude_clause = " AND movie_id <> ALL(%s::bigint[])"
+        params.append(list(exclude_movie_ids))
+
+    params.extend(
+        [
+            normalized_query,  # word_similarity 1st arg in ORDER BY
+            NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT,
+            NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT,
+            limit,
+        ]
+    )
+
+    # `<%` is written `<%%` so psycopg's client-side parameter parser does
+    # not treat `%` as a format sigil — same escaping as
+    # fetch_close_title_candidates. word_similarity() is recomputed in the
+    # ORDER BY, but only over the (small) set of rows that passed the `<%`
+    # gate — the operator itself yields no score to sort by.
+    query = f"""
+        SELECT movie_id
+        FROM public.movie_card
+        WHERE %s <%% title_normalized{exclude_clause}
+        ORDER BY
+            word_similarity(%s, title_normalized) DESC,
+            char_length(title_normalized) ASC,
+            (
+                %s * COALESCE(
+                    LEAST(1.0, GREATEST(0.0, popularity_score)),
+                    0.0
+                )
+                +
+                %s * COALESCE(
+                    LEAST(1.0, GREATEST(0.0, reception_score / 100.0)),
+                    0.0
+                )
+            ) DESC,
+            movie_id DESC
+        LIMIT %s
+    """
+    rows = await _execute_read_with_word_similarity_threshold(
+        query, params, threshold=threshold,
     )
     return [row[0] for row in rows]
 

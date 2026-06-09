@@ -1,0 +1,2370 @@
+{
+  "generated_at": "2026-05-28T01:56:50.657692+00:00",
+  "hidden_gem_criteria": {
+    "imdb_vote_count_lt": 10000,
+    "reception_score_gte": 80.0,
+    "ordered_by": "reception_score DESC, popularity_score DESC"
+  },
+  "so_bad_its_good_criteria": {
+    "reception_score_lte": 50.0,
+    "imdb_vote_count_gte": 10000,
+    "ordered_by": "popularity_score DESC, imdb_vote_count DESC"
+  },
+  "counts": {
+    "all_time_top_100": 100,
+    "since_2010_top_50": 50,
+    "hidden_gems_top_50": 50,
+    "so_bad_its_good_top_25": 25,
+    "deduped_total": 193
+  },
+  "movies": [
+    {
+      "movie_id": 278,
+      "title": "The Shawshank Redemption",
+      "poster_url": "/9cqNxx0GxF0bflZmeSMuL5tnGzr.jpg",
+      "release_date": "1994-09-23",
+      "popularity_score": 0.9890130573694068,
+      "reception_score": 86.4,
+      "imdb_vote_count": 3176456,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 155,
+      "title": "The Dark Knight",
+      "poster_url": "/qJ2tW6WMUDux911r6m7haRef0WH.jpg",
+      "release_date": "2008-07-16",
+      "popularity_score": 0.9890115655978338,
+      "reception_score": 87.4,
+      "imdb_vote_count": 3155959,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 27205,
+      "title": "Inception",
+      "poster_url": "/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg",
+      "release_date": "2010-07-15",
+      "popularity_score": 0.9890100736259636,
+      "reception_score": 79.6,
+      "imdb_vote_count": 2805464,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 550,
+      "title": "Fight Club",
+      "poster_url": "/jSziioSwPVrOy9Yow3XhWIBDjq1.jpg",
+      "release_date": "1999-10-15",
+      "popularity_score": 0.9890085814537698,
+      "reception_score": 75.4,
+      "imdb_vote_count": 2594522,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 157336,
+      "title": "Interstellar",
+      "poster_url": "/yQvGrMoipbRoddT0ZR8tPoR7NfX.jpg",
+      "release_date": "2014-11-05",
+      "popularity_score": 0.9890070890812263,
+      "reception_score": 79.19999999999999,
+      "imdb_vote_count": 2510483,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 13,
+      "title": "Forrest Gump",
+      "poster_url": "/saHP97rTPS5eLmrLQEcANmKrsFl.jpg",
+      "release_date": "1994-06-23",
+      "popularity_score": 0.9890055965083068,
+      "reception_score": 84.4,
+      "imdb_vote_count": 2487181,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 680,
+      "title": "Pulp Fiction",
+      "poster_url": "/vQWk5YBFWF4bZaofAbv0tShwBvQ.jpg",
+      "release_date": "1994-09-10",
+      "popularity_score": 0.9890041037349847,
+      "reception_score": 92.2,
+      "imdb_vote_count": 2427117,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 603,
+      "title": "The Matrix",
+      "poster_url": "/aOIuZAjPaRIE6CMzbazvcHuHXDc.jpg",
+      "release_date": "1999-03-31",
+      "popularity_score": 0.9890026107612342,
+      "reception_score": 78.6,
+      "imdb_vote_count": 2239392,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 238,
+      "title": "The Godfather",
+      "poster_url": "/3bhkrj58Vtu7enYsRolD1fZdja1.jpg",
+      "release_date": "1972-03-14",
+      "popularity_score": 0.9890011175870286,
+      "reception_score": 96.8,
+      "imdb_vote_count": 2218856,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 120,
+      "title": "The Lord of the Rings: The Fellowship of the Ring",
+      "poster_url": "/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg",
+      "release_date": "2001-12-18",
+      "popularity_score": 0.9889996242123419,
+      "reception_score": 90.8,
+      "imdb_vote_count": 2199407,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 122,
+      "title": "The Lord of the Rings: The Return of the King",
+      "poster_url": "/rCzpDGLbOoPwLjy3OAm5NUPOTrC.jpg",
+      "release_date": "2003-12-17",
+      "popularity_score": 0.9889981306371475,
+      "reception_score": 92.4,
+      "imdb_vote_count": 2157685,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 807,
+      "title": "Se7en",
+      "poster_url": "/191nKfP0ehp3uIvWqgPbFmI4lv9.jpg",
+      "release_date": "1995-09-22",
+      "popularity_score": 0.9889966368614191,
+      "reception_score": 73.4,
+      "imdb_vote_count": 2012712,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 49026,
+      "title": "The Dark Knight Rises",
+      "poster_url": "/hr0L2aueqlP2BYUblTTjmtn0hw4.jpg",
+      "release_date": "2012-07-17",
+      "popularity_score": 0.9889951428851308,
+      "reception_score": 80.4,
+      "imdb_vote_count": 1987093,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 121,
+      "title": "The Lord of the Rings: The Two Towers",
+      "poster_url": "/5VTN0pR8gcqV3EPUHHfMGnJYN9L.jpg",
+      "release_date": "2002-12-18",
+      "popularity_score": 0.988993648708256,
+      "reception_score": 87.4,
+      "imdb_vote_count": 1950376,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 68718,
+      "title": "Django Unchained",
+      "poster_url": "/7oWY8VDWW7thTzWh3OKYRkWUlD5.jpg",
+      "release_date": "2012-12-25",
+      "popularity_score": 0.9889921543307683,
+      "reception_score": 82.6,
+      "imdb_vote_count": 1875953,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 98,
+      "title": "Gladiator",
+      "poster_url": "/wN2xWp1eIwCKOD0BHTcErTBv1Uq.jpg",
+      "release_date": "2000-05-04",
+      "popularity_score": 0.9889906597526413,
+      "reception_score": 74.19999999999999,
+      "imdb_vote_count": 1842406,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 106646,
+      "title": "The Wolf of Wall Street",
+      "poster_url": "/kW9LmvYHAaS9iA0tHmZVq8hQYoq.jpg",
+      "release_date": "2013-12-25",
+      "popularity_score": 0.9889891649738491,
+      "reception_score": 77.8,
+      "imdb_vote_count": 1779027,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 16869,
+      "title": "Inglourious Basterds",
+      "poster_url": "/7sfbEnaARXDDhKm0CZ7D7uc2sbo.jpg",
+      "release_date": "2009-08-02",
+      "popularity_score": 0.988987669994365,
+      "reception_score": 75.0,
+      "imdb_vote_count": 1775835,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 274,
+      "title": "The Silence of the Lambs",
+      "poster_url": "/uS9m8OBk1A8eM9I042bx8XXpqAq.jpg",
+      "release_date": "1991-02-14",
+      "popularity_score": 0.9889861748141627,
+      "reception_score": 86.0,
+      "imdb_vote_count": 1716540,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 272,
+      "title": "Batman Begins",
+      "poster_url": "/sPX89Td70IDDjVr85jdSBb4rWGr.jpg",
+      "release_date": "2005-06-10",
+      "popularity_score": 0.9889846794332161,
+      "reception_score": 74.8,
+      "imdb_vote_count": 1708190,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 475557,
+      "title": "Joker",
+      "poster_url": "/udDclJoHjfjb8Ekgsd4FDteOkCU.jpg",
+      "release_date": "2019-10-01",
+      "popularity_score": 0.9889831838514987,
+      "reception_score": 68.6,
+      "imdb_vote_count": 1686345,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 11324,
+      "title": "Shutter Island",
+      "poster_url": "/nrmXQ0zcZUL8jFLrakWc90IR8z9.jpg",
+      "release_date": "2010-02-14",
+      "popularity_score": 0.9889816880689841,
+      "reception_score": 70.6,
+      "imdb_vote_count": 1638431,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 857,
+      "title": "Saving Private Ryan",
+      "poster_url": "/uqx37cS8cpHg8U35f9U5IBlrCV3.jpg",
+      "release_date": "1998-07-24",
+      "popularity_score": 0.988980192085646,
+      "reception_score": 89.0,
+      "imdb_vote_count": 1632961,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 1124,
+      "title": "The Prestige",
+      "poster_url": "/Ag2B2KHKQPukjH7WutmgnnSNurZ.jpg",
+      "release_date": "2006-10-17",
+      "popularity_score": 0.9889786959014579,
+      "reception_score": 73.6,
+      "imdb_vote_count": 1581607,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 424,
+      "title": "Schindler's List",
+      "poster_url": "/sF1U4EUQS8YHUYjNl3pMGNIQyr0.jpg",
+      "release_date": "1993-12-15",
+      "popularity_score": 0.9889771995163941,
+      "reception_score": 93.0,
+      "imdb_vote_count": 1581164,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 11,
+      "title": "Star Wars",
+      "poster_url": "/6FfCtAuVAW8XJjZ7eWeLibRLWTw.jpg",
+      "release_date": "1977-05-25",
+      "popularity_score": 0.9889757029304274,
+      "reception_score": 88.4,
+      "imdb_vote_count": 1565240,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 497,
+      "title": "The Green Mile",
+      "poster_url": "/8VG8fDNiy50H4FedGwdSVUPoaJe.jpg",
+      "release_date": "1999-12-10",
+      "popularity_score": 0.9889742061435318,
+      "reception_score": 71.0,
+      "imdb_vote_count": 1555923,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 24428,
+      "title": "The Avengers",
+      "poster_url": "/RYMX2wcKCBAr24UyPD7xwmjaTn.jpg",
+      "release_date": "2012-04-25",
+      "popularity_score": 0.988972709155681,
+      "reception_score": 73.4,
+      "imdb_vote_count": 1553946,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 1422,
+      "title": "The Departed",
+      "poster_url": "/nT97ifVT2J1yMQmeq20Qblg61T.jpg",
+      "release_date": "2006-10-04",
+      "popularity_score": 0.9889712119668488,
+      "reception_score": 85.0,
+      "imdb_vote_count": 1549175,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 1891,
+      "title": "The Empire Strikes Back",
+      "poster_url": "/nNAeTmF4CtdSgMDplXTDPOpYzsX.jpg",
+      "release_date": "1980-05-20",
+      "popularity_score": 0.9889697145770084,
+      "reception_score": 84.0,
+      "imdb_vote_count": 1500037,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 19995,
+      "title": "Avatar",
+      "poster_url": "/gKY6q7SjCkAU6FqvqWybDYgUKIF.jpg",
+      "release_date": "2009-12-16",
+      "popularity_score": 0.9889682169861337,
+      "reception_score": 81.4,
+      "imdb_vote_count": 1493343,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 240,
+      "title": "The Godfather Part II",
+      "poster_url": "/hek3koDUyRQk7FIhPXsa6mT2Zc3.jpg",
+      "release_date": "1974-12-20",
+      "popularity_score": 0.9889667191941982,
+      "reception_score": 90.0,
+      "imdb_vote_count": 1490881,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 105,
+      "title": "Back to the Future",
+      "poster_url": "/vN5B5WgYscRGcQpVhHl6p9DDTP0.jpg",
+      "release_date": "1985-07-03",
+      "popularity_score": 0.9889652212011756,
+      "reception_score": 86.8,
+      "imdb_vote_count": 1447414,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 299534,
+      "title": "Avengers: Endgame",
+      "poster_url": "/ulzhLuWrPK07P1YkdWQLZnQh1JL.jpg",
+      "release_date": "2019-04-24",
+      "popularity_score": 0.9889637230070397,
+      "reception_score": 80.4,
+      "imdb_vote_count": 1438710,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 77,
+      "title": "Memento",
+      "poster_url": "/fKTPH2WvH8nHTXeBYBVhawtRqtR.jpg",
+      "release_date": "2000-10-11",
+      "popularity_score": 0.9889622246117639,
+      "reception_score": 83.4,
+      "imdb_vote_count": 1431151,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 597,
+      "title": "Titanic",
+      "poster_url": "/9xjZS2rlVxm8SFx8kPC3aIGCOYQ.jpg",
+      "release_date": "1997-12-18",
+      "popularity_score": 0.9889607260153216,
+      "reception_score": 77.0,
+      "imdb_vote_count": 1387942,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 769,
+      "title": "GoodFellas",
+      "poster_url": "/9OkCLM73MIU2CrKZbqiT8Ln1wY2.jpg",
+      "release_date": "1990-09-12",
+      "popularity_score": 0.9889592272176866,
+      "reception_score": 90.0,
+      "imdb_vote_count": 1386338,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 37165,
+      "title": "The Truman Show",
+      "poster_url": "/vuza0WqY239yBXOadKlGwJsZJFE.jpg",
+      "release_date": "1998-06-04",
+      "popularity_score": 0.988957728218833,
+      "reception_score": 86.8,
+      "imdb_vote_count": 1365928,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 299536,
+      "title": "Avengers: Infinity War",
+      "poster_url": "/7WsyChQLEftFiDOVTGkv3hFpyyt.jpg",
+      "release_date": "2018-04-25",
+      "popularity_score": 0.9889562290187336,
+      "reception_score": 74.4,
+      "imdb_vote_count": 1365089,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 118340,
+      "title": "Guardians of the Galaxy",
+      "poster_url": "/r7vmZjiyZw9rpJMQJdXpjgiCOk9.jpg",
+      "release_date": "2014-07-30",
+      "popularity_score": 0.9889547296173624,
+      "reception_score": 77.6,
+      "imdb_vote_count": 1359738,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 101,
+      "title": "Léon: The Professional",
+      "poster_url": "/bxB2q91nKYp8JNzqE7t7TWBVupB.jpg",
+      "release_date": "1994-09-14",
+      "popularity_score": 0.9889532300146932,
+      "reception_score": 72.4,
+      "imdb_vote_count": 1347427,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 22,
+      "title": "Pirates of the Caribbean: The Curse of the Black Pearl",
+      "poster_url": "/kvDwL2gTf6yxujbsWbsGQB3Z9Wa.jpg",
+      "release_date": "2003-07-09",
+      "popularity_score": 0.9889517302106989,
+      "reception_score": 70.19999999999999,
+      "imdb_vote_count": 1320464,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 10681,
+      "title": "WALL·E",
+      "poster_url": "/hbhFnRzzg6ZDmm8YAmxBnQpQIPh.jpg",
+      "release_date": "2008-06-22",
+      "popularity_score": 0.9889502302053538,
+      "reception_score": 90.6,
+      "imdb_vote_count": 1315935,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 24,
+      "title": "Kill Bill: Vol. 1",
+      "poster_url": "/v7TaX8kXMXs5yFFGR41guUDNcnB.jpg",
+      "release_date": "2003-10-10",
+      "popularity_score": 0.9889487299986313,
+      "reception_score": 74.19999999999999,
+      "imdb_vote_count": 1302796,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 280,
+      "title": "Terminator 2: Judgment Day",
+      "poster_url": "/jFTVD4XoWQTcg7wdyJKa8PEds5q.jpg",
+      "release_date": "1991-07-03",
+      "popularity_score": 0.9889472295905047,
+      "reception_score": 79.4,
+      "imdb_vote_count": 1280279,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 14,
+      "title": "American Beauty",
+      "poster_url": "/wby9315QzVKdW9BonAefg8jGTTb.jpg",
+      "release_date": "1999-09-15",
+      "popularity_score": 0.988945728980948,
+      "reception_score": 83.6,
+      "imdb_vote_count": 1277520,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 73,
+      "title": "American History X",
+      "poster_url": "/x2drgoXYZ8484lqyDj7L1CEVR4T.jpg",
+      "release_date": "1998-07-01",
+      "popularity_score": 0.9889442281699344,
+      "reception_score": 71.19999999999999,
+      "imdb_vote_count": 1270224,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 8587,
+      "title": "The Lion King",
+      "poster_url": "/sKCr78MXSLixwmZ8DyJLrpMsd15.jpg",
+      "release_date": "1994-06-15",
+      "popularity_score": 0.9889427271574377,
+      "reception_score": 86.8,
+      "imdb_vote_count": 1254459,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 293660,
+      "title": "Deadpool",
+      "poster_url": "/3E53WEZJqP6aM84D8CckXx4pIHw.jpg",
+      "release_date": "2016-02-09",
+      "popularity_score": 0.9889412259434314,
+      "reception_score": 71.0,
+      "imdb_vote_count": 1249712,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 752,
+      "title": "V for Vendetta",
+      "poster_url": "/piZOwjyk1g51oPHonc7zaQY3WOv.jpg",
+      "release_date": "2006-02-23",
+      "popularity_score": 0.988939724527889,
+      "reception_score": 69.6,
+      "imdb_vote_count": 1244150,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 629,
+      "title": "The Usual Suspects",
+      "poster_url": "/99X2SgyFunJFXGAYnDv3sb9pnUD.jpg",
+      "release_date": "1995-07-19",
+      "popularity_score": 0.9889382229107843,
+      "reception_score": 79.6,
+      "imdb_vote_count": 1235473,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 14160,
+      "title": "Up",
+      "poster_url": "/mFvoEwSfLqbcWwFsDjQebn9bzFe.jpg",
+      "release_date": "2009-05-28",
+      "popularity_score": 0.9889367210920906,
+      "reception_score": 86.0,
+      "imdb_vote_count": 1231544,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 640,
+      "title": "Catch Me If You Can",
+      "poster_url": "/ctjEj2xM32OvBXCq8zAdK3ZrsAj.jpg",
+      "release_date": "2002-12-16",
+      "popularity_score": 0.9889352190717816,
+      "reception_score": 77.4,
+      "imdb_vote_count": 1231379,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 694,
+      "title": "The Shining",
+      "poster_url": "/uAR0AWqhQL1hQa69UDEbb2rE5Wx.jpg",
+      "release_date": "1980-05-23",
+      "popularity_score": 0.9889337168498307,
+      "reception_score": 74.4,
+      "imdb_vote_count": 1221551,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 1726,
+      "title": "Iron Man",
+      "poster_url": "/78lPtwv72eTNqFW9COBYI0dWDJa.jpg",
+      "release_date": "2008-04-30",
+      "popularity_score": 0.9889322144262115,
+      "reception_score": 79.0,
+      "imdb_vote_count": 1220452,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 489,
+      "title": "Good Will Hunting",
+      "poster_url": "/z2FnLKpFi1HPO7BEJxdkv6hpJSU.jpg",
+      "release_date": "1997-12-05",
+      "popularity_score": 0.9889307118008978,
+      "reception_score": 76.2,
+      "imdb_vote_count": 1211110,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 1892,
+      "title": "Return of the Jedi",
+      "poster_url": "/jQYlydvHm3kUix1f8prMucrplhm.jpg",
+      "release_date": "1983-05-25",
+      "popularity_score": 0.9889292089738628,
+      "reception_score": 68.0,
+      "imdb_vote_count": 1205944,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 12,
+      "title": "Finding Nemo",
+      "poster_url": "/eHuGQ10FUzK1mdOY69wF5pGgEf5.jpg",
+      "release_date": "2003-05-30",
+      "popularity_score": 0.9889277059450802,
+      "reception_score": 86.8,
+      "imdb_vote_count": 1203902,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 76341,
+      "title": "Mad Max: Fury Road",
+      "poster_url": "/hA2ple9q4qnwxp3hKVNhroipsir.jpg",
+      "release_date": "2015-05-13",
+      "popularity_score": 0.9889262027145235,
+      "reception_score": 86.4,
+      "imdb_vote_count": 1203004,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 6977,
+      "title": "No Country for Old Men",
+      "poster_url": "/6d5XOczc226jECq0LIX0siKtgHR.jpg",
+      "release_date": "2007-11-09",
+      "popularity_score": 0.9889246992821663,
+      "reception_score": 88.0,
+      "imdb_vote_count": 1184563,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 38,
+      "title": "Eternal Sunshine of the Spotless Mind",
+      "poster_url": "/5MwkWH9tYHv3mV9OdYTMR5qreIz.jpg",
+      "release_date": "2004-03-19",
+      "popularity_score": 0.9889231956479819,
+      "reception_score": 86.6,
+      "imdb_vote_count": 1179581,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 329,
+      "title": "Jurassic Park",
+      "poster_url": "/maFjKnJ62hDQ9E66dKqDZgbUy0H.jpg",
+      "release_date": "1993-06-11",
+      "popularity_score": 0.9889216918119443,
+      "reception_score": 73.6,
+      "imdb_vote_count": 1173153,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 862,
+      "title": "Toy Story",
+      "poster_url": "/uXDfjJbdP4ijW5hWSBrPrlKpxab.jpg",
+      "release_date": "1995-11-22",
+      "popularity_score": 0.9889201877740266,
+      "reception_score": 90.8,
+      "imdb_vote_count": 1169909,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 500,
+      "title": "Reservoir Dogs",
+      "poster_url": "/xi8Iu6qyTfyZVDVy60raIOYJJmk.jpg",
+      "release_date": "1992-09-02",
+      "popularity_score": 0.9889186835342024,
+      "reception_score": 81.80000000000001,
+      "imdb_vote_count": 1167885,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 210577,
+      "title": "Gone Girl",
+      "poster_url": "/ts996lKsxvjkO2yiYG0ht4qAicO.jpg",
+      "release_date": "2014-10-01",
+      "popularity_score": 0.9889171790924453,
+      "reception_score": 79.8,
+      "imdb_vote_count": 1164741,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 197,
+      "title": "Braveheart",
+      "poster_url": "/or1gBugydmjToAEq7OZY0owwFk.jpg",
+      "release_date": "1995-05-24",
+      "popularity_score": 0.9889156744487289,
+      "reception_score": 74.0,
+      "imdb_vote_count": 1158450,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 496243,
+      "title": "Parasite",
+      "poster_url": "/7IiTTgloJzvGI1TAYymCfbfl3vT.jpg",
+      "release_date": "2019-05-30",
+      "popularity_score": 0.9889141696030264,
+      "reception_score": 92.19999999999999,
+      "imdb_vote_count": 1156487,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 510,
+      "title": "One Flew Over the Cuckoo's Nest",
+      "poster_url": "/kjWsMh72V6d8KRLV4EOoSJLT1H7.jpg",
+      "release_date": "1975-11-19",
+      "popularity_score": 0.9889126645553116,
+      "reception_score": 84.8,
+      "imdb_vote_count": 1154454,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 244786,
+      "title": "Whiplash",
+      "poster_url": "/7fn624j5lj3xTme2SgiLCeuedmO.jpg",
+      "release_date": "2014-10-10",
+      "popularity_score": 0.9889111593055578,
+      "reception_score": 87.4,
+      "imdb_vote_count": 1148396,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 745,
+      "title": "The Sixth Sense",
+      "poster_url": "/vOyfUXNFSnaTk7Vk5AjpsKTUWsu.jpg",
+      "release_date": "1999-08-06",
+      "popularity_score": 0.9889096538537389,
+      "reception_score": 71.19999999999999,
+      "imdb_vote_count": 1140945,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 85,
+      "title": "Raiders of the Lost Ark",
+      "poster_url": "/ceG9VzoRAVGwivFU403Wc3AHRys.jpg",
+      "release_date": "1981-06-12",
+      "popularity_score": 0.9889081481998279,
+      "reception_score": 85.2,
+      "imdb_vote_count": 1107711,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 70160,
+      "title": "The Hunger Games",
+      "poster_url": "/yXCbOiVDCxO71zI7cuwBRXdftq8.jpg",
+      "release_date": "2012-03-12",
+      "popularity_score": 0.9889066423437983,
+      "reception_score": 69.6,
+      "imdb_vote_count": 1078194,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 585,
+      "title": "Monsters, Inc.",
+      "poster_url": "/wFSpyMsp7H0ttERbxY7Trlv8xry.jpg",
+      "release_date": "2001-11-01",
+      "popularity_score": 0.988905136285624,
+      "reception_score": 79.8,
+      "imdb_vote_count": 1071447,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 348,
+      "title": "Alien",
+      "poster_url": "/vfrQk5IPloGg1v9Rzbh2Eg3VGyM.jpg",
+      "release_date": "1979-05-25",
+      "popularity_score": 0.9889036300252783,
+      "reception_score": 87.4,
+      "imdb_vote_count": 1060652,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 453,
+      "title": "A Beautiful Mind",
+      "poster_url": "/zwzWCmH72OSC9NA0ipoqw5Zjya8.jpg",
+      "release_date": "2001-12-14",
+      "popularity_score": 0.9889021235627345,
+      "reception_score": 76.0,
+      "imdb_vote_count": 1051202,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 12445,
+      "title": "Harry Potter and the Deathly Hallows: Part 2",
+      "poster_url": "/c54HpQmuwXjHq2C9wmoACjxoom3.jpg",
+      "release_date": "2011-07-12",
+      "popularity_score": 0.9889006168979665,
+      "reception_score": 83.4,
+      "imdb_vote_count": 1042180,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 438631,
+      "title": "Dune",
+      "poster_url": "/gDzOcq0pfeCeqMBwKIJlSmQpjkZ.jpg",
+      "release_date": "2021-09-15",
+      "popularity_score": 0.9888991100309471,
+      "reception_score": 76.4,
+      "imdb_vote_count": 1035665,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 562,
+      "title": "Die Hard",
+      "poster_url": "/7Bjd8kfmDSOzpmhySpEhkUyK2oH.jpg",
+      "release_date": "1988-07-15",
+      "popularity_score": 0.9888976029616506,
+      "reception_score": 76.0,
+      "imdb_vote_count": 1027663,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 77338,
+      "title": "The Intouchables",
+      "poster_url": "/1QU7HKgsQbGpzsJbJK4pAVQV9F5.jpg",
+      "release_date": "2011-11-02",
+      "popularity_score": 0.9888960956900498,
+      "reception_score": 68.19999999999999,
+      "imdb_vote_count": 1023549,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 140607,
+      "title": "Star Wars: The Force Awakens",
+      "poster_url": "/wqnLdwVXoBjKibFRR5U3y0aDUhs.jpg",
+      "release_date": "2015-12-15",
+      "popularity_score": 0.9888945882161185,
+      "reception_score": 78.8,
+      "imdb_vote_count": 1023427,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 103,
+      "title": "Taxi Driver",
+      "poster_url": "/ekstpH614fwDX8DUln1a2Opz0N8.jpg",
+      "release_date": "1976-02-09",
+      "popularity_score": 0.98889308053983,
+      "reception_score": 89.19999999999999,
+      "imdb_vote_count": 1022836,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 872585,
+      "title": "Oppenheimer",
+      "poster_url": "/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg",
+      "release_date": "2023-07-19",
+      "popularity_score": 0.9888915726611581,
+      "reception_score": 86.8,
+      "imdb_vote_count": 1019075,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 634649,
+      "title": "Spider-Man: No Way Home",
+      "poster_url": "/1g0dhYtq4irTY1GPXvft6k4YLjm.jpg",
+      "release_date": "2021-12-15",
+      "popularity_score": 0.9888900645800759,
+      "reception_score": 75.0,
+      "imdb_vote_count": 1013881,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 111,
+      "title": "Scarface",
+      "poster_url": "/iQ5ztdjvteGeboxtmRdXEChJOHh.jpg",
+      "release_date": "1983-12-09",
+      "popularity_score": 0.9888885562965568,
+      "reception_score": 72.2,
+      "imdb_vote_count": 1011801,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 423,
+      "title": "The Pianist",
+      "poster_url": "/2hFvxCCWrTmCYwfy7yum0GKRi3Y.jpg",
+      "release_date": "2002-09-17",
+      "popularity_score": 0.9888870478105746,
+      "reception_score": 85.0,
+      "imdb_vote_count": 1009033,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 286217,
+      "title": "The Martian",
+      "poster_url": "/fASz8A0yFE3QB6LgGoOfwvFSseV.jpg",
+      "release_date": "2015-09-30",
+      "popularity_score": 0.9888855391221024,
+      "reception_score": 80.0,
+      "imdb_vote_count": 1006932,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 218,
+      "title": "The Terminator",
+      "poster_url": "/qvktm0BHcnmDpul4Hz01GIazWPr.jpg",
+      "release_date": "1984-10-26",
+      "popularity_score": 0.9888840302311139,
+      "reception_score": 82.8,
+      "imdb_vote_count": 1001345,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 99861,
+      "title": "Avengers: Age of Ultron",
+      "poster_url": "/4ssDuvEDkSArWEdyBl2X5EHvYKU.jpg",
+      "release_date": "2015-04-22",
+      "popularity_score": 0.9888825211375823,
+      "reception_score": 68.8,
+      "imdb_vote_count": 997270,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 389,
+      "title": "12 Angry Men",
+      "poster_url": "/zhG3vKWyDRaZYoaww1UVAi29T9h.jpg",
+      "release_date": "1957-04-10",
+      "popularity_score": 0.9888810118414815,
+      "reception_score": 94.19999999999999,
+      "imdb_vote_count": 980331,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 107,
+      "title": "Snatch",
+      "poster_url": "/kJZoAHq1SLDdWjeNGtlHAnGpmFV.jpg",
+      "release_date": "2000-09-01",
+      "popularity_score": 0.9888795023427844,
+      "reception_score": 65.8,
+      "imdb_vote_count": 974759,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 641,
+      "title": "Requiem for a Dream",
+      "poster_url": "/nOd6vjEmzCT0k4VYqsA2hwyi87C.jpg",
+      "release_date": "2000-10-06",
+      "popularity_score": 0.9888779926414646,
+      "reception_score": 75.80000000000001,
+      "imdb_vote_count": 970796,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 100402,
+      "title": "Captain America: The Winter Soldier",
+      "poster_url": "/tVFRpFw3xTedgPGqxW0AOI8Qhh0.jpg",
+      "release_date": "2014-03-20",
+      "popularity_score": 0.9888764827374955,
+      "reception_score": 72.8,
+      "imdb_vote_count": 968775,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 120467,
+      "title": "The Grand Budapest Hotel",
+      "poster_url": "/eWdyYQreja6JGCzqHWXpWHDrrPo.jpg",
+      "release_date": "2014-02-26",
+      "popularity_score": 0.9888749726308508,
+      "reception_score": 85.19999999999999,
+      "imdb_vote_count": 967077,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 10193,
+      "title": "Toy Story 3",
+      "poster_url": "/AbbXspMOwdvwWZgVN0nabZq03Ec.jpg",
+      "release_date": "2010-06-16",
+      "popularity_score": 0.9888734623215037,
+      "reception_score": 88.4,
+      "imdb_vote_count": 966794,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 557,
+      "title": "Spider-Man",
+      "poster_url": "/kjdJntyBeEvqm9w97QGBdxPptzj.jpg",
+      "release_date": "2002-05-01",
+      "popularity_score": 0.9888719518094276,
+      "reception_score": 73.4,
+      "imdb_vote_count": 964710,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 1771,
+      "title": "Captain America: The First Avenger",
+      "poster_url": "/vSNxAJTlD0r02V9sPYpOjqDZXUK.jpg",
+      "release_date": "2011-07-22",
+      "popularity_score": 0.9888704410945959,
+      "reception_score": 67.2,
+      "imdb_vote_count": 964308,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 10195,
+      "title": "Thor",
+      "poster_url": "/prSfAi1xGrhLQNxVSUFh61xQ4Qy.jpg",
+      "release_date": "2011-04-21",
+      "popularity_score": 0.9888689301769821,
+      "reception_score": 62.199999999999996,
+      "imdb_vote_count": 963111,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 68721,
+      "title": "Iron Man 3",
+      "poster_url": "/qhPtAc1TKbMPqNvcdXSOn9Bn7hZ.jpg",
+      "release_date": "2013-04-18",
+      "popularity_score": 0.9888674190565594,
+      "reception_score": 65.6,
+      "imdb_vote_count": 962911,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 129,
+      "title": "Spirited Away",
+      "poster_url": "/39wmItIWsg5sZMyRUHLkWBcuVCM.jpg",
+      "release_date": "2001-07-20",
+      "popularity_score": 0.9888659077333015,
+      "reception_score": 92.0,
+      "imdb_vote_count": 962686,
+      "sources": [
+        "all_time_top_100"
+      ]
+    },
+    {
+      "movie_id": 466272,
+      "title": "Once Upon a Time... in Hollywood",
+      "poster_url": "/8j58iEBw9pOXFD2L0nt0ZXeHviB.jpg",
+      "release_date": "2019-07-24",
+      "popularity_score": 0.9888643962071818,
+      "reception_score": 80.8,
+      "imdb_vote_count": 958322,
+      "sources": [
+        "all_time_top_100",
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 281957,
+      "title": "The Revenant",
+      "poster_url": "/ji3ecJphATlVgWNY0B0RVXZizdf.jpg",
+      "release_date": "2015-12-25",
+      "popularity_score": 0.9888613725462501,
+      "reception_score": 77.6,
+      "imdb_vote_count": 946929,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 10138,
+      "title": "Iron Man 2",
+      "poster_url": "/6WBeq4fCfn7AN0o21W9qNcRF2l9.jpg",
+      "release_date": "2010-04-28",
+      "popularity_score": 0.9888568355327226,
+      "reception_score": 61.8,
+      "imdb_vote_count": 934558,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 146233,
+      "title": "Prisoners",
+      "poster_url": "/jsS3a3ep2KyBVmmiwaz3LvK49b1.jpg",
+      "release_date": "2013-09-19",
+      "popularity_score": 0.9888553227888724,
+      "reception_score": 74.8,
+      "imdb_vote_count": 930114,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 49051,
+      "title": "The Hobbit: An Unexpected Journey",
+      "poster_url": "/yHA9Fc37VmpUA5UncTxxo3rTGVA.jpg",
+      "release_date": "2012-12-12",
+      "popularity_score": 0.9888522966920009,
+      "reception_score": 66.0,
+      "imdb_vote_count": 925661,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 271110,
+      "title": "Captain America: Civil War",
+      "poster_url": "/rAGiXaUfPzY7CDEyNKUofk3Kw2e.jpg",
+      "release_date": "2016-04-27",
+      "popularity_score": 0.9888507833389261,
+      "reception_score": 76.2,
+      "imdb_vote_count": 923985,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 263115,
+      "title": "Logan",
+      "poster_url": "/fnbjcRDYn6YviCcePDnGdyAkYsB.jpg",
+      "release_date": "2017-02-28",
+      "popularity_score": 0.9888477560233658,
+      "reception_score": 78.6,
+      "imdb_vote_count": 922741,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 414906,
+      "title": "The Batman",
+      "poster_url": "/74xTEgt7R36Fpooo50r9T25onhq.jpg",
+      "release_date": "2022-03-01",
+      "popularity_score": 0.988846242060827,
+      "reception_score": 74.39999999999999,
+      "imdb_vote_count": 922445,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 150540,
+      "title": "Inside Out",
+      "poster_url": "/2H1TmgdfNtsKlU9jKdeNyYL5y8T.jpg",
+      "release_date": "2015-06-17",
+      "popularity_score": 0.9888416989538558,
+      "reception_score": 88.8,
+      "imdb_vote_count": 911153,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 284054,
+      "title": "Black Panther",
+      "poster_url": "/uxzzxijgPIY7slzFvMotPv8wjKA.jpg",
+      "release_date": "2018-02-13",
+      "popularity_score": 0.9888356386317378,
+      "reception_score": 82.0,
+      "imdb_vote_count": 906501,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 49047,
+      "title": "Gravity",
+      "poster_url": "/kZ2nZw8D681aphje8NJi8EfbL1U.jpg",
+      "release_date": "2013-10-03",
+      "popularity_score": 0.9888341230427885,
+      "reception_score": 88.39999999999999,
+      "imdb_vote_count": 898264,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 284053,
+      "title": "Thor: Ragnarok",
+      "poster_url": "/rzRwTcFvttcN1ZpX2xv4j3tSdJu.jpg",
+      "release_date": "2017-10-02",
+      "popularity_score": 0.9888310912545996,
+      "reception_score": 76.0,
+      "imdb_vote_count": 891584,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 10191,
+      "title": "How to Train Your Dragon",
+      "poster_url": "/ygGmAO60t8GyqUo9xYeYxSZAR3b.jpg",
+      "release_date": "2010-03-18",
+      "popularity_score": 0.9888295750553063,
+      "reception_score": 77.4,
+      "imdb_vote_count": 890565,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 44214,
+      "title": "Black Swan",
+      "poster_url": "/viWheBd44bouiLCHgNMvahLThqx.jpg",
+      "release_date": "2010-12-03",
+      "popularity_score": 0.9888265420461895,
+      "reception_score": 79.4,
+      "imdb_vote_count": 886951,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 284052,
+      "title": "Doctor Strange",
+      "poster_url": "/xf8PbyQcR5ucXErmZNzdKR0s8ya.jpg",
+      "release_date": "2016-10-25",
+      "popularity_score": 0.9888235082228539,
+      "reception_score": 73.19999999999999,
+      "imdb_vote_count": 876716,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 205596,
+      "title": "The Imitation Game",
+      "poster_url": "/zSqJ1qFq8NXFfi7JeIYMlzyR0dx.jpg",
+      "release_date": "2014-11-14",
+      "popularity_score": 0.9888219910057874,
+      "reception_score": 74.6,
+      "imdb_vote_count": 875841,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 546554,
+      "title": "Knives Out",
+      "poster_url": "/pThyQovXQrw2m0s9x82twj48Jq4.jpg",
+      "release_date": "2019-11-27",
+      "popularity_score": 0.9888189559607233,
+      "reception_score": 80.8,
+      "imdb_vote_count": 874062,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 49521,
+      "title": "Man of Steel",
+      "poster_url": "/8GFtkImmK0K1VaUChR0n9O61CFU.jpg",
+      "release_date": "2013-06-12",
+      "popularity_score": 0.9888144018653997,
+      "reception_score": 61.4,
+      "imdb_vote_count": 864817,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 329865,
+      "title": "Arrival",
+      "poster_url": "/pEzNVQfdzYDzVK0XqxERIw2x2se.jpg",
+      "release_date": "2016-11-10",
+      "popularity_score": 0.9888098459361613,
+      "reception_score": 80.2,
+      "imdb_vote_count": 859672,
+      "sources": [
+        "since_2010_top_50"
+      ]
+    },
+    {
+      "movie_id": 1621842,
+      "title": "Bebe Main Badmash Banuga",
+      "poster_url": "/xs1UbPD98BKoKrlhw4BhrGHjg4S.jpg",
+      "release_date": "2026-02-06",
+      "popularity_score": 0.015481608710989239,
+      "reception_score": 98.0,
+      "imdb_vote_count": 605,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1599301,
+      "title": "A Fighting Legacy",
+      "poster_url": "/BVaY7tLXbk2xXP5EagoFkYE1GT.jpg",
+      "release_date": "2025-10-11",
+      "popularity_score": 5.373839371947495e-05,
+      "reception_score": 98.0,
+      "imdb_vote_count": 97,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1290217,
+      "title": "Dog Run",
+      "poster_url": "/n9HA6tGKAlMhyKD5t2ZqFqEwklS.jpg",
+      "release_date": "2023-08-09",
+      "popularity_score": 2.8372158532702955e-05,
+      "reception_score": 98.0,
+      "imdb_vote_count": 31,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1490934,
+      "title": "Melawan Stigma",
+      "poster_url": "/hLJkdsRPZIvhq2Tik1jUv768lSj.jpg",
+      "release_date": "2025-10-10",
+      "popularity_score": 7.9959096689103e-05,
+      "reception_score": 96.0,
+      "imdb_vote_count": 124,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1120317,
+      "title": "Abby’s List: A Dogumentary",
+      "poster_url": "/1ZnysoGyUQ5paOJdK9VJpuvwRK4.jpg",
+      "release_date": "2025-05-02",
+      "popularity_score": 5.587471382551025e-05,
+      "reception_score": 96.0,
+      "imdb_vote_count": 100,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1467974,
+      "title": "Bobo & Bibi in Miami",
+      "poster_url": "/lJOiHd4ncl2LXmAr5wW0N2ufHK8.jpg",
+      "release_date": "2025-04-20",
+      "popularity_score": 3.782581785131734e-05,
+      "reception_score": 96.0,
+      "imdb_vote_count": 70,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1635529,
+      "title": "Bambukat 2",
+      "poster_url": "/yZToIdLzKfaG0sv2JKuJQMMD8Qd.jpg",
+      "release_date": "2026-02-20",
+      "popularity_score": 0.5468006613459253,
+      "reception_score": 95.0,
+      "imdb_vote_count": 2289,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1065043,
+      "title": "Visualization",
+      "poster_url": "/fFukH2Ao5wcLMT8TC1LeNf0tU74.jpg",
+      "release_date": "2022-05-23",
+      "popularity_score": 0.01143953864932632,
+      "reception_score": 95.0,
+      "imdb_vote_count": 557,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1552117,
+      "title": "Chalo Bulaava Aaya Hai",
+      "poster_url": "/469JpVpXBucgfGVS7J2OMqinTAf.jpg",
+      "release_date": "2025-09-19",
+      "popularity_score": 6.044696975880014e-05,
+      "reception_score": 95.0,
+      "imdb_vote_count": 106,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1059080,
+      "title": "Inside Scofield",
+      "poster_url": "/qDzVUaDe5edeSjP1NojkWgDkzN5.jpg",
+      "release_date": "2022-12-02",
+      "popularity_score": 3.739216310190326e-05,
+      "reception_score": 95.0,
+      "imdb_vote_count": 69,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 928537,
+      "title": "Courageous Warriors Beauty from the Ashes",
+      "poster_url": "/zb599lIvHoC9v07V8LYTaPcLyo1.jpg",
+      "release_date": "2021-10-24",
+      "popularity_score": 3.166543651465224e-05,
+      "reception_score": 95.0,
+      "imdb_vote_count": 51,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1137768,
+      "title": "What is Art",
+      "poster_url": "/jVRE8dgMtihNqI4pMHi49WOnS9e.jpg",
+      "release_date": "2023-06-27",
+      "popularity_score": 3.091381665558395e-05,
+      "reception_score": 95.0,
+      "imdb_vote_count": 48,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1523985,
+      "title": "The Warning Live From Auditorio Nacional, CDMX",
+      "poster_url": "/9s4HYSPyrr9kQh7gU7XBJqlPgLN.jpg",
+      "release_date": "2025-08-21",
+      "popularity_score": 0.001121723939664577,
+      "reception_score": 94.0,
+      "imdb_vote_count": 302,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1513775,
+      "title": "Jujji",
+      "poster_url": "/bXGD77TMjGboLPDABu8alAYcnxg.jpg",
+      "release_date": "2025-11-21",
+      "popularity_score": 0.00011334510075298754,
+      "reception_score": 94.0,
+      "imdb_vote_count": 145,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1492339,
+      "title": "The Quiet Diplomat",
+      "poster_url": "/9Sfr5dy3rNi9cLbBgGBjw71b5JI.jpg",
+      "release_date": "2025-07-22",
+      "popularity_score": 3.9178697115368046e-05,
+      "reception_score": 94.0,
+      "imdb_vote_count": 73,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1322077,
+      "title": "Heart of a Servant: The Father Flanagan Story",
+      "poster_url": "/tpHqwhc5Qu3Vt9moZJCvdzIcGXV.jpg",
+      "release_date": "2024-10-08",
+      "popularity_score": 3.391979357583973e-05,
+      "reception_score": 94.0,
+      "imdb_vote_count": 59,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1338678,
+      "title": "Undocumented",
+      "poster_url": "/ybb4Uus1zElGKqgHGJgxerk63Kc.jpg",
+      "release_date": "2024-10-03",
+      "popularity_score": 3.142295093845307e-05,
+      "reception_score": 94.0,
+      "imdb_vote_count": 50,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 327004,
+      "title": "Finding Family",
+      "poster_url": "/6cUG5t7Zz5ZkmhgPuIDjW65UXGK.jpg",
+      "release_date": "2013-08-17",
+      "popularity_score": 3.0509104385935438e-05,
+      "reception_score": 94.0,
+      "imdb_vote_count": 46,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1323656,
+      "title": "Drop",
+      "poster_url": "/1uiDEiFLpEEWOkQ28CfNZ801dKg.jpg",
+      "release_date": "2023-09-26",
+      "popularity_score": 2.788181773771418e-05,
+      "reception_score": 94.0,
+      "imdb_vote_count": 24,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 93162,
+      "title": "Jibon Theke Neya",
+      "poster_url": "/pES4eUEWPjySmp6f59I3RzpEP1I.jpg",
+      "release_date": "1970-03-09",
+      "popularity_score": 0.5629382793032874,
+      "reception_score": 93.0,
+      "imdb_vote_count": 2352,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1612063,
+      "title": "Twenty One Pilots: More Than We Ever Imagined",
+      "poster_url": "/5JvxjrXPTmwdY8VtFzHzQ23B8ba.jpg",
+      "release_date": "2026-02-25",
+      "popularity_score": 0.023741298152319755,
+      "reception_score": 93.0,
+      "imdb_vote_count": 679,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 79712,
+      "title": "My Chemical Romance: The Black Parade Is Dead!",
+      "poster_url": "/5T7OuZtJxSHfbfqZVNTc7NnGo9h.jpg",
+      "release_date": "2008-06-24",
+      "popularity_score": 0.0003993874289755887,
+      "reception_score": 93.0,
+      "imdb_vote_count": 225,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 251799,
+      "title": "Selena Live! The Last Concert",
+      "poster_url": "/fVgHumgohTo0QhmlKb2tfuKUAwW.jpg",
+      "release_date": "1995-02-26",
+      "popularity_score": 0.0003431948263951812,
+      "reception_score": 93.0,
+      "imdb_vote_count": 215,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 101913,
+      "title": "Yanni: Tribute",
+      "poster_url": "/q4tNS0GWbQOLyxRhMRnmsB3VSqY.jpg",
+      "release_date": "1997-06-16",
+      "popularity_score": 0.0001703431633199712,
+      "reception_score": 93.0,
+      "imdb_vote_count": 170,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1008929,
+      "title": "We Want the Airwaves",
+      "poster_url": "/tvDdkDgArkPD045LYDHWR3nkusx.jpg",
+      "release_date": "2022-06-28",
+      "popularity_score": 5.299849872557983e-05,
+      "reception_score": 93.0,
+      "imdb_vote_count": 96,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 550957,
+      "title": "RISE: The Story of Augustines",
+      "poster_url": "/cKBiYk0DDpuQjBOQ2VysuE3Yy7U.jpg",
+      "release_date": "2018-07-27",
+      "popularity_score": 4.495571210820592e-05,
+      "reception_score": 93.0,
+      "imdb_vote_count": 84,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1023830,
+      "title": "The Jackie Stiles Story",
+      "poster_url": "/lVFrVw9YUEE9qmn7TyCZPGytAq4.jpg",
+      "release_date": "2022-08-30",
+      "popularity_score": 3.5462456490929326e-05,
+      "reception_score": 93.0,
+      "imdb_vote_count": 64,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1267732,
+      "title": "Humans and Other Animals",
+      "poster_url": "/1KMzns1sA4RCsiTHvgwvbfEMjMh.jpg",
+      "release_date": "2024-08-06",
+      "popularity_score": 3.3274147541359454e-05,
+      "reception_score": 93.0,
+      "imdb_vote_count": 57,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1255606,
+      "title": "The Sound of Southside",
+      "poster_url": "/51lIGmyQqKwDvoe0vGAEoqLl4xy.jpg",
+      "release_date": "2023-05-13",
+      "popularity_score": 3.3274147541359454e-05,
+      "reception_score": 93.0,
+      "imdb_vote_count": 57,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1339212,
+      "title": "Don't Turn Your Back on Friday Night",
+      "poster_url": "/1Ou40C9S69c9fxQJVni8ofIhR9x.jpg",
+      "release_date": "2024-08-27",
+      "popularity_score": 3.194924036414042e-05,
+      "reception_score": 93.0,
+      "imdb_vote_count": 52,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 524345,
+      "title": "The Goddess Project",
+      "poster_url": "/mLqvpsrbKtHOcKdC6av7IsXIqrh.jpg",
+      "release_date": "2017-04-06",
+      "popularity_score": 3.142295093845307e-05,
+      "reception_score": 93.0,
+      "imdb_vote_count": 50,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1341740,
+      "title": "Epic Bill",
+      "poster_url": "/1A9vfXYEDSsHXbcNmlnovwjtCau.jpg",
+      "release_date": "2022-01-31",
+      "popularity_score": 2.8634307272582196e-05,
+      "reception_score": 93.0,
+      "imdb_vote_count": 34,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1442011,
+      "title": "Johanne Sacreblu",
+      "poster_url": "/6RYZRfUKb4dbMCV9G6sTMit10SU.jpg",
+      "release_date": "2025-02-14",
+      "popularity_score": 0.9301312799928065,
+      "reception_score": 92.0,
+      "imdb_vote_count": 8654,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1050437,
+      "title": "Mind Game",
+      "poster_url": "/rVQCz4gXNro5XxmUhw1HRceOLTo.jpg",
+      "release_date": "2023-10-06",
+      "popularity_score": 0.03491717498211797,
+      "reception_score": 92.0,
+      "imdb_vote_count": 755,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1325635,
+      "title": "Bidurbhai",
+      "poster_url": "/9gPyOjxEhuZdBYtHTTQShQAz0l1.jpg",
+      "release_date": "2024-07-19",
+      "popularity_score": 0.005792301908640092,
+      "reception_score": 92.0,
+      "imdb_vote_count": 465,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1013484,
+      "title": "Black Sabbath: Sabotage - The Documentary",
+      "poster_url": "/dLAsvBlUv61CnAOqLVNabJfvck6.jpg",
+      "release_date": "2022-01-13",
+      "popularity_score": 5.446618350696718e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 98,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1201767,
+      "title": "Scooter LaForge: A Life of Art",
+      "poster_url": "/xhaewGgBdB4aBq5gZgsYZBp6Gti.jpg",
+      "release_date": "2023-11-08",
+      "popularity_score": 5.299849872557983e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 96,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1608761,
+      "title": "Scumtown High",
+      "poster_url": "/dcD12PS9O8aFmf4huTWtxmQ9TUG.jpg",
+      "release_date": "2026-02-17",
+      "popularity_score": 4.996076459866094e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 92,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 99764,
+      "title": "The Face of Birth",
+      "poster_url": "/uHFSlOTuFChbtpyDoGWPSLTh08i.jpg",
+      "release_date": "2012-02-01",
+      "popularity_score": 4.2181620278263196e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 79,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 836042,
+      "title": "Tomcat Tales",
+      "poster_url": "/8mkAUkkRCLvMBMBvLFvhLF9SPC4.jpg",
+      "release_date": "2020-01-01",
+      "popularity_score": 3.876676572178185e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 72,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1160020,
+      "title": "The Lemurian Candidate",
+      "poster_url": "/gUapaYHE8TOsG0P37FbDiz6VyWn.jpg",
+      "release_date": "2025-09-12",
+      "popularity_score": 3.5462456490929326e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 64,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 340504,
+      "title": "The Cobblestone Corridor",
+      "poster_url": "/xdPVxMtE0t2xuHIfN6oshNwf5KH.jpg",
+      "release_date": "2015-05-21",
+      "popularity_score": 3.194924036414042e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 52,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1208746,
+      "title": "Garland Jeffreys: The King of in Between",
+      "poster_url": "/lCVbVFNPeFdL3fkBZZfvn2p47PG.jpg",
+      "release_date": "2023-11-08",
+      "popularity_score": 3.142295093845307e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 50,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1501378,
+      "title": "Sunday at Il Posto Accanto",
+      "poster_url": null,
+      "release_date": "2025-10-01",
+      "popularity_score": 2.9764494596850392e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 42,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 593465,
+      "title": "Jacob",
+      "poster_url": "/1MghO7Dtk8hC3iNLh4EGhJDW8lZ.jpg",
+      "release_date": "2018-04-22",
+      "popularity_score": 2.8050732702992945e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 27,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1525972,
+      "title": "Broken Mary: The Kevin Matthews Story",
+      "poster_url": "/bIjHjhWeGF1LXAZYdqN7Vl1tnj1.jpg",
+      "release_date": "2025-10-07",
+      "popularity_score": 2.7767231989677994e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 22,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 1057013,
+      "title": "Legends and Idols",
+      "poster_url": "/cJaAZR7uRFeIR8YM3CY2m3B3EqJ.jpg",
+      "release_date": "2022-02-23",
+      "popularity_score": 2.757351589552164e-05,
+      "reception_score": 92.0,
+      "imdb_vote_count": 15,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 361839,
+      "title": "The Web",
+      "poster_url": "/1eWsQSYFL839hnmOHfzoio4n0MV.jpg",
+      "release_date": "2013-09-28",
+      "popularity_score": 0.7658320614964645,
+      "reception_score": 91.0,
+      "imdb_vote_count": 3561,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 970700,
+      "title": "In Space with Markiplier: Part 2",
+      "poster_url": "/jjmx9mtOpjcg9XN4T4zRnyk24Mp.jpg",
+      "release_date": "2022-05-02",
+      "popularity_score": 0.037696873031379224,
+      "reception_score": 91.0,
+      "imdb_vote_count": 771,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 39826,
+      "title": "Bruce Springsteen & The E Street Band : Hammersmith Odeon, London '75",
+      "poster_url": "/s7BW3mYtUlsvlX7TMTYmqw6hL97.jpg",
+      "release_date": "2005-11-15",
+      "popularity_score": 0.0029350559415538234,
+      "reception_score": 91.0,
+      "imdb_vote_count": 389,
+      "sources": [
+        "hidden_gems_top_50"
+      ]
+    },
+    {
+      "movie_id": 297761,
+      "title": "Suicide Squad",
+      "poster_url": "/sk3FZgh3sRrmr8vyhaitNobMcfh.jpg",
+      "release_date": "2016-08-03",
+      "popularity_score": 0.9887412864366498,
+      "reception_score": 47.6,
+      "imdb_vote_count": 758144,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 335983,
+      "title": "Venom",
+      "poster_url": "/2uNW4WbgBXL25BAbXGLnLqX71Sw.jpg",
+      "release_date": "2018-09-28",
+      "popularity_score": 0.9885905389252544,
+      "reception_score": 47.4,
+      "imdb_vote_count": 604501,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 2080,
+      "title": "X-Men Origins: Wolverine",
+      "poster_url": "/yj8LbTju1p7CUJg7US2unSBk33s.jpg",
+      "release_date": "2009-04-28",
+      "popularity_score": 0.9885564243844372,
+      "reception_score": 50.0,
+      "imdb_vote_count": 566755,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 1954,
+      "title": "The Butterfly Effect",
+      "poster_url": "/ea5iv7TWMh18fOKoRGgmtcg85Gx.jpg",
+      "release_date": "2004-01-17",
+      "popularity_score": 0.9885362184216901,
+      "reception_score": 48.4,
+      "imdb_vote_count": 554888,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 38356,
+      "title": "Transformers: Dark of the Moon",
+      "poster_url": "/28YlCLrFhONteYSs9hKjD1Km0Cj.jpg",
+      "release_date": "2011-06-28",
+      "popularity_score": 0.9883322093694092,
+      "reception_score": 50.0,
+      "imdb_vote_count": 454919,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 8373,
+      "title": "Transformers: Revenge of the Fallen",
+      "poster_url": "/pLBb0whOzVDtJvyD4DPeQyQNOqp.jpg",
+      "release_date": "2009-06-19",
+      "popularity_score": 0.9883242916255873,
+      "reception_score": 45.0,
+      "imdb_vote_count": 453232,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 447273,
+      "title": "Snow White",
+      "poster_url": "/oLxWocqheC8XbXbxqJ3x422j9PW.jpg",
+      "release_date": "2025-03-19",
+      "popularity_score": 0.9881824641449232,
+      "reception_score": 38.8,
+      "imdb_vote_count": 395005,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 166426,
+      "title": "Pirates of the Caribbean: Dead Men Tell No Tales",
+      "poster_url": "/6lAPOAFYFWIO3SQRemEY2wInQMC.jpg",
+      "release_date": "2017-05-23",
+      "popularity_score": 0.9881535736591784,
+      "reception_score": 49.4,
+      "imdb_vote_count": 383697,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 9738,
+      "title": "Fantastic Four",
+      "poster_url": "/8HLQLILZLhDQWO6JDpvY6XJLH75.jpg",
+      "release_date": "2005-06-29",
+      "popularity_score": 0.988113332187329,
+      "reception_score": 46.8,
+      "imdb_vote_count": 373071,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 331,
+      "title": "Jurassic Park III",
+      "poster_url": "/oQXj4NUfS3r3gHXtDOzcJgj1lLc.jpg",
+      "release_date": "2001-07-18",
+      "popularity_score": 0.9881020403936844,
+      "reception_score": 49.2,
+      "imdb_vote_count": 369470,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 109439,
+      "title": "The Hangover Part III",
+      "poster_url": "/vtxuPWkdllLNLVyGjKYa267ntuH.jpg",
+      "release_date": "2013-05-23",
+      "popularity_score": 0.9880810417968525,
+      "reception_score": 41.6,
+      "imdb_vote_count": 361992,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 7299,
+      "title": "Equilibrium",
+      "poster_url": "/yQuovle5Ov6q69XSdTNdH52eANc.jpg",
+      "release_date": "2002-12-06",
+      "popularity_score": 0.9880778079954299,
+      "reception_score": 49.0,
+      "imdb_vote_count": 361750,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 216015,
+      "title": "Fifty Shades of Grey",
+      "poster_url": "/63kGofUkt1Mx0SIL4XI4Z5AoSgt.jpg",
+      "release_date": "2015-02-11",
+      "popularity_score": 0.9880535268401112,
+      "reception_score": 44.4,
+      "imdb_vote_count": 355535,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 512195,
+      "title": "Red Notice",
+      "poster_url": "/lAXONuqg41NwUMuzMiFvicDET9Y.jpg",
+      "release_date": "2021-11-04",
+      "popularity_score": 0.9880438007045821,
+      "reception_score": 47.4,
+      "imdb_vote_count": 353384,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 3049,
+      "title": "Ace Ventura: Pet Detective",
+      "poster_url": "/pqiRuETmuSybfnVZ7qyeoXhQyN1.jpg",
+      "release_date": "1994-02-04",
+      "popularity_score": 0.9880405569213605,
+      "reception_score": 49.8,
+      "imdb_vote_count": 352833,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 91314,
+      "title": "Transformers: Age of Extinction",
+      "poster_url": "/jyzrfx2WaeY60kYZpPYepSjGz4S.jpg",
+      "release_date": "2014-06-25",
+      "popularity_score": 0.9880210759566516,
+      "reception_score": 41.599999999999994,
+      "imdb_vote_count": 348968,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 22803,
+      "title": "Law Abiding Citizen",
+      "poster_url": "/fcEXcip7v0O1ndV4VUdFqJSqbOg.jpg",
+      "release_date": "2009-10-15",
+      "popularity_score": 0.9879999362018242,
+      "reception_score": 50.0,
+      "imdb_vote_count": 344358,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 8247,
+      "title": "Jumper",
+      "poster_url": "/3pPZ9JhNz3VMmASVir5SMHvTDUU.jpg",
+      "release_date": "2008-02-13",
+      "popularity_score": 0.9879657094920238,
+      "reception_score": 45.4,
+      "imdb_vote_count": 337310,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 584,
+      "title": "2 Fast 2 Furious",
+      "poster_url": "/6nDZExrDKIXvSAghsFKVFRVJuSf.jpg",
+      "release_date": "2003-06-05",
+      "popularity_score": 0.9879035301455498,
+      "reception_score": 46.8,
+      "imdb_vote_count": 323159,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 18239,
+      "title": "The Twilight Saga: New Moon",
+      "poster_url": "/k2qTooPlHffgNABNWxeJdGMglPK.jpg",
+      "release_date": "2009-11-18",
+      "popularity_score": 0.987896966519606,
+      "reception_score": 45.599999999999994,
+      "imdb_vote_count": 321391,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 38365,
+      "title": "Grown Ups",
+      "poster_url": "/cQGM5k1NtU85n4TUlrOrwijSCcm.jpg",
+      "release_date": "2010-06-24",
+      "popularity_score": 0.9878377353638403,
+      "reception_score": 42.0,
+      "imdb_vote_count": 311532,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 1576,
+      "title": "Resident Evil",
+      "poster_url": "/1UKNef590A0ZaMnxsscIcWuK1Em.jpg",
+      "release_date": "2002-03-15",
+      "popularity_score": 0.9878261849912509,
+      "reception_score": 47.4,
+      "imdb_vote_count": 309573,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 9679,
+      "title": "Gone in Sixty Seconds",
+      "poster_url": "/fToQDmkBtiXYGh9xfgAh3gpo6GZ.jpg",
+      "release_date": "2000-06-09",
+      "popularity_score": 0.9878228828953197,
+      "reception_score": 47.0,
+      "imdb_vote_count": 309506,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 44912,
+      "title": "Green Lantern",
+      "poster_url": "/fj21HwUprqjjwTdkKC1XZurRSpV.jpg",
+      "release_date": "2011-06-14",
+      "popularity_score": 0.9878179280926596,
+      "reception_score": 45.4,
+      "imdb_vote_count": 308195,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    },
+    {
+      "movie_id": 87101,
+      "title": "Terminator Genisys",
+      "poster_url": "/oZRVDpNtmHk8M1VYy1aeOWUXgbC.jpg",
+      "release_date": "2015-06-23",
+      "popularity_score": 0.9878096656629309,
+      "reception_score": 48.0,
+      "imdb_vote_count": 306868,
+      "sources": [
+        "so_bad_its_good_top_25"
+      ]
+    }
+  ]
+}

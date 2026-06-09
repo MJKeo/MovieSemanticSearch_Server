@@ -40,16 +40,18 @@ class Spin(BaseModel):
             "names specific movie or show titles. Brand, studio, "
             "director, or actor names are allowed only when they "
             "are the central pivot of the search, never as an "
-            "enumeration of examples."
+            "enumeration of examples. Max 150 characters."
         ),
+        max_length=150,
     )
     ui_label: str = Field(
         ...,
         description=(
             "Short Title Case label for the browsing UI. Pithy "
             "enough to read at a glance but not so compressed it "
-            "loses meaning."
+            "loses meaning. Max 50 characters."
         ),
+        max_length=50,
     )
 
 

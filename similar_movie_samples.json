@@ -1,0 +1,899 @@
+{
+  "count": 30,
+  "groups": [
+    {
+      "blurb": "Stranded Souls Sweet on Their Strange Companions",
+      "movies": [
+        {
+          "query_title": "Cast Away",
+          "query_year": 2000,
+          "tmdb_id": 8358,
+          "title": "Cast Away",
+          "year": 2000,
+          "poster_path": "/7lLJgKnAicAcR5UEuo8xhSMj18w.jpg"
+        },
+        {
+          "query_title": "Her",
+          "query_year": 2013,
+          "tmdb_id": 152601,
+          "title": "Her",
+          "year": 2013,
+          "poster_path": "/eCOtqtfvn7mxGl6nfmq4b1exJRc.jpg"
+        },
+        {
+          "query_title": "Lars and the Real Girl",
+          "query_year": 2007,
+          "tmdb_id": 6615,
+          "title": "Lars and the Real Girl",
+          "year": 2007,
+          "poster_path": "/nkAt4a7KIPc7Fi1BhxNHhYYbe2b.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Heists Where the Real Steal Is Your Trust",
+      "movies": [
+        {
+          "query_title": "Now You See Me",
+          "query_year": 2013,
+          "tmdb_id": 75656,
+          "title": "Now You See Me",
+          "year": 2013,
+          "poster_path": "/tWsNYbrqy1p1w6K9zRk0mSchztT.jpg"
+        },
+        {
+          "query_title": "Inside Man",
+          "query_year": 2006,
+          "tmdb_id": 388,
+          "title": "Inside Man",
+          "year": 2006,
+          "poster_path": "/ffMUgkDZICNiyaws1Jkv8qG8uFW.jpg"
+        },
+        {
+          "query_title": "The Sting",
+          "query_year": 1973,
+          "tmdb_id": 9277,
+          "title": "The Sting",
+          "year": 1973,
+          "poster_path": "/ckmYng37zey8INYf6d10cVgIG93.jpg"
+        },
+        {
+          "query_title": "Focus",
+          "query_year": 2015,
+          "tmdb_id": 256591,
+          "title": "Focus",
+          "year": 2015,
+          "poster_path": "/lOzGWjceYTd0kd5HyX7Ch46O9kh.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Stuck in a Day That Refuses to Let Them Grow Up",
+      "movies": [
+        {
+          "query_title": "Groundhog Day",
+          "query_year": 1993,
+          "tmdb_id": 137,
+          "title": "Groundhog Day",
+          "year": 1993,
+          "poster_path": "/gCgt1WARPZaXnq523ySQEUKinCs.jpg"
+        },
+        {
+          "query_title": "Palm Springs",
+          "query_year": 2020,
+          "tmdb_id": 587792,
+          "title": "Palm Springs",
+          "year": 2020,
+          "poster_path": "/gnAfqiV7yO3Jq9IntTmwkcaICqc.jpg"
+        },
+        {
+          "query_title": "Edge of Tomorrow",
+          "query_year": 2014,
+          "tmdb_id": 137113,
+          "title": "Edge of Tomorrow",
+          "year": 2014,
+          "poster_path": "/nBM9MMa2WCwvMG4IJ3eiGUdbPe6.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "First Contact, But the Aliens Are Mostly Mood Lighting",
+      "movies": [
+        {
+          "query_title": "Arrival",
+          "query_year": 2016,
+          "tmdb_id": 329865,
+          "title": "Arrival",
+          "year": 2016,
+          "poster_path": "/pEzNVQfdzYDzVK0XqxERIw2x2se.jpg"
+        },
+        {
+          "query_title": "Annihilation",
+          "query_year": 2018,
+          "tmdb_id": 300668,
+          "title": "Annihilation",
+          "year": 2018,
+          "poster_path": "/4YRplSk6BhH6PRuE9gfyw9byUJ6.jpg"
+        },
+        {
+          "query_title": "Contact",
+          "query_year": 1997,
+          "tmdb_id": 686,
+          "title": "Contact",
+          "year": 1997,
+          "poster_path": "/bCpMIywuNZeWt3i5UMLEIc0VSwM.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Do Not, Under Any Circumstances, Mess With This Guy's Family",
+      "movies": [
+        {
+          "query_title": "Taken",
+          "query_year": 2008,
+          "tmdb_id": 8681,
+          "title": "Taken",
+          "year": 2008,
+          "poster_path": "/ognkaUSNgJe1a2pjB4UNdzEo5jT.jpg"
+        },
+        {
+          "query_title": "John Wick",
+          "query_year": 2014,
+          "tmdb_id": 245891,
+          "title": "John Wick",
+          "year": 2014,
+          "poster_path": "/wXqWR7dHncNRbxoEGybEy7QTe9h.jpg"
+        },
+        {
+          "query_title": "Prisoners",
+          "query_year": 2013,
+          "tmdb_id": 146233,
+          "title": "Prisoners",
+          "year": 2013,
+          "poster_path": "/jsS3a3ep2KyBVmmiwaz3LvK49b1.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Bike Tires, Bug Bites, and Best Friends Forever",
+      "movies": [
+        {
+          "query_title": "Stand by Me",
+          "query_year": 1986,
+          "tmdb_id": 235,
+          "title": "Stand by Me",
+          "year": 1986,
+          "poster_path": "/vz0w9BSehcqjDcJOjRaCk7fgJe7.jpg"
+        },
+        {
+          "query_title": "E.T. the Extra-Terrestrial",
+          "query_year": 1982,
+          "tmdb_id": 601,
+          "title": "E.T. the Extra-Terrestrial",
+          "year": 1982,
+          "poster_path": "/an0nD6uq6byfxXCfk6lQBzdL2J1.jpg"
+        },
+        {
+          "query_title": "The Sandlot",
+          "query_year": 1993,
+          "tmdb_id": 11528,
+          "title": "The Sandlot",
+          "year": 1993,
+          "poster_path": "/7PYqz0viEuW8qTvuGinUMjDWMnj.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "When the Recipe Doubles as a Love Letter",
+      "movies": [
+        {
+          "query_title": "Chef",
+          "query_year": 2014,
+          "tmdb_id": 212778,
+          "title": "Chef",
+          "year": 2014,
+          "poster_path": "/hyp8EXDmO4dSC8V6Q5jU7gD1kcg.jpg"
+        },
+        {
+          "query_title": "Ratatouille",
+          "query_year": 2007,
+          "tmdb_id": 2062,
+          "title": "Ratatouille",
+          "year": 2007,
+          "poster_path": "/t3vaWRPSf6WjDSamIkKDs1iQWna.jpg"
+        },
+        {
+          "query_title": "Burnt",
+          "query_year": 2015,
+          "tmdb_id": 295964,
+          "title": "Burnt",
+          "year": 2015,
+          "poster_path": "/kGJLABjIb6F86vwY5w576JYHQxV.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Crews Too Charming to Get Caught",
+      "movies": [
+        {
+          "query_title": "Ocean's Eleven",
+          "query_year": 2001,
+          "tmdb_id": 161,
+          "title": "Ocean's Eleven",
+          "year": 2001,
+          "poster_path": "/hQQCdZrsHtZyR6NbKH2YyCqd2fR.jpg"
+        },
+        {
+          "query_title": "Logan Lucky",
+          "query_year": 2017,
+          "tmdb_id": 399170,
+          "title": "Logan Lucky",
+          "year": 2017,
+          "poster_path": "/mQrhrBaaHvRfBQq0Px3HtVbH9iE.jpg"
+        },
+        {
+          "query_title": "Baby Driver",
+          "query_year": 2017,
+          "tmdb_id": 339403,
+          "title": "Baby Driver",
+          "year": 2017,
+          "poster_path": "/tYzFuYXmT8LOYASlFCkaPiAFAl0.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Your Brain Hurts and You're Loving It",
+      "movies": [
+        {
+          "query_title": "Inception",
+          "query_year": 2010,
+          "tmdb_id": 27205,
+          "title": "Inception",
+          "year": 2010,
+          "poster_path": "/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg"
+        },
+        {
+          "query_title": "Memento",
+          "query_year": 2000,
+          "tmdb_id": 77,
+          "title": "Memento",
+          "year": 2000,
+          "poster_path": "/fKTPH2WvH8nHTXeBYBVhawtRqtR.jpg"
+        },
+        {
+          "query_title": "Tenet",
+          "query_year": 2020,
+          "tmdb_id": 577922,
+          "title": "Tenet",
+          "year": 2020,
+          "poster_path": "/aCIFMriQh8rvhxpN1IWGgvH0Tlg.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Animated and Coming Straight for Your Tear Ducts",
+      "movies": [
+        {
+          "query_title": "Up",
+          "query_year": 2009,
+          "tmdb_id": 14160,
+          "title": "Up",
+          "year": 2009,
+          "poster_path": "/mFvoEwSfLqbcWwFsDjQebn9bzFe.jpg"
+        },
+        {
+          "query_title": "Inside Out",
+          "query_year": 2015,
+          "tmdb_id": 150540,
+          "title": "Inside Out",
+          "year": 2015,
+          "poster_path": "/2H1TmgdfNtsKlU9jKdeNyYL5y8T.jpg"
+        },
+        {
+          "query_title": "Coco",
+          "query_year": 2017,
+          "tmdb_id": 354912,
+          "title": "Coco",
+          "year": 2017,
+          "poster_path": "/6Ryitt95xrO8KXuqRGm1fUuNwqF.jpg"
+        },
+        {
+          "query_title": "Toy Story 3",
+          "query_year": 2010,
+          "tmdb_id": 10193,
+          "title": "Toy Story 3",
+          "year": 2010,
+          "poster_path": "/AbbXspMOwdvwWZgVN0nabZq03Ec.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "One Room, One Phone, Zero Chill",
+      "movies": [
+        {
+          "query_title": "Buried",
+          "query_year": 2010,
+          "tmdb_id": 26388,
+          "title": "Buried",
+          "year": 2010,
+          "poster_path": "/lQP2sZngXzjh3NDIWzo9OVK5YVh.jpg"
+        },
+        {
+          "query_title": "Phone Booth",
+          "query_year": 2002,
+          "tmdb_id": 1817,
+          "title": "Phone Booth",
+          "year": 2003,
+          "poster_path": "/r6lIwPKVDa6Q76qH2TbIBqPhXL3.jpg"
+        },
+        {
+          "query_title": "Locke",
+          "query_year": 2013,
+          "tmdb_id": 210479,
+          "title": "Locke",
+          "year": 2014,
+          "poster_path": "/tTREq5tTyYwmSLDRMhybJ82zXcX.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Folk Horror That Got Way Too Close to the Tree Line",
+      "movies": [
+        {
+          "query_title": "Hereditary",
+          "query_year": 2018,
+          "tmdb_id": 493922,
+          "title": "Hereditary",
+          "year": 2018,
+          "poster_path": "/hjlZSXM86wJrfCv5VKfR5DI2VeU.jpg"
+        },
+        {
+          "query_title": "Midsommar",
+          "query_year": 2019,
+          "tmdb_id": 530385,
+          "title": "Midsommar",
+          "year": 2019,
+          "poster_path": "/7LEI8ulZzO5gy9Ww2NVCrKmHeDZ.jpg"
+        },
+        {
+          "query_title": "The Witch",
+          "query_year": 2015,
+          "tmdb_id": 310131,
+          "title": "The Witch",
+          "year": 2016,
+          "poster_path": "/zap5hpFCWSvdWSuPGAQyjUv2wAC.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "The Car Got Top Billing",
+      "movies": [
+        {
+          "query_title": "Drive",
+          "query_year": 2011,
+          "tmdb_id": 64690,
+          "title": "Drive",
+          "year": 2011,
+          "poster_path": "/602vevIURmpDfzbnv5Ubi6wIkQm.jpg"
+        },
+        {
+          "query_title": "Baby Driver",
+          "query_year": 2017,
+          "tmdb_id": 339403,
+          "title": "Baby Driver",
+          "year": 2017,
+          "poster_path": "/tYzFuYXmT8LOYASlFCkaPiAFAl0.jpg"
+        },
+        {
+          "query_title": "Bullitt",
+          "query_year": 1968,
+          "tmdb_id": 916,
+          "title": "Bullitt",
+          "year": 1968,
+          "poster_path": "/2ffzF1WmeXtH420fSUoCrecFvDA.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Hired Killers Who Are, Frankly, Big Softies",
+      "movies": [
+        {
+          "query_title": "Léon: The Professional",
+          "query_year": 1994,
+          "tmdb_id": 101,
+          "title": "Léon: The Professional",
+          "year": 1994,
+          "poster_path": "/bxB2q91nKYp8JNzqE7t7TWBVupB.jpg"
+        },
+        {
+          "query_title": "John Wick",
+          "query_year": 2014,
+          "tmdb_id": 245891,
+          "title": "John Wick",
+          "year": 2014,
+          "poster_path": "/wXqWR7dHncNRbxoEGybEy7QTe9h.jpg"
+        },
+        {
+          "query_title": "In Bruges",
+          "query_year": 2008,
+          "tmdb_id": 8321,
+          "title": "In Bruges",
+          "year": 2008,
+          "poster_path": "/vz3Vd6nfq9YZrVvyYx5RHFaYKV3.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Robots Working Through Some Stuff",
+      "movies": [
+        {
+          "query_title": "WALL·E",
+          "query_year": 2008,
+          "tmdb_id": 10681,
+          "title": "WALL·E",
+          "year": 2008,
+          "poster_path": "/hbhFnRzzg6ZDmm8YAmxBnQpQIPh.jpg"
+        },
+        {
+          "query_title": "Ex Machina",
+          "query_year": 2014,
+          "tmdb_id": 264660,
+          "title": "Ex Machina",
+          "year": 2015,
+          "poster_path": "/dmJW8IAKHKxFNiUnoDR7JfsK7Rp.jpg"
+        },
+        {
+          "query_title": "Blade Runner 2049",
+          "query_year": 2017,
+          "tmdb_id": 335984,
+          "title": "Blade Runner 2049",
+          "year": 2017,
+          "poster_path": "/gajva2L0rPYkEWjzgFlBXCAVBE5.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Hand Over the Camera and Run for Your Life",
+      "movies": [
+        {
+          "query_title": "The Blair Witch Project",
+          "query_year": 1999,
+          "tmdb_id": 2667,
+          "title": "The Blair Witch Project",
+          "year": 1999,
+          "poster_path": "/9050VGrYjYrEjpOvDZVAngLbg1f.jpg"
+        },
+        {
+          "query_title": "Paranormal Activity",
+          "query_year": 2007,
+          "tmdb_id": 23827,
+          "title": "Paranormal Activity",
+          "year": 2007,
+          "poster_path": "/tmclkEpjeo4Zu564gf3KrwIOuKw.jpg"
+        },
+        {
+          "query_title": "[REC]",
+          "query_year": 2007,
+          "tmdb_id": 8329,
+          "title": "[REC]",
+          "year": 2007,
+          "poster_path": "/hgyJR4sgMsee6xMFM3xYiG6cDCh.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Stitched to Feel Like One Long Held Breath",
+      "movies": [
+        {
+          "query_title": "1917",
+          "query_year": 2019,
+          "tmdb_id": 530915,
+          "title": "1917",
+          "year": 2019,
+          "poster_path": "/iZf0KyrE25z1sage4SYFLCCrMi9.jpg"
+        },
+        {
+          "query_title": "Birdman",
+          "query_year": 2014,
+          "tmdb_id": 194662,
+          "title": "Birdman or (The Unexpected Virtue of Ignorance)",
+          "year": 2014,
+          "poster_path": "/rHUg2AuIuLSIYMYFgavVwqt1jtc.jpg"
+        },
+        {
+          "query_title": "Victoria",
+          "query_year": 2015,
+          "tmdb_id": 320007,
+          "title": "Victoria",
+          "year": 2015,
+          "poster_path": "/9P8QgfoMcFX7vp2Gj2cYFecHVRZ.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Symmetry, Soft Colors, a Faint Hum of Melancholy",
+      "movies": [
+        {
+          "query_title": "The Grand Budapest Hotel",
+          "query_year": 2014,
+          "tmdb_id": 120467,
+          "title": "The Grand Budapest Hotel",
+          "year": 2014,
+          "poster_path": "/eWdyYQreja6JGCzqHWXpWHDrrPo.jpg"
+        },
+        {
+          "query_title": "Moonrise Kingdom",
+          "query_year": 2012,
+          "tmdb_id": 83666,
+          "title": "Moonrise Kingdom",
+          "year": 2012,
+          "poster_path": "/y4SXcbNl6CEF2t36icuzuBioj7K.jpg"
+        },
+        {
+          "query_title": "Amélie",
+          "query_year": 2001,
+          "tmdb_id": 194,
+          "title": "Amélie",
+          "year": 2001,
+          "poster_path": "/nSxDa3M9aMvGVLoItzWTepQ5h5d.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "The Sport Is the Excuse, the Soul Is the Story",
+      "movies": [
+        {
+          "query_title": "Moneyball",
+          "query_year": 2011,
+          "tmdb_id": 60308,
+          "title": "Moneyball",
+          "year": 2011,
+          "poster_path": "/4yIQq1e6iOcaZ5rLDG3lZBP3j7a.jpg"
+        },
+        {
+          "query_title": "The Wrestler",
+          "query_year": 2008,
+          "tmdb_id": 12163,
+          "title": "The Wrestler",
+          "year": 2008,
+          "poster_path": "/6OTR8dSoNGjWohJNo3UhIGd3Tj.jpg"
+        },
+        {
+          "query_title": "Whiplash",
+          "query_year": 2014,
+          "tmdb_id": 244786,
+          "title": "Whiplash",
+          "year": 2014,
+          "poster_path": "/7fn624j5lj3xTme2SgiLCeuedmO.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Family Road Trips Where Nobody Is Doing Okay",
+      "movies": [
+        {
+          "query_title": "Little Miss Sunshine",
+          "query_year": 2006,
+          "tmdb_id": 773,
+          "title": "Little Miss Sunshine",
+          "year": 2006,
+          "poster_path": "/niNdhTpPHSgw22tK0PLjQMV640v.jpg"
+        },
+        {
+          "query_title": "Sideways",
+          "query_year": 2004,
+          "tmdb_id": 9675,
+          "title": "Sideways",
+          "year": 2004,
+          "poster_path": "/zOsaxYLgvZVU7cJBpPn8CuE0MrP.jpg"
+        },
+        {
+          "query_title": "The Way Way Back",
+          "query_year": 2013,
+          "tmdb_id": 147773,
+          "title": "The Way Way Back",
+          "year": 2013,
+          "poster_path": "/4DgA0EDDVv37C8xISc3Vv0rhxlL.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Survive the Game or the Game Wins",
+      "movies": [
+        {
+          "query_title": "The Hunger Games",
+          "query_year": 2012,
+          "tmdb_id": 70160,
+          "title": "The Hunger Games",
+          "year": 2012,
+          "poster_path": "/yXCbOiVDCxO71zI7cuwBRXdftq8.jpg"
+        },
+        {
+          "query_title": "Battle Royale",
+          "query_year": 2000,
+          "tmdb_id": 3176,
+          "title": "Battle Royale",
+          "year": 2000,
+          "poster_path": "/aLGKAQKgzWpJ6egyWzzC11jXBRJ.jpg"
+        },
+        {
+          "query_title": "The Running Man",
+          "query_year": 1987,
+          "tmdb_id": 865,
+          "title": "The Running Man",
+          "year": 1987,
+          "poster_path": "/GTAUOhO4BN0peJVvxGEQydJvUO.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Underwater and Under Pressure",
+      "movies": [
+        {
+          "query_title": "Das Boot",
+          "query_year": 1981,
+          "tmdb_id": 387,
+          "title": "Das Boot",
+          "year": 1981,
+          "poster_path": "/u8FhQPncOAkwcei2OI9orPWhV6K.jpg"
+        },
+        {
+          "query_title": "The Hunt for Red October",
+          "query_year": 1990,
+          "tmdb_id": 1669,
+          "title": "The Hunt for Red October",
+          "year": 1990,
+          "poster_path": "/yVl7zidse4KiWtGMqHFtZCx4X3N.jpg"
+        },
+        {
+          "query_title": "Crimson Tide",
+          "query_year": 1995,
+          "tmdb_id": 8963,
+          "title": "Crimson Tide",
+          "year": 1995,
+          "poster_path": "/21nqRJ6ofEgVvEl68J4O9V26Xzy.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Movies Hopelessly in Love with Movies",
+      "movies": [
+        {
+          "query_title": "La La Land",
+          "query_year": 2016,
+          "tmdb_id": 313369,
+          "title": "La La Land",
+          "year": 2016,
+          "poster_path": "/uDO8zWDhfWwoFdKS4fzkUJt0Rf0.jpg"
+        },
+        {
+          "query_title": "Once Upon a Time in Hollywood",
+          "query_year": 2019,
+          "tmdb_id": 466272,
+          "title": "Once Upon a Time... in Hollywood",
+          "year": 2019,
+          "poster_path": "/8j58iEBw9pOXFD2L0nt0ZXeHviB.jpg"
+        },
+        {
+          "query_title": "Singin' in the Rain",
+          "query_year": 1952,
+          "tmdb_id": 872,
+          "title": "Singin' in the Rain",
+          "year": 1952,
+          "poster_path": "/w03EiJVHP8Un77boQeE7hg9DVdU.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Cons Wrapped in Cons Wrapped in Cons",
+      "movies": [
+        {
+          "query_title": "The Sting",
+          "query_year": 1973,
+          "tmdb_id": 9277,
+          "title": "The Sting",
+          "year": 1973,
+          "poster_path": "/ckmYng37zey8INYf6d10cVgIG93.jpg"
+        },
+        {
+          "query_title": "Catch Me If You Can",
+          "query_year": 2002,
+          "tmdb_id": 640,
+          "title": "Catch Me If You Can",
+          "year": 2002,
+          "poster_path": "/ctjEj2xM32OvBXCq8zAdK3ZrsAj.jpg"
+        },
+        {
+          "query_title": "American Hustle",
+          "query_year": 2013,
+          "tmdb_id": 168672,
+          "title": "American Hustle",
+          "year": 2013,
+          "poster_path": "/z6O1KDhfWDTm5ZBr6Ovr0eg8LqO.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Neon-Lit, Rain-Soaked, Soul-Searching",
+      "movies": [
+        {
+          "query_title": "Blade Runner",
+          "query_year": 1982,
+          "tmdb_id": 78,
+          "title": "Blade Runner",
+          "year": 1982,
+          "poster_path": "/63N9uy8nd9j7Eog2axPQ8lbr3Wj.jpg"
+        },
+        {
+          "query_title": "Ghost in the Shell",
+          "query_year": 1995,
+          "tmdb_id": 9323,
+          "title": "Ghost in the Shell",
+          "year": 1995,
+          "poster_path": "/9gC88zYUBARRSThcG93MvW14sqx.jpg"
+        },
+        {
+          "query_title": "The Matrix",
+          "query_year": 1999,
+          "tmdb_id": 603,
+          "title": "The Matrix",
+          "year": 1999,
+          "poster_path": "/aOIuZAjPaRIE6CMzbazvcHuHXDc.jpg"
+        },
+        {
+          "query_title": "Blade Runner 2049",
+          "query_year": 2017,
+          "tmdb_id": 335984,
+          "title": "Blade Runner 2049",
+          "year": 2017,
+          "poster_path": "/gajva2L0rPYkEWjzgFlBXCAVBE5.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "One Wanderer, a Loose Code, and a Very Heavy Sword",
+      "movies": [
+        {
+          "query_title": "Yojimbo",
+          "query_year": 1961,
+          "tmdb_id": 11878,
+          "title": "Yojimbo",
+          "year": 1961,
+          "poster_path": "/tN7kYPjRhDolpui9sc9Eq9n5b2O.jpg"
+        },
+        {
+          "query_title": "A Fistful of Dollars",
+          "query_year": 1964,
+          "tmdb_id": 391,
+          "title": "A Fistful of Dollars",
+          "year": 1964,
+          "poster_path": "/lBwOEpwVeUAmrmglcstnaGcJq3Y.jpg"
+        },
+        {
+          "query_title": "13 Assassins",
+          "query_year": 2010,
+          "tmdb_id": 58857,
+          "title": "13 Assassins",
+          "year": 2010,
+          "poster_path": "/yUsVsiVXUwClk4vSCx80vrdO6MV.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Animated Dads in Way, Way Over Their Heads",
+      "movies": [
+        {
+          "query_title": "Finding Nemo",
+          "query_year": 2003,
+          "tmdb_id": 12,
+          "title": "Finding Nemo",
+          "year": 2003,
+          "poster_path": "/5lc6nQc0VhWFYFbNv016xze8Jvy.jpg"
+        },
+        {
+          "query_title": "Up",
+          "query_year": 2009,
+          "tmdb_id": 14160,
+          "title": "Up",
+          "year": 2009,
+          "poster_path": "/mFvoEwSfLqbcWwFsDjQebn9bzFe.jpg"
+        },
+        {
+          "query_title": "Onward",
+          "query_year": 2020,
+          "tmdb_id": 508439,
+          "title": "Onward",
+          "year": 2020,
+          "poster_path": "/f4aul3FyD3jv3v4bul1IrkWZvzq.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Stylish Witchcraft With a Side of Dread",
+      "movies": [
+        {
+          "query_title": "The Witch",
+          "query_year": 2015,
+          "tmdb_id": 310131,
+          "title": "The Witch",
+          "year": 2016,
+          "poster_path": "/zap5hpFCWSvdWSuPGAQyjUv2wAC.jpg"
+        },
+        {
+          "query_title": "Suspiria",
+          "query_year": 2018,
+          "tmdb_id": 361292,
+          "title": "Suspiria",
+          "year": 2018,
+          "poster_path": "/bRpKFPb8CWKRQxVo9NzOuPPlO3Q.jpg"
+        },
+        {
+          "query_title": "Practical Magic",
+          "query_year": 1998,
+          "tmdb_id": 6435,
+          "title": "Practical Magic",
+          "year": 1998,
+          "poster_path": "/AwmToSgf2IL3aHv0QRVsR5KvChv.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Misfit Crews Just Trying to Save the Galaxy",
+      "movies": [
+        {
+          "query_title": "Guardians of the Galaxy",
+          "query_year": 2014,
+          "tmdb_id": 118340,
+          "title": "Guardians of the Galaxy",
+          "year": 2014,
+          "poster_path": "/r7vmZjiyZw9rpJMQJdXpjgiCOk9.jpg"
+        },
+        {
+          "query_title": "Treasure Planet",
+          "query_year": 2002,
+          "tmdb_id": 9016,
+          "title": "Treasure Planet",
+          "year": 2002,
+          "poster_path": "/kNhZkR3UNbXfvESQo7mJpOi4tGd.jpg"
+        },
+        {
+          "query_title": "Star Trek",
+          "query_year": 2009,
+          "tmdb_id": 13475,
+          "title": "Star Trek",
+          "year": 2009,
+          "poster_path": "/hN2ZtF3Uw6mhIHZiqL0SKzELtKn.jpg"
+        }
+      ]
+    },
+    {
+      "blurb": "Detectives Stuck in a Case That Got Stuck in Them",
+      "movies": [
+        {
+          "query_title": "Zodiac",
+          "query_year": 2007,
+          "tmdb_id": 1949,
+          "title": "Zodiac",
+          "year": 2007,
+          "poster_path": "/6YmeO4pB7XTh8P8F960O1uA14JO.jpg"
+        },
+        {
+          "query_title": "Prisoners",
+          "query_year": 2013,
+          "tmdb_id": 146233,
+          "title": "Prisoners",
+          "year": 2013,
+          "poster_path": "/jsS3a3ep2KyBVmmiwaz3LvK49b1.jpg"
+        },
+        {
+          "query_title": "Se7en",
+          "query_year": 1995,
+          "tmdb_id": 807,
+          "title": "Se7en",
+          "year": 1995,
+          "poster_path": "/191nKfP0ehp3uIvWqgPbFmI4lv9.jpg"
+        }
+      ]
+    }
+  ]
+}
