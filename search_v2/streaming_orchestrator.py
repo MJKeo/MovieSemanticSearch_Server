@@ -121,6 +121,7 @@ from search_v2.full_pipeline_orchestrator import (
 )
 from search_v2.similar_movies import run_similarity_search
 from search_v2.stage_4_execution import _run_branch as _stage4_run_branch
+from search_v2.query_input_validation import clean_clarification, clean_query
 from search_v2.step_0 import run_step_0
 from search_v2.step_1 import run_step_1
 
@@ -254,15 +255,17 @@ async def stream_full_pipeline(
         wire frames; this generator is transport-agnostic.
 
     Raises:
-        ValueError: if `query` is empty after stripping. Raised before
-            the generator yields anything so the endpoint can convert
-            it into a 400 response.
+        QueryInputError (ValueError): if `query` is empty after
+            stripping or either field exceeds its length cap. Raised
+            before the generator yields anything so the endpoint can
+            convert it into a 400 response.
     """
-    query = query.strip()
-    if not query:
-        raise ValueError("query must be a non-empty string.")
-
-    clarification = clarification.strip() if clarification else None
+    # Validate/normalize at the boundary: strip, enforce non-empty +
+    # length cap. Shared rules live in query_input_validation; raised as
+    # QueryInputError (a ValueError) before the generator yields, so the
+    # endpoint can convert it into a 400.
+    query = clean_query(query)
+    clarification = clean_clarification(clarification)
 
     t0 = time.perf_counter()
 

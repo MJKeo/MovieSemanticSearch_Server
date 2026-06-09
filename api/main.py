@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Literal, Optional
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -55,6 +56,11 @@ from search_v2.attribute_search import (
 )
 from search_v2.similar_movies import run_similar_movies_for_ids
 from search_v2.streaming_orchestrator import stream_full_pipeline
+from search_v2.query_input_validation import (
+    QueryInputError,
+    clean_clarification,
+    clean_query,
+)
 from search_v2.title_search import (
     TITLE_SEARCH_DEFAULT_LIMIT,
     TITLE_SEARCH_MAX_LIMIT,
@@ -109,6 +115,34 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
+# Origins permitted to call this API from a browser. A browser's `Origin`
+# header is scheme + host + port ONLY — it never carries a path or trailing
+# slash — so listing the bare origin here covers every sub-path the
+# frontend serves (e.g. "/", "/similar", ...). Do NOT add a trailing slash
+# or path: it would never match and silently block requests.
+#
+# Origins are enumerated explicitly (not "*") because allow_credentials is
+# True — browsers reject wildcard origins on credentialed requests, and we
+# send a credential (the device-ID / auth cookie). CORS is browser-enforced
+# only and is not a defense against scripted (curl/Python) callers; it
+# stops other websites' JS from calling this API in a user's browser.
+ALLOWED_ORIGINS = [
+    "https://www.cinemind.dev",   # production frontend (all sub-paths)
+    "http://localhost:3000",      # local dev frontend
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,            # required to send the device-ID / auth cookie
+    allow_methods=["GET", "POST"],     # the verbs this API actually serves
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.get("/health")
@@ -378,24 +412,23 @@ async def query_search(body: QuerySearchBody):
                             unrecoverable).
 
     Returns:
-      HTTP 200 with `text/event-stream` content. Empty `query` → 400.
+      HTTP 200 with `text/event-stream` content. Empty or over-length
+      `query`/`clarification` → 400.
     """
-    query = body.query.strip()
-    if not query:
-        raise HTTPException(status_code=400, detail="query must be non-empty.")
-
-    # Normalize clarification at the boundary: treat empty strings and
-    # whitespace-only input the same as omitted. This keeps the
-    # no-clarification fast path stable — the pipeline only switches to
-    # clarification-mode prompts when there is real correction text.
-    # Downstream layers (stream_full_pipeline, run_full_pipeline,
-    # run_step_0/1) re-normalize too; each is a separate public surface
-    # also reachable from CLI runners, so each defends its own contract.
-    clarification: Optional[str] = (
-        body.clarification.strip() if body.clarification else None
-    )
-    if not clarification:
-        clarification = None
+    # Validate/normalize the two free-text fields at the boundary via the
+    # shared validator: strip, enforce non-empty + length cap, and treat
+    # blank clarification as omitted (keeps the no-clarification fast path
+    # stable — the pipeline only switches to clarification-mode prompts
+    # when there is real correction text). Downstream layers
+    # (stream_full_pipeline, run_full_pipeline, run_step_0/1) re-validate
+    # too; each is a separate public surface also reachable from CLI
+    # runners, so each defends its own contract. A QueryInputError here
+    # (empty or over-length input) maps to a user-facing 400.
+    try:
+        query = clean_query(body.query)
+        clarification: Optional[str] = clean_clarification(body.clarification)
+    except QueryInputError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Translate the wire mirror into the internal MetadataFilters
     # dataclass once, at the boundary. Raises 422 on any unknown enum

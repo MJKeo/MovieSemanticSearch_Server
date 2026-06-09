@@ -95,6 +95,7 @@ from search_v2.similar_movies import (
     SimilarMoviesSearchResult,
     run_similarity_search,
 )
+from search_v2.query_input_validation import clean_clarification, clean_query
 from search_v2.step_0 import run_step_0
 from search_v2.step_1 import run_step_1
 from search_v2.studio_search import (
@@ -971,16 +972,16 @@ async def run_full_pipeline(
         whose generated_specs are ready to hand to stage-4 execution.
 
     Raises:
-        ValueError: if `query` is empty after stripping.
+        QueryInputError (ValueError): if `query` is empty after
+            stripping or either field exceeds its length cap.
         Exception: if Step 0 fails on both attempts (routing is
             mandatory). Every other failure mode is captured on the
             result with a populated *_error field.
     """
-    query = query.strip()
-    if not query:
-        raise ValueError("query must be a non-empty string.")
-
-    clarification = clarification.strip() if clarification else None
+    # Validate/normalize at the boundary: strip, enforce non-empty +
+    # length cap. Shared rules live in query_input_validation.
+    query = clean_query(query)
+    clarification = clean_clarification(clarification)
 
     total_start = time.perf_counter()
 

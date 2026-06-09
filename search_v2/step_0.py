@@ -33,6 +33,7 @@
 
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from schemas.step_0_flow_routing import Step0Response
+from search_v2.query_input_validation import clean_clarification, clean_query
 
 
 # ---------------------------------------------------------------------------
@@ -549,11 +550,11 @@ async def run_step_0(
     Returns:
         A tuple of (Step0Response, input_tokens, output_tokens).
     """
-    query = query.strip()
-    if not query:
-        raise ValueError("query must be a non-empty string.")
-
-    clarification = clarification.strip() if clarification else None
+    # Validate/normalize at the boundary: strip, enforce non-empty +
+    # length cap. Shared with every other public surface so the rules
+    # live in one place (see search_v2/query_input_validation.py).
+    query = clean_query(query)
+    clarification = clean_clarification(clarification)
 
     if clarification:
         # Two labeled fields, not concatenated — the system prompt
