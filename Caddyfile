@@ -1,0 +1,9 @@
+api.cinemind.dev {
+    reverse_proxy api:8000
+
+    # log to stdout so docker compose logs caddy works
+    log {
+        output stdout
+        format console
+    }
+}
