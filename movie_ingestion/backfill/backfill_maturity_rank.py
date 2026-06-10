@@ -40,7 +40,7 @@ Usage
 -----
 ::
 
-    # Full backfill of both stores.
+    # Full backfill of both stores from the tracker (the box with tracker.db).
     python -m movie_ingestion.backfill.backfill_maturity_rank
 
     # Report what would change; write nothing.
@@ -49,12 +49,29 @@ Usage
     # Tune chunk size / target a non-default Qdrant collection.
     python -m movie_ingestion.backfill.backfill_maturity_rank --batch-size 5000
     python -m movie_ingestion.backfill.backfill_maturity_rank --collection movies
+
+Propagating to another environment (e.g. EC2) without the tracker
+-----------------------------------------------------------------
+The tracker (``ingestion_data/tracker.db``) is the rating source and is not
+present everywhere. To push an already-converged DB's ranks to a box that has
+no tracker, export the authoritative mapping here and apply it there::
+
+    # On the box where the backfill already ran (source of truth):
+    python -m movie_ingestion.backfill.backfill_maturity_rank --export ranks.json
+
+    # scp ranks.json to the target box, then on the target (e.g. EC2):
+    python -m movie_ingestion.backfill.backfill_maturity_rank --from-file ranks.json --dry-run
+    python -m movie_ingestion.backfill.backfill_maturity_rank --from-file ranks.json
+
+``--from-file`` runs the exact same diff-and-apply over both stores; it never
+touches the tracker, so it is safe on a box that lacks ``tracker.db``.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sqlite3
 import time
@@ -64,7 +81,6 @@ from typing import Iterator
 from db.postgres import _execute_read, pool
 from db.qdrant import qdrant_client
 from implementation.classes.enums import MaturityRating
-from movie_ingestion.tracker import TRACKER_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +124,10 @@ def _load_target_ranks() -> dict[int, int | None]:
     Reads the IMDB and TMDB maturity strings in one join so resolution uses the
     same precedence as the live ingest path. Returns ``{tmdb_id: rank|None}``.
     """
+    # Imported lazily so the --from-file path stays usable on a box that has
+    # no tracker.db (e.g. the EC2 server).
+    from movie_ingestion.tracker import TRACKER_DB_PATH
+
     conn = sqlite3.connect(TRACKER_DB_PATH)
     try:
         conn.row_factory = sqlite3.Row
@@ -128,6 +148,18 @@ def _load_target_ranks() -> dict[int, int | None]:
         conn.close()
 
 
+def _load_target_ranks_from_file(path: str) -> dict[int, int | None]:
+    """Load a ``{movie_id: rank|None}`` mapping previously written by --export.
+
+    The file is the authoritative, already-converged mapping from another box,
+    so applying it needs no tracker — the rating resolution already happened at
+    export time. JSON object keys are strings; we coerce ids back to int.
+    """
+    with open(path, "r", encoding="utf-8") as handle:
+        raw = json.load(handle)
+    return {int(movie_id): rank for movie_id, rank in raw.items()}
+
+
 async def _load_current_ranks() -> dict[int, int | None]:
     """Return ``{movie_id: maturity_rank|None}`` from movie_card.
 
@@ -136,6 +168,29 @@ async def _load_current_ranks() -> dict[int, int | None]:
     """
     rows = await _execute_read("SELECT movie_id, maturity_rank FROM public.movie_card")
     return {int(mid): (int(rank) if rank is not None else None) for mid, rank in rows}
+
+
+async def export_ranks(out_path: str) -> None:
+    """Write the current ``movie_card`` ranks to ``out_path`` as JSON.
+
+    Run on the box whose DB is already correct; the resulting file is the
+    authoritative mapping to apply elsewhere via --from-file. Read-only against
+    the database.
+    """
+    await pool.open()
+    try:
+        rows = await _execute_read(
+            "SELECT movie_id, maturity_rank FROM public.movie_card"
+        )
+        mapping = {
+            str(int(mid)): (int(rank) if rank is not None else None)
+            for mid, rank in rows
+        }
+        with open(out_path, "w", encoding="utf-8") as handle:
+            json.dump(mapping, handle)
+        print(f"Exported {len(mapping):,} movie ranks -> {out_path}")
+    finally:
+        await pool.close()
 
 
 def _chunked(items: list[int], size: int) -> Iterator[list[int]]:
@@ -221,11 +276,64 @@ async def _apply_bucket(
     return total
 
 
+async def converge(
+    targets: dict[int, int | None],
+    *,
+    dry_run: bool,
+    batch_size: int,
+    collection: str,
+) -> int:
+    """Diff ``targets`` against movie_card and apply changes to both stores.
+
+    Shared by the tracker-sourced backfill and the --from-file apply: the only
+    thing that differs between them is where ``targets`` comes from. Assumes the
+    Postgres pool is already open. Returns the number of movies written.
+    """
+    current = await _load_current_ranks()
+    print(f"  {len(current):,} movie_card rows in this database.")
+
+    buckets: dict[int | None, list[int]] = defaultdict(list)
+    missing = 0  # target movie absent from this DB's movie_card
+    for movie_id, target_rank in targets.items():
+        if movie_id not in current:
+            missing += 1
+            continue
+        if current[movie_id] != target_rank:
+            buckets[target_rank].append(movie_id)
+
+    changed = sum(len(ids) for ids in buckets.values())
+    print(f"  {changed:,} movies need an update.")
+    for rank in sorted(buckets, key=_rank_sort_key):
+        print(f"    {_rank_label(rank):>15}: {len(buckets[rank]):>7,}")
+    if missing:
+        logger.warning("%d target movies have no movie_card row (skipped).", missing)
+
+    if not changed:
+        print("Stores already converged; nothing to write.")
+        return 0
+
+    verb = "would update" if dry_run else "updated"
+    print(f"Applying updates (batch={batch_size}, collection={collection})...")
+    total = 0
+    for rank in sorted(buckets, key=_rank_sort_key):
+        written = await _apply_bucket(
+            rank,
+            buckets[rank],
+            collection=collection,
+            batch_size=batch_size,
+            dry_run=dry_run,
+        )
+        total += written
+        print(f"  {_rank_label(rank):>15}: {verb} {written:>7,}")
+    return total
+
+
 async def run(
     *,
     dry_run: bool = False,
     batch_size: int = _DEFAULT_BATCH_SIZE,
     collection: str = _DEFAULT_COLLECTION,
+    from_file: str | None = None,
 ) -> None:
     # The pool defaults to open=False at import; this script runs outside the
     # FastAPI lifespan, so we own open/close.
@@ -233,51 +341,23 @@ async def run(
     try:
         start = time.monotonic()
 
-        print("Step 1: resolving target ranks from tracker...")
-        targets = _load_target_ranks()
-        print(f"  {len(targets):,} ingested movies in tracker.")
+        # Target ranks come either from a pre-exported file (no tracker needed)
+        # or from resolving the tracker's raw maturity strings.
+        if from_file is not None:
+            print(f"Loading target ranks from {from_file}...")
+            targets = _load_target_ranks_from_file(from_file)
+            print(f"  {len(targets):,} target ranks loaded.")
+        else:
+            print("Resolving target ranks from tracker...")
+            targets = _load_target_ranks()
+            print(f"  {len(targets):,} ingested movies in tracker.")
 
-        print("Step 2: reading current ranks from movie_card...")
-        current = await _load_current_ranks()
-        print(f"  {len(current):,} movie_card rows.")
-
-        print("Step 3: diffing target vs current...")
-        buckets: dict[int | None, list[int]] = defaultdict(list)
-        missing = 0  # 'ingested' in tracker but absent from movie_card
-        for tmdb_id, target_rank in targets.items():
-            if tmdb_id not in current:
-                missing += 1
-                continue
-            if current[tmdb_id] != target_rank:
-                buckets[target_rank].append(tmdb_id)
-
-        changed = sum(len(ids) for ids in buckets.values())
-        print(f"  {changed:,} movies need an update.")
-        for rank in sorted(buckets, key=_rank_sort_key):
-            print(f"    {_rank_label(rank):>15}: {len(buckets[rank]):>7,}")
-        if missing:
-            logger.warning(
-                "%d tracker 'ingested' movies have no movie_card row (skipped).",
-                missing,
-            )
-
-        if not changed:
-            print("Stores already converged; nothing to write.")
-            return
-
-        verb = "would update" if dry_run else "updated"
-        print(f"Step 4: applying updates (batch={batch_size}, collection={collection})...")
-        total = 0
-        for rank in sorted(buckets, key=_rank_sort_key):
-            written = await _apply_bucket(
-                rank,
-                buckets[rank],
-                collection=collection,
-                batch_size=batch_size,
-                dry_run=dry_run,
-            )
-            total += written
-            print(f"  {_rank_label(rank):>15}: {verb} {written:>7,}")
+        total = await converge(
+            targets,
+            dry_run=dry_run,
+            batch_size=batch_size,
+            collection=collection,
+        )
 
         elapsed = time.monotonic() - start
         suffix = " (dry-run)" if dry_run else ""
@@ -289,8 +369,26 @@ async def run(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Re-resolve movie_card.maturity_rank (and the Qdrant payload) for "
-            "every ingested movie from the tracker's maturity strings."
+            "Converge movie_card.maturity_rank (and the Qdrant payload) for "
+            "every ingested movie. Source is the tracker by default, or a "
+            "pre-exported file via --from-file for boxes without tracker.db."
+        ),
+    )
+    parser.add_argument(
+        "--export",
+        metavar="PATH",
+        help=(
+            "Read-only: write this DB's current movie_card ranks to PATH (JSON) "
+            "and exit. Run on the converged box, then apply elsewhere "
+            "with --from-file."
+        ),
+    )
+    parser.add_argument(
+        "--from-file",
+        metavar="PATH",
+        help=(
+            "Apply target ranks from a file produced by --export instead of "
+            "resolving the tracker. Use on a box that has no tracker.db."
         ),
     )
     parser.add_argument(
@@ -312,11 +410,17 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+    if args.export:
+        asyncio.run(export_ranks(args.export))
+        return
+
     asyncio.run(
         run(
             dry_run=args.dry_run,
             batch_size=args.batch_size,
             collection=args.collection,
+            from_file=args.from_file,
         )
     )
 
