@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import Literal, Optional
+from typing import NamedTuple, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
@@ -18,10 +18,12 @@ from db.postgres import (
 )
 from db.qdrant import qdrant_client, check_qdrant
 from db.redis import (
+    cache_movie_credits,
     cache_movie_details,
     cache_similar_movies,
     check_redis,
     close_redis,
+    get_cached_movie_credits,
     get_cached_movie_details,
     get_cached_similar_movies,
     init_redis,
@@ -31,6 +33,7 @@ from db.tmdb import (
     AdaptiveRateLimiter,
     TMDBFetchError,
     build_api_tmdb_client,
+    fetch_movie_credits_for_endpoint,
     fetch_movie_details_for_endpoint,
 )
 from implementation.classes.enums import Genre, StreamingAccessType
@@ -44,11 +47,12 @@ from implementation.misc.event_loop import install_uvloop
 from implementation.misc.helpers import create_watch_provider_offering_key
 from schemas.api_responses import (
     CastMember,
+    CrewGroup,
     CrewMember,
+    MovieCredits,
     MovieDetails,
     WatchProvider,
 )
-from schemas.entity_translation import PersonCategory
 from search_v2.attribute_search import (
     DEFAULT_ATTRIBUTE_SEARCH_LIMIT,
     PersonSpec,
@@ -302,41 +306,23 @@ class SimilaritySearchBody(BaseModel):
     filters: Optional[MetadataFiltersInput] = None
 
 
-# Map the wire role string straight onto PersonCategory. Pydantic's
-# Literal validator on PersonInput.role already rejects anything
-# outside these five values, so the dict lookup is total over the
-# accepted type.
-_ROLE_LITERAL_TO_CATEGORY: dict[str, PersonCategory] = {
-    "actor": PersonCategory.ACTOR,
-    "director": PersonCategory.DIRECTOR,
-    "writer": PersonCategory.WRITER,
-    "producer": PersonCategory.PRODUCER,
-    "composer": PersonCategory.COMPOSER,
-}
-
-
 class PersonInput(BaseModel):
     """One named-person filter on POST /attribute_search.
 
     `name` is the raw display name (we normalize server-side; the
-    caller need not pre-normalize). `role`, when set, restricts the
-    credit lookup to that one role's posting table; when omitted,
-    any credit on the movie qualifies (union across actor /
-    director / writer / producer / composer).
+    caller need not pre-normalize). The flow is role-agnostic — any
+    credit on the movie (actor / director / writer / producer /
+    composer) qualifies — so there is no role field.
     """
 
     name: str = Field(min_length=1)
-    role: Optional[
-        Literal["actor", "director", "writer", "producer", "composer"]
-    ] = None
 
 
-# Upper bound on the number of person filters per request. Each
-# unrestricted-role person fans out to 5 parallel posting-table
-# lookups, so a tight cap keeps a single request from saturating
-# the Postgres pool (max_size=10 per conventions.md). 20 is far
-# beyond any legitimate browse-UI use case while still leaving
-# headroom for "all-time favorite filmmakers" lists.
+# Upper bound on the number of person filters per request. Each person
+# fans out to 5 parallel posting-table lookups, so a tight cap keeps a
+# single request from saturating the Postgres pool (max_size=10 per
+# conventions.md). 20 is far beyond any legitimate browse-UI use case
+# while still leaving headroom for "all-time favorite filmmakers" lists.
 _MAX_ATTRIBUTE_SEARCH_PEOPLE = 20
 
 
@@ -361,12 +347,9 @@ def _to_person_specs(
 ) -> list[PersonSpec]:
     """Translate wire-level PersonInput list into the internal PersonSpec list.
 
-    - Strips whitespace from each name; drops persons whose name is
-      blank after strip (defensive normalization at the boundary —
-      mirrors the `clarification` handling in /query_search).
-    - Resolves `role` (string Literal | None) to a `PersonCategory`,
-      with the missing-role case landing on PersonCategory.UNKNOWN
-      so the orchestrator's role dispatch is total.
+    Strips whitespace from each name; drops persons whose name is blank
+    after strip (defensive normalization at the boundary — mirrors the
+    `clarification` handling in /query_search).
     """
     if not people_input:
         return []
@@ -376,12 +359,7 @@ def _to_person_specs(
         stripped = entry.name.strip()
         if not stripped:
             continue
-        role = (
-            _ROLE_LITERAL_TO_CATEGORY[entry.role]
-            if entry.role is not None
-            else PersonCategory.UNKNOWN
-        )
-        specs.append(PersonSpec(name=stripped, role=role))
+        specs.append(PersonSpec(name=stripped))
     return specs
 
 
@@ -559,21 +537,30 @@ async def attribute_search(body: AttributeSearchBody) -> Response:
     """
     Hard-attribute browse search — no NLP, no LLM, no vector search.
 
-    Intersects the supplied filters (genres, audio languages,
-    streaming services, release/runtime/maturity ranges, and named
-    people with optional role restriction) and returns the top
-    matches ranked by the 80/20 popularity/reception neutral prior.
+    Applies the supplied filters (genres, audio languages, streaming
+    services, release/runtime/maturity ranges) and ranks named people
+    by prominence, reusing the Step 0 person-search model.
 
-    Multiple `people` entries intersect (AND). A `role` on a person
-    restricts the credit lookup to that one posting table; omitting
-    `role` unions across all five role tables (any credit qualifies).
-    Unresolvable person names produce zero matches silently — the
-    response is an empty `[]` rather than an error.
+    With no `people`, returns the catalog ranked by the 80/20
+    popularity/reception neutral prior. With one or more `people`, each
+    person is resolved (role-agnostically, across all credit types) to
+    a per-movie prominence bucket — LEAD / MAJOR / RELEVANT / MINOR —
+    via the same resolver the Step 0 person flow uses. Each bucket maps
+    to an additive weight (LEAD=4 … MINOR=1) and weights are SUMMED
+    across people (UNION — any credit qualifies, and crediting more or
+    more-prominent people ranks higher). Within a prominence tier,
+    movies are ordered by popularity_score (then movie_id).
+
+    A single person with no metadata filters yields the SAME ordering
+    as the Step 0 person flow by construction. Unresolvable person
+    names contribute no credits silently — they neither error nor empty
+    the result.
 
     Returns:
       HTTP 200 with an array of MovieCard objects
       (tmdb_id, title, release_date, poster_url, maturity_rating),
-      ranked by descending neutral-prior score, capped at 250.
+      ranked by descending summed prominence weight (popularity as the
+      within-tier tie-break), capped at 250.
       HTTP 422 on unknown genre / audio_language / streaming_service
       enum values (handled inside `_to_metadata_filters`).
     """
@@ -583,10 +570,9 @@ async def attribute_search(body: AttributeSearchBody) -> Response:
     # SQL stays filter-clause-free on unfiltered queries.
     metadata_filters = _to_metadata_filters(body.filters)
 
-    # Convert wire-level PersonInput list (strings + optional role
-    # Literal) into the internal PersonSpec list (stripped name +
-    # resolved PersonCategory). Blank-after-strip entries are
-    # dropped here so the orchestrator never sees them.
+    # Convert wire-level PersonInput list into the internal PersonSpec
+    # list (stripped name). Blank-after-strip entries are dropped here
+    # so the orchestrator never sees them.
     people_specs = _to_person_specs(body.people)
 
     ranked_ids = await run_attribute_search(
@@ -596,9 +582,10 @@ async def attribute_search(body: AttributeSearchBody) -> Response:
     )
 
     # Hydrate ranked movie_ids into MovieCard summaries. Order is
-    # preserved by `fetch_movie_card_summaries`, so the response
-    # stays sorted by descending neutral-prior score. Same
-    # msgspec-encode hot path as /similarity_search.
+    # preserved by `fetch_movie_card_summaries`, so the response stays
+    # in the orchestrator's ranked order (summed prominence band, or
+    # the neutral prior on the no-people path). Same msgspec-encode hot
+    # path as /similarity_search.
     cards = await fetch_movie_card_summaries(ranked_ids)
     return Response(
         content=_json_encoder.encode(cards),
@@ -719,17 +706,58 @@ _ADDITIONAL_IMAGES_LIMIT = 5
 # needs the headliners.
 _CAST_LIMIT = 12
 
-# Per-bucket cap for crew lists. Most movies have 1–2 directors, but
-# blockbusters can list 10+ producers / writers. Limit per bucket so
-# the response stays small without dropping the primary credits.
-_CREW_BUCKET_LIMIT = 5
+# Global budget for the curated /movie_details crew list, counted in
+# DISTINCT PEOPLE (not rows). Each selected person contributes all of their
+# credits, so the emitted list can hold more rows than this — but never more
+# than this many distinct people. 12 mirrors the cast cap for visual balance.
+_CREW_PERSON_LIMIT = 12
 
-# Job titles TMDB uses for each crew bucket. "Screenplay" and "Story"
-# both contribute to the writers list since TMDB splits them out;
-# "Executive Producer" rolls up into producers.
+# Guaranteed priority slots filled before the importance top-up. All
+# directors are always included (subject only to the global cap); writers
+# and producers get their top N each, in TMDB billing order.
+_WRITER_PRIORITY_COUNT = 3
+_PRODUCER_PRIORITY_COUNT = 3
+
+# Job titles TMDB uses for each priority role. "Screenplay" and "Story"
+# both count as writing since TMDB splits them out; "Executive Producer"
+# rolls up into producers.
 _WRITER_JOBS = {"Writer", "Screenplay", "Story"}
 _PRODUCER_JOBS = {"Producer", "Executive Producer"}
 _DIRECTOR_JOBS = {"Director"}
+
+# Importance ranking for the fill phase (after directors + top writers/
+# producers are placed). A person's rank is the lowest index any of their
+# jobs maps to here; jobs absent from this tuple rank last and fall back to
+# TMDB first-seen order. Leftover writers/producers (beyond the priority
+# counts) re-enter here, ranked below the key below-the-line department heads
+# (cinematographer, composer, editor, production designer) the details page
+# most wants to surface.
+_CREW_FILL_JOB_PRIORITY = (
+    "Director of Photography",
+    "Original Music Composer",
+    "Music",
+    "Editor",
+    "Production Designer",
+    "Writer",
+    "Screenplay",
+    "Story",
+    "Producer",
+    "Executive Producer",
+    "Costume Design",
+    "Casting",
+    "Art Direction",
+)
+_CREW_FILL_JOB_RANK = {job: i for i, job in enumerate(_CREW_FILL_JOB_PRIORITY)}
+# Sentinel rank for any job not in the priority tuple — sorts after all
+# ranked jobs, leaving TMDB first-seen order as the effective tiebreak.
+_CREW_FILL_RANK_FALLBACK = len(_CREW_FILL_JOB_PRIORITY)
+
+# Department order for the uncapped /movie_credits crew list. We lead with
+# the three departments the details page already surfaces so the full view
+# reads as an expansion of what the user just saw, not a reshuffle. Every
+# other department TMDB returns (Camera, Editing, Sound, Art, …) follows in
+# TMDB's natural first-seen order, which is deterministic.
+_PRIORITY_CREW_DEPARTMENTS = ("Directing", "Writing", "Production")
 
 
 def _image_url(path: str | None, size: str) -> str | None:
@@ -826,37 +854,166 @@ def _extract_trailer_url(videos: dict | None) -> str | None:
     return None
 
 
-def _extract_credits(
-    credits: dict | None,
-) -> tuple[list[CrewMember], list[CrewMember], list[CrewMember], list[CastMember]]:
-    """Split TMDB's credits block into (directors, writers, producers, cast).
+class _ExtractedCredits(NamedTuple):
+    """Result of splitting a TMDB credits block into curated sections.
 
-    Single pass over crew with set-membership lookups for bucketing.
-    Cast is taken in TMDB's native order (already sorted by billing
-    position), truncated to _CAST_LIMIT.
+    `crew` is a single ranked list (see `_extract_credits`). The two
+    truncation booleans tell the frontend whether to show a "See all" link
+    per section. Each is derived by comparing the full pre-cap/pre-filter
+    TMDB count against the count we actually return — never by referencing a
+    cap constant — so the flags stay correct if the caps ever change. Named
+    fields keep the call site self-documenting and immune to positional mixups.
     """
-    if not credits:
-        return [], [], [], []
 
-    directors: list[CrewMember] = []
-    writers: list[CrewMember] = []
-    producers: list[CrewMember] = []
-    for entry in credits.get("crew", []):
-        job = entry.get("job") or ""
+    crew: list[CrewMember]
+    cast: list[CastMember]
+    cast_truncated: bool
+    crew_truncated: bool
+
+
+class _CrewPerson(NamedTuple):
+    """One person's grouped crew credits plus role flags for selection.
+
+    `rows` holds every `CrewMember` credit for this person in TMDB order;
+    `jobs` is the set of their job labels used for role/importance tests.
+    `first_seen` is the person's position in TMDB's crew array — the stable
+    tiebreak that makes selection deterministic.
+    """
+
+    rows: list[CrewMember]
+    jobs: set[str]
+    first_seen: int
+    is_director: bool
+    is_writer: bool
+    is_producer: bool
+
+
+def _person_fill_rank(jobs: set[str]) -> int:
+    """Importance rank for the fill phase: lowest index across a person's jobs.
+
+    Lower is more important. Jobs absent from `_CREW_FILL_JOB_PRIORITY` map to
+    the fallback rank, leaving TMDB first-seen order as the effective tiebreak.
+    """
+    return min(
+        (_CREW_FILL_JOB_RANK.get(job, _CREW_FILL_RANK_FALLBACK) for job in jobs),
+        default=_CREW_FILL_RANK_FALLBACK,
+    )
+
+
+def _group_crew_by_person(crew_entries: list[dict]) -> list[_CrewPerson]:
+    """Collapse TMDB crew rows into per-person buckets, in first-seen order.
+
+    Rows are keyed by TMDB person `id`; a row missing `id` gets a per-row
+    sentinel so distinct anonymous credits never merge. Nameless rows are
+    skipped — they can't render. The backend deliberately keeps every credit
+    (one `CrewMember` per job); consumers dedupe by person for display.
+    """
+    index_by_key: dict[object, int] = {}  # person key -> index into `buckets`
+    buckets: list[dict] = []              # mutable accumulators, first-seen order
+    for entry in crew_entries:
         name = entry.get("name")
         if not name:
             continue
+        # `id` is TMDB's stable person identifier; fall back to the row's
+        # object identity when it's absent so two anonymous credits stay split.
+        key = entry.get("id")
+        if key is None:
+            key = ("anon", id(entry))
+        job = entry.get("job") or ""
         member = CrewMember(
             name=name,
             job=job,
             profile_url=_image_url(entry.get("profile_path"), _PROFILE_SIZE),
         )
-        if job in _DIRECTOR_JOBS and len(directors) < _CREW_BUCKET_LIMIT:
-            directors.append(member)
-        elif job in _WRITER_JOBS and len(writers) < _CREW_BUCKET_LIMIT:
-            writers.append(member)
-        elif job in _PRODUCER_JOBS and len(producers) < _CREW_BUCKET_LIMIT:
-            producers.append(member)
+        idx = index_by_key.get(key)
+        if idx is None:
+            index_by_key[key] = len(buckets)
+            buckets.append({"rows": [member], "jobs": {job}})
+        else:
+            buckets[idx]["rows"].append(member)
+            buckets[idx]["jobs"].add(job)
+
+    people: list[_CrewPerson] = []
+    for first_seen, b in enumerate(buckets):
+        jobs = b["jobs"]
+        people.append(
+            _CrewPerson(
+                rows=b["rows"],
+                jobs=jobs,
+                first_seen=first_seen,
+                is_director=bool(jobs & _DIRECTOR_JOBS),
+                is_writer=bool(jobs & _WRITER_JOBS),
+                is_producer=bool(jobs & _PRODUCER_JOBS),
+            )
+        )
+    return people
+
+
+def _select_crew_people(people: list[_CrewPerson]) -> list[_CrewPerson]:
+    """Choose up to `_CREW_PERSON_LIMIT` people in priority order.
+
+    Order: all directors, then the top writers, then the top producers, then
+    the most important remaining crew by `_person_fill_rank`. A person already
+    chosen is never taken again (a director-writer fills one slot), and every
+    phase yields to the global cap.
+    """
+    selected: list[_CrewPerson] = []
+    chosen: set[int] = set()  # first_seen indices already taken
+
+    def take(person: _CrewPerson) -> None:
+        chosen.add(person.first_seen)
+        selected.append(person)
+
+    def take_top(predicate, count: int) -> None:
+        """Take up to `count` not-yet-chosen people matching `predicate`."""
+        taken = 0
+        for p in people:
+            if len(selected) >= _CREW_PERSON_LIMIT or taken >= count:
+                return
+            if p.first_seen in chosen or not predicate(p):
+                continue
+            take(p)
+            taken += 1
+
+    # Phase 1: every director, first-seen order, subject only to the cap.
+    for p in people:
+        if len(selected) >= _CREW_PERSON_LIMIT:
+            return selected
+        if p.is_director:
+            take(p)
+
+    # Phases 2/3: top writers, then top producers.
+    take_top(lambda p: p.is_writer, _WRITER_PRIORITY_COUNT)
+    take_top(lambda p: p.is_producer, _PRODUCER_PRIORITY_COUNT)
+    if len(selected) >= _CREW_PERSON_LIMIT:
+        return selected
+
+    # Phase 4: top up by importance, breaking ties on first-seen order.
+    remaining = [p for p in people if p.first_seen not in chosen]
+    remaining.sort(key=lambda p: (_person_fill_rank(p.jobs), p.first_seen))
+    for p in remaining:
+        if len(selected) >= _CREW_PERSON_LIMIT:
+            break
+        take(p)
+    return selected
+
+
+def _extract_credits(credits: dict | None) -> _ExtractedCredits:
+    """Split TMDB's credits block into a curated crew list, cast, and flags.
+
+    Crew is grouped by person and selected by priority (see
+    `_select_crew_people`), then expanded so each chosen person contributes
+    all of their credits. Cast is taken in TMDB's native order (already sorted
+    by billing position), truncated to `_CAST_LIMIT`.
+    """
+    if not credits:
+        return _ExtractedCredits([], [], False, False)
+
+    people = _group_crew_by_person(credits.get("crew", []))
+    selected = _select_crew_people(people)
+    # Expand selected people back into a flat row list, preserving selection
+    # order across people and TMDB order within each person.
+    crew: list[CrewMember] = [member for person in selected for member in person.rows]
 
     cast: list[CastMember] = []
     for entry in credits.get("cast", [])[:_CAST_LIMIT]:
@@ -871,7 +1028,104 @@ def _extract_credits(
             )
         )
 
-    return directors, writers, producers, cast
+    # Truncation flags compare what we kept against the real totals — never a
+    # cap constant. Crew counts DISTINCT PEOPLE: True iff we dropped anyone.
+    cast_truncated = len(cast) < len(credits.get("cast", []))
+    crew_truncated = len(selected) < len(people)
+
+    return _ExtractedCredits(crew, cast, cast_truncated, crew_truncated)
+
+
+def _build_movie_credits(tmdb_id: int, payload: dict) -> MovieCredits:
+    """Build the full, uncapped MovieCredits payload from a TMDB detail dict.
+
+    Pure function — no I/O. Unlike `_extract_credits` (which caps cast and
+    keeps only three job buckets for the lean /movie_details view), this is
+    the lazy "See all" companion: every billed cast member and every crew
+    department TMDB returns, with no caps and no merging.
+
+    Cast keeps TMDB's billing order. Crew is grouped by the canonical TMDB
+    `department` field — one entry per (person, job), so a person credited
+    for two jobs (or across two departments) appears once per credit. Group
+    order leads with `_PRIORITY_CREW_DEPARTMENTS` (matching what the details
+    page showed) and then follows TMDB's first-seen department order; member
+    order within a group is TMDB's natural order. Both orders are fixed
+    server-side per the backend-is-authoritative convention.
+    """
+    credits = payload.get("credits") or {}
+
+    # Cast: full billed list in TMDB order. Skip nameless entries; normalize
+    # blank character/profile to None so they drop via omit_defaults.
+    cast: list[CastMember] = []
+    for entry in credits.get("cast", []):
+        name = entry.get("name")
+        if not name:
+            continue
+        cast.append(
+            CastMember(
+                name=name,
+                character=entry.get("character") or None,
+                profile_url=_image_url(entry.get("profile_path"), _PROFILE_SIZE),
+            )
+        )
+
+    # Crew: group by department in a single pass. A plain dict preserves
+    # first-seen insertion order for both departments and the members within
+    # each, which gives us the deterministic ordering the contract requires.
+    grouped: dict[str, list[CrewMember]] = {}
+    for entry in credits.get("crew", []):
+        name = entry.get("name")
+        if not name:
+            continue
+        # `department` is reliably present on TMDB crew rows; fall back to
+        # "Crew" (itself a canonical TMDB department) so a real credit is
+        # never silently dropped if it's ever missing.
+        department = entry.get("department") or "Crew"
+        grouped.setdefault(department, []).append(
+            CrewMember(
+                name=name,
+                job=entry.get("job") or "",
+                profile_url=_image_url(entry.get("profile_path"), _PROFILE_SIZE),
+            )
+        )
+
+    # Emit the priority departments first (only if present), then the rest in
+    # first-seen order (dict iteration preserves insertion order).
+    ordered_departments = [d for d in _PRIORITY_CREW_DEPARTMENTS if d in grouped]
+    ordered_departments += [
+        d for d in grouped if d not in _PRIORITY_CREW_DEPARTMENTS
+    ]
+    crew = [
+        CrewGroup(department=d, members=grouped[d]) for d in ordered_departments
+    ]
+
+    return MovieCredits(tmdb_id=tmdb_id, cast=cast, crew=crew)
+
+
+async def _encode_and_cache_credits(tmdb_id: int, tmdb_payload: dict) -> bytes:
+    """Build, encode, and best-effort cache the MovieCredits for a movie.
+
+    The single write path for the `tmdb:credits:{id}` cache. Both callers
+    funnel through here so the key is never written from two places:
+      - /movie_credits caches the payload it just fetched, then returns it.
+      - /movie_details cross-populates it for free from the detail payload
+        it already fetched (the "See all" follow-up always comes after a
+        details view), so that follow-up is a warm hit instead of a second
+        TMDB round trip.
+
+    Returns the encoded bytes so the caller can return them verbatim. A
+    cache-write failure is logged but never fatal — per the
+    graceful-degradation convention, Redis is an optimization, not a
+    dependency.
+    """
+    encoded = _json_encoder.encode(_build_movie_credits(tmdb_id, tmdb_payload))
+    try:
+        await cache_movie_credits(tmdb_id, encoded)
+    except Exception:
+        logger.warning(
+            "movie_credits cache write failed for tmdb_id=%s", tmdb_id, exc_info=True
+        )
+    return encoded
 
 
 def _extract_additional_images(
@@ -976,7 +1230,7 @@ def _build_movie_details(
     inlined). `card_row` is the matching row from public.movie_card and
     supplies the locally-computed reception_score.
     """
-    directors, writers, producers, cast = _extract_credits(payload.get("credits"))
+    credits = _extract_credits(payload.get("credits"))
 
     # IMDb link: prefer external_ids.imdb_id (always present in the append
     # response when known), fall back to the top-level imdb_id field which
@@ -1022,10 +1276,10 @@ def _build_movie_details(
         reception_score=card_row.get("reception_score"),
         tmdb_vote_average=payload.get("vote_average"),
         tmdb_vote_count=payload.get("vote_count"),
-        directors=directors,
-        writers=writers,
-        producers=producers,
-        cast=cast,
+        crew=credits.crew,
+        cast=credits.cast,
+        cast_truncated=credits.cast_truncated,
+        crew_truncated=credits.crew_truncated,
         watch_providers=_extract_us_watch_providers(payload.get("watch/providers")),
         tmdb_url=f"{_TMDB_MOVIE_PAGE_BASE}/{tmdb_id}",
         imdb_url=f"{_IMDB_TITLE_PAGE_BASE}/{imdb_id}" if imdb_id else None,
@@ -1105,4 +1359,84 @@ async def movie_details(tmdb_id: int) -> Response:
         logger.warning(
             "movie_details cache write failed for tmdb_id=%s", tmdb_id, exc_info=True
         )
+
+    # Cross-populate the /movie_credits cache from the same payload we just
+    # fetched. The "See all" affordance always follows a details view, so
+    # warming the credits cache here turns that follow-up into a cache hit at
+    # the cost of one extra build + Redis write — no extra TMDB round trip.
+    # Best-effort (failures logged inside the helper); never blocks the
+    # details response.
+    await _encode_and_cache_credits(tmdb_id, tmdb_payload)
+
+    return Response(content=encoded, media_type="application/json")
+
+
+@app.get("/movie_credits/{tmdb_id}")
+async def movie_credits(tmdb_id: int) -> Response:
+    """Return the complete, uncapped cast & crew for a single movie.
+
+    The lazy "See all" companion to /movie_details — credits only, no movie
+    metadata. Same upstream credits data, but with no caps and crew grouped
+    by department. Cached under `tmdb:credits:{id}` (24h TTL).
+
+    Cache-first: the credits cache is normally warmed by the /movie_details
+    view the user came from (which cross-populates it from its own fetch),
+    so the common path is a hit with no TMDB call at all. The cold path is
+    the rare fallback (details cache expired, served by a different instance,
+    or a direct hit) and uses a lean credits-only TMDB fetch.
+
+    Pipeline:
+      1. Try Redis (24h cache of the encoded MovieCredits bytes).
+      2. Confirm the movie is in our index (`public.movie_card`); 404 if not.
+      3. Lean credits-only TMDB fetch.
+      4. Build, cache, and return the uncapped MovieCredits payload.
+
+    Errors:
+      - 404 if `tmdb_id` is not in our `movie_card` index, or TMDB itself
+        no longer serves the movie.
+      - 502 if the TMDB fetch fails after retries (network / 5xx).
+    """
+    # 1. Redis warm path. Return cached bytes verbatim. Per the
+    # graceful-degradation convention (docs/conventions.md), a Redis
+    # failure here must NOT fail the request — fall through to the cold path.
+    try:
+        cached = await get_cached_movie_credits(tmdb_id)
+    except Exception:
+        logger.warning(
+            "movie_credits cache read failed for tmdb_id=%s", tmdb_id, exc_info=True
+        )
+        cached = None
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
+    # 2. Reject unknown movies before hitting TMDB. We only need to know the
+    # movie is in our index — the card row's reception_score is unused here.
+    card_row = await fetch_movie_card_row(tmdb_id)
+    if card_row is None:
+        raise HTTPException(status_code=404, detail="movie not found")
+
+    # 3. Lean credits-only fetch (vs the heavier /movie_details fetch) — this
+    # path only fires when the cache wasn't pre-warmed, and we discard
+    # everything but credits anyway. Shared client + rate limiter on app.state.
+    try:
+        tmdb_payload = await fetch_movie_credits_for_endpoint(
+            app.state.tmdb_client,
+            app.state.tmdb_rate_limiter,
+            tmdb_id,
+        )
+    except TMDBFetchError as exc:
+        # Surface upstream failures as 502 so the frontend can distinguish
+        # "TMDB is unhappy" from "our server is broken" — matches
+        # /movie_details so the client reuses its retry/UX semantics.
+        raise HTTPException(
+            status_code=502, detail=f"TMDB fetch failed: {exc}"
+        ) from exc
+    if tmdb_payload is None:
+        # 404 from TMDB: removed upstream. Same client-facing meaning as
+        # "not in our index".
+        raise HTTPException(status_code=404, detail="movie not found on TMDB")
+
+    # 4. Build, cache, and return — same bytes written and returned so the
+    # warm-path response is byte-identical to this cold-path response.
+    encoded = await _encode_and_cache_credits(tmdb_id, tmdb_payload)
     return Response(content=encoded, media_type="application/json")

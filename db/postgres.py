@@ -2206,7 +2206,6 @@ async def fetch_quality_popularity_seed(
 async def fetch_neutral_reranker_seed_ids(
     *,
     limit: int = NEUTRAL_RERANKER_SEED_LIMIT,
-    restrict_movie_ids: Optional[set[int]] = None,
     metadata_filters: Optional[MetadataFilters] = None,
 ) -> list[int]:
     """Top `limit` movie_ids ranked by the neutral 80/20 prior.
@@ -2222,50 +2221,24 @@ async def fetch_neutral_reranker_seed_ids(
     `reception_score` is stored on a 0-100 scale, so normalize by
     dividing by 100 and clamp both components defensively.
 
-    Two call sites today:
+    Call sites today:
 
     1. **V2 no-LLM fallback path** — when zero candidate generators
        fire, this seed is the only pool downstream rerankers see.
-       Pass only `limit` (and `metadata_filters` if set); leave
-       `restrict_movie_ids` as None for an unrestricted pool.
-    2. **`/attribute_search` endpoint** — pre-computes a candidate
-       movie_id set from people/posting-table intersections, then
-       passes that set as `restrict_movie_ids` so the same ranking
-       runs against only those movies.
+    2. **`/attribute_search` no-people path** — "browse everything"
+       ranked by the same prior over the whole catalog.
 
-    `restrict_movie_ids` semantics: when None the query scans the
-    whole `movie_card` table (today's behavior); when set, the SQL
-    adds `AND movie_id = ANY(%s::bigint[])` so ranking happens over
-    just that candidate pool. An empty set is treated as "no movies
-    to rank" — the query short-circuits and returns `[]` without
-    hitting Postgres, since `ANY(empty array)` would otherwise scan
-    the table only to produce zero rows.
-
-    The hard `metadata_filters` clause is independent of
-    `restrict_movie_ids` — both apply simultaneously when supplied.
+    Both scan the whole `movie_card` table, optionally narrowed by the
+    hard `metadata_filters` clause. (The people path of
+    `/attribute_search` ranks in Python over a prominence-scored pool
+    and does not use this helper.)
     """
-    # Empty restrict set has a single unambiguous meaning ("rank over
-    # nothing") and never returns rows; short-circuit so we don't pay
-    # a round-trip for a result we already know.
-    if restrict_movie_ids is not None and not restrict_movie_ids:
-        return []
-
     filter_clause, filter_params = _build_direct_movie_card_filter_clause(metadata_filters)
-
-    # Optional restrict clause. Splice into the WHERE before the
-    # ORDER BY so the planner can use the movie_card PK b-tree on the
-    # ANY(...) lookup before sorting. Param order: filter_params,
-    # restrict_param (if any), pop_weight, rec_weight, limit.
-    restrict_clause = ""
-    restrict_params: tuple = ()
-    if restrict_movie_ids is not None:
-        restrict_clause = " AND movie_id = ANY(%s::bigint[])"
-        restrict_params = (list(restrict_movie_ids),)
 
     query = f"""
         SELECT movie_id
         FROM public.movie_card
-        WHERE TRUE{filter_clause}{restrict_clause}
+        WHERE TRUE{filter_clause}
         ORDER BY (
             %s * COALESCE(
                 LEAST(1.0, GREATEST(0.0, popularity_score)),
@@ -2284,7 +2257,6 @@ async def fetch_neutral_reranker_seed_ids(
         query,
         (
             *filter_params,
-            *restrict_params,
             NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT,
             NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT,
             limit,

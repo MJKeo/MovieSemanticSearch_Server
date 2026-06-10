@@ -85,6 +85,14 @@ BUCKET_MAJOR = 2
 BUCKET_RELEVANT = 3
 BUCKET_MINOR = 4
 
+# Invariant: buckets are contiguous and strictly increasing with
+# BUCKET_MINOR the largest (least-prominent) value. `search_v2/
+# attribute_search.py` inverts these into additive weights via
+# `(BUCKET_MINOR + 1) - bucket`, which only stays monotonic and
+# positive while BUCKET_MINOR is the max. If a less-prominent bucket is
+# ever added, bump BUCKET_MINOR to match (or update that weight map).
+assert BUCKET_LEAD < BUCKET_MAJOR < BUCKET_RELEVANT < BUCKET_MINOR
+
 # Non-actor role tables. Postings carry no billing_position /
 # cast_size, so any credit in these tables is treated as a fully
 # prominent "named creative" credit and lands in BUCKET_LEAD. Order
@@ -164,7 +172,7 @@ async def run_person_search(
     # overlap_count and rank single-person matches above genuine
     # multi-person intersections inside the same bucket. Dedupe on the
     # normalized form so "Tom Hanks" and "tom  hanks" collapse together
-    # the same way `_fetch_person_buckets` will resolve them.
+    # the same way `fetch_person_buckets` will resolve them.
     references = []
     seen_norm: set[str] = set()
     for ref in flow_data.references:
@@ -181,7 +189,7 @@ async def run_person_search(
     # phrase_term_ids lookup plus one fetch per role table.
     per_person_buckets = await asyncio.gather(
         *(
-            _fetch_person_buckets(
+            fetch_person_buckets(
                 ref.canonical_name, metadata_filters=metadata_filters,
             )
             for ref in references
@@ -240,12 +248,18 @@ async def run_person_search(
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_person_buckets(
+async def fetch_person_buckets(
     canonical_name: str,
     *,
     metadata_filters: MetadataFilters | None = None,
 ) -> dict[int, int]:
     """Resolve one person → {movie_id: bucket_num} across all roles.
+
+    Shared with `/attribute_search`'s people path
+    (`search_v2.attribute_search`) so the two flows resolve a person to
+    the exact same prominence buckets — single-person attribute search
+    matches the Step 0 person flow by construction. Keep this resolver
+    role-agnostic; callers that need to combine people own that logic.
 
     Queries every PEOPLE_POSTING_TABLES entry in parallel for the
     person's resolved term_id. Returns an empty dict when the

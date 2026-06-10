@@ -152,7 +152,14 @@ async def read_trending_scores() -> dict[int, float]:
 # stays under `tmdb:movie:` because that's the documented home for
 # per-movie TMDB-derived cache entries.
 
-_MOVIE_DETAILS_KEY_PARTS: tuple[str, ...] = ("tmdb", "movie")
+# `v2` namespaces the curated payload shape. Bumped when MovieDetails moved
+# from three crew buckets (directors/writers/producers) to a single ranked
+# `crew` list. The warm path serves cached bytes VERBATIM (no decode — see
+# the /movie_details handler), so a stale `v1` entry would hand the old
+# three-bucket JSON straight to the client for up to its 24h TTL, which the
+# new frontend can't read. A fresh namespace sidesteps that — old keys
+# orphan and expire unused.
+_MOVIE_DETAILS_KEY_PARTS: tuple[str, ...] = ("tmdb", "movie", "v2")
 _MOVIE_DETAILS_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 
@@ -178,6 +185,45 @@ async def cache_movie_details(tmdb_id: int, payload: bytes) -> None:
     client = get_redis_client()
     key = redis_key(*_MOVIE_DETAILS_KEY_PARTS, str(tmdb_id))
     await client.set(key, payload, ex=_MOVIE_DETAILS_TTL_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# Full cast & crew cache (backs the /movie_credits API endpoint)
+# ---------------------------------------------------------------------------
+#
+# The lazy "See all" companion to /movie_details. Cached separately from
+# movie details because it's a distinct (uncapped) payload fetched only
+# when the user opts in. Namespace `tmdb:credits:{id}` per the
+# colon-delimited Redis-key convention (docs/conventions.md). Credits are
+# stable, so the same 24h TTL as movie details is safe — repeat opens of
+# the full-credits view are free.
+
+_MOVIE_CREDITS_KEY_PARTS: tuple[str, ...] = ("tmdb", "credits")
+_MOVIE_CREDITS_TTL_SECONDS = 24 * 60 * 60  # 24h
+
+
+async def get_cached_movie_credits(tmdb_id: int) -> bytes | None:
+    """Return the cached MovieCredits JSON bytes for `tmdb_id`, or None.
+
+    Returns the raw payload exactly as written by `cache_movie_credits`
+    so the API layer can pass it straight to a Response body — no
+    decode/re-encode round trip on the warm path.
+    """
+    client = get_redis_client()
+    key = redis_key(*_MOVIE_CREDITS_KEY_PARTS, str(tmdb_id))
+    return await client.get(key)
+
+
+async def cache_movie_credits(tmdb_id: int, payload: bytes) -> None:
+    """Write the encoded MovieCredits payload to Redis with a 24h TTL.
+
+    `payload` must be the bytes the API endpoint will return verbatim
+    (msgspec-encoded MovieCredits). Cache is serialization-agnostic —
+    we never decode it here.
+    """
+    client = get_redis_client()
+    key = redis_key(*_MOVIE_CREDITS_KEY_PARTS, str(tmdb_id))
+    await client.set(key, payload, ex=_MOVIE_CREDITS_TTL_SECONDS)
 
 
 # ---------------------------------------------------------------------------

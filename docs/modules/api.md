@@ -12,7 +12,7 @@ and API endpoints for search and movie detail retrieval.
 
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI app setup, lifespan context manager, health check endpoint, `/query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `MetadataFiltersInput` request model, and `_build_movie_details` translator. |
+| `main.py` | FastAPI app setup, lifespan context manager, health check endpoint, `/query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `/movie_credits/{tmdb_id}`, `MetadataFiltersInput` request model, the `_build_movie_details` / `_build_movie_credits` translators, and the `_encode_and_cache_credits` shared cache writer. |
 | `cli_search.py` | CLI tool to run the full search pipeline from the terminal. Supports genre, maturity, runtime, and release date filters. Run via `python -m api.cli_search "query"`. |
 
 ## Boundaries
@@ -70,23 +70,42 @@ and API endpoints for search and movie detail retrieval.
   - `filters`: same `MetadataFiltersInput` shape used by `/query_search`
     (genres, audio_languages, streaming_services, release_date /
     runtime / maturity ranges). Same 422 path on unknown enum values.
-  - `people`: list of `PersonInput` entries, each `{name: str,
-    role?: "actor"|"director"|"writer"|"producer"|"composer"}`. Name
-    is normalized server-side. When `role` is omitted the credit
-    lookup unions across all five role posting tables (any credit on
-    the movie qualifies); when set, the lookup is restricted to that
-    one role's posting table. Multiple `people` entries intersect
-    (AND) — a movie must satisfy every person filter. Empty list and
-    `null` are treated identically.
-- **Response**: Array of `MovieCard` objects, capped at 250, ranked
-  by descending 80×popularity_score + 20×reception_score (the same
-  neutral prior used by the V2 reranker-only fallback path).
-  Unresolvable person names produce zero matches silently — the
-  response is an empty `[]`, not an error.
+  - `people`: list of `PersonInput` entries, each `{name: str}` (no
+    role — the flow is role-agnostic). Name is normalized server-side.
+    Multiple `people` entries are **unioned and summed** (not
+    intersected): a movie crediting any supplied person qualifies, and
+    its score is the sum of each person's prominence weight on it.
+    Empty list and `null` are treated identically.
+- **Ranking** (people supplied): reuses the **Step 0 person-search
+  model** (`search_v2/person_search.py`). Each person resolves to a
+  per-movie prominence bucket via the shared `fetch_person_buckets`
+  (role-agnostic, MIN bucket across all five credit tables): LEAD /
+  MAJOR / RELEVANT / MINOR — the minor actor zone split at `zp=0.5`
+  into "still relevant" vs "cameo", using the shared
+  `search_v2/actor_zones.py` cutoffs; non-actor credits land in LEAD.
+  Each bucket maps to an additive weight `(BUCKET_MINOR+1) - bucket`
+  (LEAD=4 … MINOR=1), weights are **summed across people**, and the
+  sum is the primary sort key (DESC). Within a tier, movies sort by
+  `popularity_score` (NULLS-last) then `movie_id` DESC — identical to
+  Step 0's `_sort_bucket`. Ranking happens in Python over the scored
+  pool (one bulk popularity fetch), not in SQL.
+  - **Single person, no metadata filters → identical ordering to the
+    Step 0 person flow**, by construction (one summand → weight is
+    constant within a bucket and strictly orders buckets; same
+    within-bucket tie-break). The only divergence from Step 0 is the
+    multi-person rule: Step 0 takes MIN bucket + `overlap_count`,
+    whereas this endpoint sums weights so more/more-prominent credits
+    rank higher.
+- **Response**: Array of `MovieCard` objects, capped at 250 (Step 0's
+  person flow caps at 100; the overlapping prefix is identically
+  ordered). Unresolvable person names contribute no credits silently —
+  they neither error nor empty the result.
+- **No people supplied**: returns the catalog ranked by the same 80/20
+  neutral prior used by the V2 reranker-only fallback path
+  (`fetch_neutral_reranker_seed_ids`).
 - **No NLP / no LLM / no vector search** — pure deterministic browse
-  path. All filters apply at the SQL layer (posting-table lookups
-  intersect with `movie_card`-side `MetadataFilters`, then the same
-  filters re-apply on the final ranking query).
+  path. Hard `MetadataFilters` push down to the SQL layer inside every
+  posting-table lookup, so the scored pool is already filter-respecting.
 
 ### `GET /title_search`
 - **Request**: query params
@@ -121,18 +140,49 @@ and API endpoints for search and movie detail retrieval.
 - **Response**: Curated `MovieDetails` msgspec struct (see
   `schemas/api_responses.py`) combining TMDB live data (overview,
   cast/crew, watch providers, trailer, images) with our locally-
-  computed `reception_score`.
+  computed `reception_score`. Crew is a single ranked `crew` list,
+  not separate buckets: up to 12 distinct people (all directors, top 3
+  writers, top 3 producers, then the most important remaining crew via
+  `_select_crew_people`), each contributing all their credit rows
+  (no backend dedupe). `crew_truncated` is True when >12 distinct crew
+  people exist; the "See all" link points at `/movie_credits`.
 - **Flow**:
-  1. Check Redis (`tmdb:movie:{id}`, 24h TTL) — return cached bytes
-     verbatim on hit.
+  1. Check Redis (`tmdb:movie:v2:{id}`, 24h TTL) — return cached bytes
+     verbatim on hit. (`v2` namespaces the single-`crew`-list payload
+     shape; a bump avoids serving stale buckets-era bytes.)
   2. On miss, confirm the movie is in `public.movie_card` (404 if not).
   3. Fetch `https://api.themoviedb.org/3/movie/{id}` with
      `append_to_response=credits,videos,images,external_ids,watch/providers,release_dates`.
   4. Translate to `MovieDetails` via `_build_movie_details`, cache, return.
+  5. Cross-populate the `/movie_credits` cache from the same payload via
+     `_encode_and_cache_credits` — warms `tmdb:credits:{id}` for free so a
+     follow-up "See all" is a cache hit. Best-effort; never blocks the
+     response.
 - **Errors**: 404 if movie not in `movie_card` or TMDB returns 404;
   502 if the TMDB fetch fails after retries.
 - **Graceful degradation**: Redis read/write failures are logged but
   do not fail the request — the cold path still serves the response.
+
+### `GET /movie_credits/{tmdb_id}`
+- **Response**: `MovieCredits` msgspec struct (`schemas/api_responses.py`)
+  — the complete, uncapped cast & crew, credits-only (no movie metadata).
+  Backs the details page's "See all" affordance. Reuses the `CastMember` /
+  `CrewMember` shapes; crew is grouped by TMDB `department` into `CrewGroup`s.
+- **Flow** (cache-first): Redis (`tmdb:credits:{id}`, 24h TTL) hit returns
+  verbatim → on miss, `movie_card` 404 check → **lean credits-only** TMDB
+  fetch (`fetch_movie_credits_for_endpoint`, `append_to_response=credits`) →
+  build + cache + return via `_encode_and_cache_credits`.
+- **Ordering** (server-authoritative): cast in TMDB billing order; crew groups
+  lead with Directing/Writing/Production then remaining departments in TMDB
+  first-seen order; one entry per (person, job), no merging.
+- **Errors / graceful degradation**: identical to `/movie_details` (404
+  not-in-index / not-on-TMDB, 502 on TMDB failure; Redis failures non-fatal).
+- **Caching**: the `tmdb:credits:{id}` cache is normally warmed by the
+  `/movie_details` view the user came from (cross-population, see above), so
+  the common path is a hit with no TMDB call. The cold-path fetch is the rare
+  fallback and is credits-only to avoid pulling sub-resources it discards.
+  Both writers funnel through `_encode_and_cache_credits` — one write codepath
+  for the key.
 
 ### `GET /health`
 - Validates connectivity to Postgres, Redis, and Qdrant.

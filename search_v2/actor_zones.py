@@ -67,6 +67,26 @@ def zone_cutoffs(cast_size: int) -> ZoneCutoffs:
     return ZoneCutoffs(lead_cutoff=lead, supp_cutoff=supp)
 
 
+def zone_label(billing_position: int, cast_size: int) -> str:
+    """Map a billing position to its cast zone: "lead" / "supporting" / "minor".
+
+    Thin wrapper over `zone_cutoffs` that returns just the zone name,
+    for callers that need the discrete band rather than the continuous
+    in-zone score. The boundaries are identical to those used by the
+    entity-flow actor scorer, so the two never drift:
+
+      positions 1..lead_cutoff            → "lead"
+      lead_cutoff+1..supp_cutoff          → "supporting"
+      remainder (supp_cutoff+1..size)     → "minor"
+    """
+    cutoffs = zone_cutoffs(cast_size)
+    if billing_position <= cutoffs.lead_cutoff:
+        return "lead"
+    if billing_position <= cutoffs.supp_cutoff:
+        return "supporting"
+    return "minor"
+
+
 def zone_relative_position(
     billing_position: int,
     zone_start: int,

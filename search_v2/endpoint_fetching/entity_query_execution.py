@@ -71,7 +71,11 @@ from schemas.entity_translation import (
 # shared module so the person entity-flow bucketer in
 # search_v2.person_search and the score curves here can't drift on
 # tuning constants. See search_v2.actor_zones for the docstring.
-from search_v2.actor_zones import zone_cutoffs, zone_relative_position
+from search_v2.actor_zones import (
+    zone_cutoffs,
+    zone_label,
+    zone_relative_position,
+)
 from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 
@@ -163,18 +167,20 @@ def _actor_prominence_score(
     to compute a raw [0, 1] value. No band compression is applied —
     callers always receive raw scores.
     """
+    # Zone boundaries and the zone label come from the shared
+    # actor_zones primitives so this scorer and the attribute-search
+    # band tiering can't drift on cutoffs. We still need `cutoffs` here
+    # to anchor the in-zone relative position (zp) for the score curve.
     cutoffs = zone_cutoffs(cast_size)
+    zone = zone_label(billing_position, cast_size)
 
-    if billing_position <= cutoffs.lead_cutoff:
-        zone = "lead"
+    if zone == "lead":
         zp = zone_relative_position(billing_position, 1, cutoffs.lead_cutoff)
-    elif billing_position <= cutoffs.supp_cutoff:
-        zone = "supporting"
+    elif zone == "supporting":
         zp = zone_relative_position(
             billing_position, cutoffs.lead_cutoff + 1, cutoffs.supp_cutoff
         )
     else:
-        zone = "minor"
         zp = zone_relative_position(
             billing_position, cutoffs.supp_cutoff + 1, cast_size
         )

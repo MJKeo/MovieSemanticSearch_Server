@@ -345,17 +345,16 @@ class Movie(BaseModel):
         if self.imdb_data.maturity_reasoning:
             return ". ".join(self.imdb_data.maturity_reasoning)
 
-        # Fall back to MPA rating → semantic description
-        rating = self.resolved_maturity_rating()
-        if not rating:
+        # Fall back to MPA rating → semantic description. Resolve through
+        # MaturityRating so TV / legacy / foreign certs (TV-MA → R, Approved →
+        # G, etc.) map to their canonical equivalent, consistent with the rank
+        # stored at ingestion.
+        rating = MaturityRating.from_string_with_default(self.resolved_maturity_rating())
+        # UNRATED (incl. "Not Rated", unrecognized, or missing) carries no
+        # useful maturity signal — return empty so anchor text stays clean.
+        if rating == MaturityRating.UNRATED:
             return ""
-        description = self._MATURITY_DESCRIPTIONS.get(rating.upper())
-        if description:
-            return description
-
-        # Non-standard values like "Not Rated" / "Unrated" carry no useful
-        # maturity signal — return empty so anchor text stays clean.
-        return ""
+        return self._MATURITY_DESCRIPTIONS.get(rating.value.upper(), "")
 
     def resolved_budget(self) -> int | None:
         """Prefer IMDB budget when present; fall back to TMDB.

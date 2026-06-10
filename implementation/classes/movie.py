@@ -393,28 +393,36 @@ class BaseMovie(BaseModel):
         """
         Formats maturity guidance text for vector search (4.9).
         
-        For "Unrated" movies: joins parental guide items as "<severity> <category>".
+        The raw rating is resolved through MaturityRating first, so TV / legacy /
+        foreign certs map to their canonical equivalent.
+        For unrated movies: joins parental guide items as "<severity> <category>".
         For rated movies: maps rating to semantic description and appends reasoning.
         
         Returns:
             Formatted maturity guidance string
         """
-        if self.maturity_rating == "Unrated" or not self.maturity_reasoning:
+        # Resolve the raw rating through MaturityRating so TV / legacy / foreign
+        # certs (TV-MA → R, "Not Rated" → unrated, etc.) are treated by their
+        # canonical equivalent — consistent with the rank stored at ingestion.
+        rating = MaturityRating.from_string_with_default(self.maturity_rating)
+        display_label = rating.value.upper()  # canonical label, e.g. "PG-13", "R"
+
+        if rating == MaturityRating.UNRATED or not self.maturity_reasoning:
             # Generate one string per parental guide item: "<severity> <category>"
             guide_strings = [
                 f"{item.severity} {item.category}"
                 for item in self.parental_guide_items
             ]
             joined_guide_strings = ", ".join(guide_strings)
-            if self.maturity_rating == "Unrated":
+            if rating == MaturityRating.UNRATED:
                 return joined_guide_strings
             else:
-                return f"Rated {self.maturity_rating} for {joined_guide_strings}"
+                return f"Rated {display_label} for {joined_guide_strings}"
         else:
-            # Map rating to semantic description
+            # Map the canonical rating to its semantic description
             base_description = self._MATURITY_DESCRIPTIONS.get(
-                self.maturity_rating.upper(),
-                f"Rated {self.maturity_rating}"
+                display_label,
+                f"Rated {display_label}"
             )
             
             # Append maturity reasoning if available

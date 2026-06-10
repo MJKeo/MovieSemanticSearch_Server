@@ -5,36 +5,114 @@ This module contains all Enum classes used for movie data representation
 across the project.
 """
 
+import logging
 from enum import Enum
+from typing import Iterable
+
 from implementation.misc.helpers import normalize_string
+
+logger = logging.getLogger(__name__)
 
 
 class MaturityRating(Enum):
     maturity_rank: int
     value: str
+    aliases: frozenset
 
-    def __new__(cls, maturity_rank: int, value: str) -> "MaturityRating":
-        """Create a MaturityRating enum member with rank and display value."""
+    def __new__(
+        cls,
+        maturity_rank: int,
+        value: str,
+        aliases: Iterable[str] = (),
+    ) -> "MaturityRating":
+        """Create a MaturityRating member with rank, canonical value, and aliases.
+
+        ``aliases`` holds the raw, human-readable strings (TV / legacy / foreign
+        certificates) that should resolve to this rating. They are normalized
+        once at module load into the reverse-lookup map (see
+        ``_build_maturity_alias_map``) — never normalize them by hand here.
+        """
         obj = object.__new__(cls)
         obj._value_ = value
         obj.maturity_rank = maturity_rank
+        obj.aliases = frozenset(aliases)
         return obj
 
     @classmethod
-    def from_string_with_default(cls, value: str) -> "MaturityRating":
-        """Create a MaturityRating enum member with rank and display value."""
+    def _missing_(cls, value: object) -> "MaturityRating | None":
+        """Resolve a non-canonical input string to a supported rating.
+
+        Enum calls this only when ``value`` doesn't match a member's canonical
+        ``_value_``. We normalize the input (so callers needn't pre-normalize)
+        and consult the alias map. Returning ``None`` lets Enum raise the usual
+        ``ValueError``, preserving the fallback contract of callers. Kept pure
+        (no logging) since it fires on every non-canonical lookup codebase-wide.
+        """
+        if not isinstance(value, str):
+            return None
+        return _MATURITY_ALIAS_TO_MEMBER.get(normalize_string(value))
+
+    @classmethod
+    def from_string_with_default(cls, value: str | None) -> "MaturityRating":
+        """Resolve a raw maturity string to a member, defaulting to UNRATED.
+
+        Empty/None input means "no rating" and silently maps to UNRATED. A
+        non-empty value we fail to resolve is logged: it's a real certificate
+        we don't yet recognize (e.g. a video-game rating leaking in), worth
+        surfacing rather than swallowing.
+        """
+        # Normalize outside the try so the value is available for logging even
+        # if resolution fails, and to guard None before normalize_string runs.
+        normalized_value = normalize_string(value) if value else ""
         try:
-            normalized_value = normalize_string(value)
             return cls(normalized_value)
         except ValueError:
+            if normalized_value:
+                logger.warning(
+                    "Unrecognized maturity rating %r; defaulting to UNRATED", value
+                )
             return cls.UNRATED
 
-    G = (1, "g")
-    PG = (2, "pg")
-    PG_13 = (3, "pg-13")
-    R = (4, "r")
-    NC_17 = (5, "nc-17")
-    UNRATED = (999, "unrated")
+    # Each member: (rank, canonical value, alternative-form aliases). Aliases
+    # are the *non-canonical* strings (TV / legacy / foreign certs) that should
+    # resolve to this rating; the canonical value is matched natively by Enum,
+    # so it is intentionally not repeated here. Aliases are raw strings,
+    # normalized identically to ingest/query input at load time.
+    G = (1, "g", ("tv-g", "tv-y", "approved", "passed"))
+    PG = (2, "pg", ("tv-pg", "tv-y7", "tv-y7-fv", "gp", "m", "m/pg"))
+    PG_13 = (3, "pg-13", ("tv-14", "13+", "12"))
+    R = (4, "r", ("tv-ma", "16+", "18+", "18"))
+    NC_17 = (5, "nc-17", ("x",))
+    UNRATED = (999, "unrated", ("not rated", "nr"))
+
+
+def _build_maturity_alias_map() -> dict[str, MaturityRating]:
+    """Build the normalized {alias -> member} reverse map for MaturityRating.
+
+    Only the *non-canonical* aliases are mapped here — canonical values are
+    resolved natively by Enum value-lookup, so ``_missing_`` (the sole consumer
+    of this map) never sees them. Every alias is run through ``normalize_string``
+    so lookups match ingest/query-normalized input exactly. Raises at import if
+    a normalized alias resolves to two *different* members (catches typos early);
+    duplicate keys pointing to the same member are a harmless dedup — e.g.
+    "18+" and "18" both normalize to "18" under R.
+    """
+    mapping: dict[str, MaturityRating] = {}
+    for member in MaturityRating:
+        for raw in member.aliases:
+            normalized = normalize_string(raw)
+            existing = mapping.get(normalized)
+            if existing is not None and existing is not member:
+                raise ValueError(
+                    f"Maturity alias collision: {normalized!r} maps to both "
+                    f"{existing.name} and {member.name}"
+                )
+            mapping[normalized] = member
+    return mapping
+
+
+# Built once at module load; consulted by MaturityRating._missing_.
+_MATURITY_ALIAS_TO_MEMBER: dict[str, MaturityRating] = _build_maturity_alias_map()
 
 
 class StreamingAccessType(Enum):

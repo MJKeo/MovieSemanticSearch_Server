@@ -313,14 +313,21 @@ _API_DETAILS_APPEND = (
     "credits,videos,images,external_ids,watch/providers,release_dates"
 )
 
+# Append set for the /movie_credits cold-path fallback. Credits-only: that
+# endpoint reads nothing but the cast & crew, so it fetches nothing else.
+# This path is rare (the credits cache is normally warmed by a prior
+# /movie_details view), so it just needs to be cheap when it does fire.
+_API_CREDITS_APPEND = "credits"
+
 
 async def fetch_movie_details_for_endpoint(
     client: httpx.AsyncClient,
     rate_limiter: AdaptiveRateLimiter,
     tmdb_id: int,
     max_attempts: int = 3,
+    append: str = _API_DETAILS_APPEND,
 ) -> dict | None:
-    """Fetch the full TMDB detail payload backing the `/movie_details` API.
+    """Fetch a TMDB movie payload backing the API endpoints.
 
     Same retry / 429 / cooldown semantics as `fetch_movie_details` — the
     two functions diverge only in their `append_to_response` set. Returns
@@ -332,6 +339,10 @@ async def fetch_movie_details_for_endpoint(
         rate_limiter: Shared adaptive rate limiter; 429s back off globally.
         tmdb_id:      TMDB movie ID to fetch.
         max_attempts: Maximum transient-error retries before giving up.
+        append:       TMDB `append_to_response` set. Defaults to the full
+                      /movie_details sub-resources; callers needing a leaner
+                      payload (e.g. /movie_credits) pass a narrower set so
+                      they don't pull sub-resources they'll discard.
 
     Returns:
         Parsed JSON dict on 200, ``None`` on 404.
@@ -340,7 +351,7 @@ async def fetch_movie_details_for_endpoint(
         TMDBFetchError: After all retries exhausted or on non-retryable status.
     """
     url = f"{_TMDB_BASE_URL}/movie/{tmdb_id}"
-    params = {"append_to_response": _API_DETAILS_APPEND}
+    params = {"append_to_response": append}
 
     # Transient-error counter; 429s do NOT consume this budget — they
     # signal the rate limiter and retry indefinitely under the global
@@ -389,6 +400,25 @@ async def fetch_movie_details_for_endpoint(
 
     raise TMDBFetchError(
         f"Exhausted {max_attempts} retries for tmdb_id={tmdb_id}"
+    )
+
+
+async def fetch_movie_credits_for_endpoint(
+    client: httpx.AsyncClient,
+    rate_limiter: AdaptiveRateLimiter,
+    tmdb_id: int,
+    max_attempts: int = 3,
+) -> dict | None:
+    """Fetch a TMDB movie payload with only `credits` appended.
+
+    The lean cold-path fetch backing /movie_credits. A thin wrapper over
+    `fetch_movie_details_for_endpoint` so it shares the retry / 429 /
+    cooldown machinery rather than duplicating it — it differs only in
+    requesting a credits-only `append_to_response`. See that function for
+    return values and error semantics.
+    """
+    return await fetch_movie_details_for_endpoint(
+        client, rate_limiter, tmdb_id, max_attempts, append=_API_CREDITS_APPEND
     )
 
 
