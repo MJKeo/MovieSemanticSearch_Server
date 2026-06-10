@@ -39,6 +39,12 @@ class Language(Enum):
             return None
         return _LANGUAGE_BY_ISO_CODE.get(code.strip().lower())
 
+    @classmethod
+    def from_id(cls, language_id: int) -> Optional["Language"]:
+        """Resolve a stable numeric language ID to its Language enum
+        member. Returns None for unknown IDs."""
+        return _LANGUAGE_BY_ID.get(language_id)
+
     ABKHAZIAN = (1, "Abkhazian")
     ABORIGINAL = (2, "Aboriginal")
     ACHE = (3, "Aché")
@@ -564,4 +570,10 @@ for _language in Language:
 LANGUAGE_BY_NORMALIZED_NAME: dict[str, Language] = {
     normalize_string(language.value): language
     for language in Language
+}
+
+# Reverse index from stable numeric ID to member, backing `from_id`.
+# Used when rendering display payloads from Postgres-stored language IDs.
+_LANGUAGE_BY_ID: dict[int, Language] = {
+    language.language_id: language for language in Language
 }

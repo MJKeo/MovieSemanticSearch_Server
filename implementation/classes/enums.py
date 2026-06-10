@@ -260,6 +260,19 @@ class Genre(Enum):
                 return member
         return None
 
+    @classmethod
+    def from_id(cls, genre_id: int) -> "Genre | None":
+        """Resolve a stable numeric genre ID to its Genre enum member.
+
+        Returns None for unknown IDs. Used when rendering display
+        payloads from Postgres-stored genre IDs.
+        """
+        return _GENRE_BY_ID.get(genre_id)
+
+
+# Reverse index from stable numeric ID to member, backing Genre.from_id.
+_GENRE_BY_ID: dict[int, Genre] = {genre.genre_id: genre for genre in Genre}
+
 class DateMatchOperation(Enum):
     EXACT = "exact"
     BEFORE = "before"

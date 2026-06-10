@@ -347,6 +347,15 @@ def _build_movie_card_conditions(
             conditions.append("genre_ids && %s::int[]")
             params.append(genre_ids)
 
+    # Keyword tags (OverallKeyword taxonomy). Same array-overlap semantics
+    # as genres: a movie matches when it carries ANY of the supplied keyword
+    # IDs. Backed by the GIN index idx_movie_card_keyword_ids.
+    if filters.keywords is not None:
+        keyword_ids = [keyword.keyword_id for keyword in filters.keywords]
+        if keyword_ids:
+            conditions.append("keyword_ids && %s::int[]")
+            params.append(keyword_ids)
+
     if filters.audio_languages is not None:
         audio_language_ids = [language.language_id for language in filters.audio_languages]
         if audio_language_ids:

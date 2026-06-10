@@ -315,6 +315,23 @@ def build_qdrant_filter(metadata_filters: MetadataFilters) -> Optional[Filter]:
             )
         )
 
+    # --- Keyword IDs (match any — "movie must carry at least one keyword") ---
+    # keyword_ids in the Qdrant payload are integers (OverallKeyword IDs),
+    # mirroring genre_ids. Existing points are backfilled by
+    # movie_ingestion/backfill/backfill_keyword_ids_to_qdrant.py; new points
+    # get it from _build_qdrant_payload at ingest time. Until the backfill
+    # runs, points lacking the key will not match a keyword filter (the
+    # MatchAny condition treats absent as no-match) — see that script's
+    # docstring.
+    if metadata_filters.keywords is not None and len(metadata_filters.keywords) > 0:
+        deduped_keyword_ids = list(dict.fromkeys(kw.keyword_id for kw in metadata_filters.keywords))
+        conditions.append(
+            FieldCondition(
+                key="keyword_ids",
+                match=MatchAny(any=deduped_keyword_ids),
+            )
+        )
+
     # --- Audio language IDs ---
     if metadata_filters.audio_languages is not None and len(metadata_filters.audio_languages) > 0:
         deduped_audio_language_ids = list(dict.fromkeys(language.language_id for language in metadata_filters.audio_languages))

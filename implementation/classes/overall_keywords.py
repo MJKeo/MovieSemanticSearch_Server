@@ -1,5 +1,6 @@
 """OverallKeyword enum for IMDB's curated 225-term genre/sub-genre taxonomy."""
 
+from collections.abc import Iterable
 from enum import Enum
 
 from implementation.misc.helpers import normalize_string
@@ -33,6 +34,15 @@ class OverallKeyword(Enum):
         obj.keyword_id = keyword_id
         obj.definition = definition
         return obj
+
+    @classmethod
+    def from_id(cls, keyword_id: int) -> "OverallKeyword | None":
+        """Resolve a stable numeric keyword ID to its enum member.
+
+        Returns None for unknown IDs. Used when rendering display payloads
+        from Postgres-stored keyword IDs (`movie_card.keyword_ids`).
+        """
+        return _KEYWORD_BY_ID.get(keyword_id)
 
     ACTION = (1, "Action", "A fast-paced movie driven mainly by physical conflict, chases, fights, and dangerous feats.")  # 16,834 movies
     ACTION_EPIC = (2, "Action Epic", "An action movie with large-scale spectacle and a sweeping, high-stakes conflict of major consequence.")  # 386 movies
@@ -271,9 +281,50 @@ KEYWORD_BY_NORMALIZED_NAME: dict[str, OverallKeyword] = {
 }
 
 
+# Reverse index from stable numeric ID to member, backing `from_id`.
+_KEYWORD_BY_ID: dict[int, OverallKeyword] = {
+    keyword.keyword_id: keyword for keyword in OverallKeyword
+}
+
+
 def keyword_from_string(raw_keyword: str) -> OverallKeyword | None:
     """Resolve a raw keyword string to the canonical OverallKeyword enum."""
     normalized = normalize_string(raw_keyword)
     if not normalized:
         return None
     return KEYWORD_BY_NORMALIZED_NAME.get(normalized)
+
+
+def _dedup_key(name: str) -> str:
+    """Hyphen-insensitive normalized key for cross-taxonomy name matching.
+
+    normalize_string preserves hyphens, but the Genre enum hyphenates
+    labels the keyword taxonomy spaces (genre "Sci-Fi"/"Reality-TV" vs
+    keyword "Sci-Fi"/"Reality TV"). Collapsing hyphens to spaces lets the
+    two compare equal.
+    """
+    return normalize_string(name).replace("-", " ")
+
+
+def keyword_names_from_ids(
+    keyword_ids: Iterable[int],
+    exclude_names: Iterable[str] = (),
+) -> list[str]:
+    """Map stored keyword IDs to their display names.
+
+    Input order is preserved; unknown IDs are dropped. Any keyword whose
+    display name matches one in `exclude_names` (case- and punctuation-
+    insensitive) is also dropped — used by the movie detail endpoint to
+    keep `movie_card.keyword_ids` from repeating genres already shown in
+    the payload's `genres` field.
+    """
+    excluded = {_dedup_key(name) for name in exclude_names}
+    names: list[str] = []
+    for keyword_id in keyword_ids:
+        keyword = _KEYWORD_BY_ID.get(keyword_id)
+        if keyword is None:
+            continue
+        if _dedup_key(keyword.value) in excluded:
+            continue
+        names.append(keyword.value)
+    return names

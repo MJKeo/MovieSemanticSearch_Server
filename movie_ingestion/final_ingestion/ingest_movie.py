@@ -1090,7 +1090,8 @@ def _build_qdrant_payload(movie: Movie) -> dict:
     """
     Build the minimal hard-filter payload for the Qdrant point.
 
-    Fields: release_ts, runtime_minutes, maturity_rank, genre_ids, watch_offer_keys
+    Fields: release_ts, runtime_minutes, maturity_rank, genre_ids,
+    watch_offer_keys, audio_language_ids, keyword_ids
     """
     payload: dict = {}
 
@@ -1115,6 +1116,9 @@ def _build_qdrant_payload(movie: Movie) -> dict:
     payload["genre_ids"] = movie.genre_ids()
     payload["watch_offer_keys"] = movie.watch_offer_keys()
     payload["audio_language_ids"] = movie.audio_language_ids()
+    # OverallKeyword tag IDs — hard-filter parity with genre_ids so the
+    # vector channel can honor keyword filters (build_qdrant_filter).
+    payload["keyword_ids"] = movie.keyword_ids()
 
     return payload
 

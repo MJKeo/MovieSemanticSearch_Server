@@ -38,6 +38,10 @@ from db.tmdb import (
 )
 from implementation.classes.enums import Genre, StreamingAccessType
 from implementation.classes.languages import Language
+from implementation.classes.overall_keywords import (
+    OverallKeyword,
+    keyword_names_from_ids,
+)
 from implementation.classes.schemas import MetadataFilters
 from implementation.classes.watch_providers import (
     STREAMING_PROVIDER_MAP,
@@ -182,6 +186,9 @@ class MetadataFiltersInput(BaseModel):
     the labels the UI displays:
       - genres: ``Genre`` enum values ("Action", "Sci-Fi", …)
       - audio_languages: ``Language`` enum values ("English", "Spanish", …)
+      - keywords: ``OverallKeyword`` enum values ("Splatter Horror",
+        "Film Noir", "Spaghetti Western", …) — sub-genre / style tags from
+        the keyword taxonomy. Matched against movie_card.keyword_ids.
       - streaming_services: ``StreamingService`` enum values
         ("netflix", "max", …). Server-side these expand to the flat
         TMDB provider-id list via STREAMING_PROVIDER_MAP.
@@ -199,6 +206,7 @@ class MetadataFiltersInput(BaseModel):
     max_maturity_rank:  Optional[int] = None
     genres:             Optional[list[str]] = None
     audio_languages:    Optional[list[str]] = None
+    keywords:           Optional[list[str]] = None
     streaming_services: Optional[list[str]] = None
 
 
@@ -235,6 +243,16 @@ def _to_metadata_filters(
     except ValueError as exc:
         raise HTTPException(
             status_code=422, detail=f"unknown audio language value: {exc}"
+        ) from exc
+
+    try:
+        keywords = (
+            [OverallKeyword(name) for name in body_input.keywords]
+            if body_input.keywords else None
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"unknown keyword value: {exc}"
         ) from exc
 
     # Expand StreamingService values into the encoded watch_offer_keys that
@@ -274,6 +292,7 @@ def _to_metadata_filters(
         max_maturity_rank=body_input.max_maturity_rank,
         genres=genres,
         audio_languages=languages,
+        keywords=keywords,
         watch_offer_keys=watch_offer_keys,
     )
     # If every field collapsed to None, return None so downstream
@@ -537,9 +556,9 @@ async def attribute_search(body: AttributeSearchBody) -> Response:
     """
     Hard-attribute browse search — no NLP, no LLM, no vector search.
 
-    Applies the supplied filters (genres, audio languages, streaming
-    services, release/runtime/maturity ranges) and ranks named people
-    by prominence, reusing the Step 0 person-search model.
+    Applies the supplied filters (genres, keywords, audio languages,
+    streaming services, release/runtime/maturity ranges) and ranks named
+    people by prominence, reusing the Step 0 person-search model.
 
     With no `people`, returns the catalog ranked by the 80/20
     popularity/reception neutral prior. With one or more `people`, each
@@ -561,8 +580,8 @@ async def attribute_search(body: AttributeSearchBody) -> Response:
       (tmdb_id, title, release_date, poster_url, maturity_rating),
       ranked by descending summed prominence weight (popularity as the
       within-tier tie-break), capped at 250.
-      HTTP 422 on unknown genre / audio_language / streaming_service
-      enum values (handled inside `_to_metadata_filters`).
+      HTTP 422 on unknown genre / keyword / audio_language /
+      streaming_service enum values (handled inside `_to_metadata_filters`).
     """
     # Translate the wire mirror into MetadataFilters once at the
     # boundary. Raises 422 on any unknown enum value; collapses to
@@ -1249,6 +1268,15 @@ def _build_movie_details(
         p for p in (payload.get("poster_path"), payload.get("backdrop_path")) if p
     }
 
+    # Genres come from our own (IMDB-derived) Postgres data, not TMDB.
+    # movie_card stores them as stable numeric IDs; map each back to its
+    # enum display name and drop any unrecognized IDs.
+    genre_names = [
+        genre.value
+        for genre in (Genre.from_id(gid) for gid in card_row.get("genre_ids") or [])
+        if genre is not None
+    ]
+
     return MovieDetails(
         tmdb_id=tmdb_id,
         title=payload.get("title"),
@@ -1261,11 +1289,21 @@ def _build_movie_details(
         # omit the field instead of rendering "0 min".
         runtime_minutes=payload.get("runtime") or None,
         maturity_rating=_extract_us_certification(payload.get("release_dates")),
-        genres=[g["name"] for g in payload.get("genres", []) if g.get("name")],
+        # Genres and spoken languages come from our own (IMDB-derived)
+        # Postgres data, not TMDB. This deliberately replaces the TMDB values.
+        genres=genre_names,
+        # Keyword tags from our taxonomy (movie_card.keyword_ids), finer-grained
+        # than `genres`. Excludes any keyword that duplicates a returned genre.
+        keywords=keyword_names_from_ids(
+            card_row.get("keyword_ids") or [], genre_names
+        ),
         spoken_languages=[
-            lang.get("english_name") or lang.get("name")
-            for lang in payload.get("spoken_languages", [])
-            if lang.get("english_name") or lang.get("name")
+            language.value
+            for language in (
+                Language.from_id(lid)
+                for lid in card_row.get("audio_language_ids") or []
+            )
+            if language is not None
         ],
         poster_url=_image_url(payload.get("poster_path"), _POSTER_SIZE),
         backdrop_url=_image_url(payload.get("backdrop_path"), _BACKDROP_SIZE),

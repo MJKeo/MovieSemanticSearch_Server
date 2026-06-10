@@ -114,6 +114,10 @@ class MovieDetails(msgspec.Struct, omit_defaults=True, frozen=True):
     runtime_minutes: int | None = None
     maturity_rating: str | None = None    # US certification ("PG-13", etc.)
     genres: list[str] = []
+    # Keyword tags from our own OverallKeyword taxonomy (movie_card.keyword_ids),
+    # e.g. "Splatter Horror", "Spaghetti Western", "Time Travel" — finer-grained
+    # than `genres` and may overlap with it.
+    keywords: list[str] = []
     spoken_languages: list[str] = []
 
     # Media

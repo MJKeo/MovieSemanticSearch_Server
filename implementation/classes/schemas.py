@@ -11,6 +11,7 @@ from dataclasses import dataclass, fields
 from pydantic import BaseModel, Field, conlist, constr, ConfigDict, field_validator
 from enum import Enum
 from .languages import Language
+from .overall_keywords import OverallKeyword
 from .watch_providers import StreamingService
 from .enums import (
     MaturityRating,
@@ -794,6 +795,7 @@ class MetadataFilters:
     max_maturity_rank: Optional[int] = None
     genres: Optional[list[Genre]] = None
     audio_languages: Optional[list[Language]] = None
+    keywords: Optional[list[OverallKeyword]] = None
     watch_offer_keys: Optional[list[int]] = None
 
     @property
