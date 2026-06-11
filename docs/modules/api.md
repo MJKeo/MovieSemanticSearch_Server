@@ -12,7 +12,7 @@ and API endpoints for search and movie detail retrieval.
 
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI app setup, lifespan context manager, health check endpoint, `/query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `/movie_credits/{tmdb_id}`, `MetadataFiltersInput` request model, the `_build_movie_details` / `_build_movie_credits` translators, and the `_encode_and_cache_credits` shared cache writer. |
+| `main.py` | FastAPI app setup, lifespan context manager, health check endpoint, `/query_search`, `/rerun_query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `/movie_credits/{tmdb_id}`, `MetadataFiltersInput` request model, the rerun request models + `_to_rerun_plan` translator, the `_build_movie_details` / `_build_movie_credits` translators, and the `_encode_and_cache_credits` shared cache writer. |
 | `cli_search.py` | CLI tool to run the full search pipeline from the terminal. Supports genre, maturity, runtime, and release date filters. Run via `python -m api.cli_search "query"`. |
 
 ## Boundaries
@@ -43,6 +43,41 @@ and API endpoints for search and movie detail retrieval.
   primitive (Postgres + Qdrant), not post-hoc — ensures filter-
   respecting candidates are retrieved rather than filtered out
   after the fact.
+
+### `POST /rerun_query_search`
+- **Purpose**: Re-run a prior search with a new filter set while **bypassing
+  Steps 0 (flow routing) and 1 (spin generation)** — filters never enter
+  query understanding, so re-paying for those two Gemini calls is waste.
+- **Request**: `RerunSearchBody` — `branches` (non-empty discriminated list,
+  `type` tag) + optional `filters` (`MetadataFiltersInput`, same shape as
+  `/query_search`). Each branch carries only what its flow strictly needs;
+  this is the same branch data the client received in the original
+  `/query_search` `fetches_ready` event:
+  - `standard` — `query` (required); optional `ui_label` (display only).
+    The internal `kind` is assigned positionally (not on the wire) — never
+    affects scoring. Re-enters at **Step 2**.
+  - `exact_title` — `title` (required), `release_year` (nullable).
+  - `similarity` — `references[]` of `{ title, release_year? }`.
+  - `non_character_franchise` / `character_franchise` — `canonical_name`.
+  - `studio` / `person` — `canonical_names[]`.
+  Entity branches re-enter at their **executor** (post-Step-0 point).
+- **Translation**: `_to_rerun_plan` (boundary helper, mirrors
+  `_to_metadata_filters`) demuxes the branch list into a `RerunPlan` — a
+  `branch_plan` of `(kind, branch_query, ui_label)` tuples (kind assigned
+  positionally `original` / `spin_1` / `spin_2`, so replaying branches in
+  their original order reproduces the original fetch ids) plus the six entity
+  `*FlowData` objects. `stream_rerun_pipeline` (in
+  `search_v2/streaming_orchestrator.py`) accepts the `RerunPlan` and replays
+  the shared downstream machine. Standard branch queries are capped at
+  `MAX_QUERY_CHARS + MAX_CLARIFICATION_CHARS` (the failed-clarification merge
+  ceiling) so any branch the pipeline can emit round-trips; entity names are
+  capped at `MAX_QUERY_CHARS` for cost / injection parity with `/query_search`.
+- **Response**: identical Server-Sent Event stream to `/query_search`
+  (`fetches_ready` → per-branch `branch_traits` / `branch_categories`
+  [standard only] / `branch_results` → `done`).
+- **Errors**: 400 on a blank/over-length standard `query`; 422 on a duplicate
+  entity flow, a blank/over-length entity name, more than 3 standard branches,
+  empty `branches`, an unknown branch `type`, or an unknown filter enum value.
 
 ### `POST /similarity_search`
 - **Request**: `SimilaritySearchBody` — `tmdb_ids` (non-empty list of

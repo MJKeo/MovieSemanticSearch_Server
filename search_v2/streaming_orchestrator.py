@@ -352,6 +352,107 @@ async def stream_full_pipeline(
     person_flow_data: PersonFlowData | None = (
         step0_response.to_person_flow_data()
     )
+
+    # Everything from here on (build fetches → launch tasks → merge loop)
+    # depends only on the finalized branch plan, the six flow-data objects,
+    # and the filters — never on Step 0/1 state. It is factored into
+    # `_stream_from_branch_plan` so the rerun entry point can replay it
+    # without re-running query understanding.
+    async for event in _stream_from_branch_plan(
+        branch_plan,
+        exact_title_flow_data=exact_title_flow_data,
+        similarity_flow_data=similarity_flow_data,
+        non_character_franchise_flow_data=non_character_franchise_flow_data,
+        character_franchise_flow_data=character_franchise_flow_data,
+        studio_flow_data=studio_flow_data,
+        person_flow_data=person_flow_data,
+        metadata_filters=metadata_filters,
+        t0=t0,
+    ):
+        yield event
+
+
+@dataclass(frozen=True)
+class RerunPlan:
+    """Pre-built branch plan + entity flow-data for a Step-0/1-bypassing replay.
+
+    Bundles the standard-flow ``branch_plan`` (``(kind, branch_query,
+    ui_label)`` tuples; ``kind`` is identity/label-only, not load-bearing in
+    scoring) with at most one flow-data object per entity flow (``None`` when
+    that flow is not being replayed). Built at the API boundary from the wire
+    request and consumed by ``stream_rerun_pipeline`` — a named object rather
+    than a positional tuple so field additions/reorderings can't silently
+    misbind at the call site.
+    """
+
+    branch_plan: list[tuple[BranchKind, str, str]]
+    exact_title_flow_data: ExactTitleFlowData | None = None
+    similarity_flow_data: SimilarityFlowData | None = None
+    non_character_franchise_flow_data: NonCharacterFranchiseFlowData | None = None
+    character_franchise_flow_data: CharacterFranchiseFlowData | None = None
+    studio_flow_data: StudioFlowData | None = None
+    person_flow_data: PersonFlowData | None = None
+
+
+async def stream_rerun_pipeline(
+    plan: RerunPlan,
+    *,
+    metadata_filters: MetadataFilters | None = None,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    """Replay search execution from a pre-built ``RerunPlan``, bypassing Steps 0/1.
+
+    Used by ``POST /rerun_query_search`` to re-run an earlier search with a
+    fresh filter set without re-paying for flow routing (Step 0) and spin
+    generation (Step 1). The plan carries the same branch data the original
+    ``stream_full_pipeline`` derived from Step 0/1 — standard branches
+    re-enter at Step 2 (``run_step_2`` on the branch query), entity flows
+    re-enter at their executor — and the new ``metadata_filters`` are threaded
+    through every retrieval primitive exactly as in the full pipeline.
+
+    Yields the identical ``(event_name, payload)`` SSE sequence as
+    ``stream_full_pipeline`` (``fetches_ready`` → per-branch
+    ``branch_traits`` / ``branch_categories`` / ``branch_results`` →
+    ``done``), so the frontend consumes it unchanged.
+    """
+    t0 = time.perf_counter()
+    async for event in _stream_from_branch_plan(
+        plan.branch_plan,
+        exact_title_flow_data=plan.exact_title_flow_data,
+        similarity_flow_data=plan.similarity_flow_data,
+        non_character_franchise_flow_data=plan.non_character_franchise_flow_data,
+        character_franchise_flow_data=plan.character_franchise_flow_data,
+        studio_flow_data=plan.studio_flow_data,
+        person_flow_data=plan.person_flow_data,
+        metadata_filters=metadata_filters,
+        t0=t0,
+    ):
+        yield event
+
+
+async def _stream_from_branch_plan(
+    branch_plan: list[tuple[BranchKind, str, str]],
+    *,
+    exact_title_flow_data: ExactTitleFlowData | None = None,
+    similarity_flow_data: SimilarityFlowData | None = None,
+    non_character_franchise_flow_data: NonCharacterFranchiseFlowData | None = None,
+    character_franchise_flow_data: CharacterFranchiseFlowData | None = None,
+    studio_flow_data: StudioFlowData | None = None,
+    person_flow_data: PersonFlowData | None = None,
+    metadata_filters: MetadataFilters | None = None,
+    t0: float,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    """Shared downstream half of the pipeline: fetches → tasks → merge loop.
+
+    Given a finalized branch plan plus the six entity flow-data slots and the
+    active filters, build the fetch list, emit ``fetches_ready``, launch the
+    standard-flow Step 2 tasks and the non-standard entity-flow tasks, and run
+    the merge loop that streams ``branch_*`` progress and result events until
+    every fetch resolves, terminating with ``done``.
+
+    Both ``stream_full_pipeline`` (after Steps 0/1) and ``stream_rerun_pipeline``
+    (which skips them) delegate here. ``t0`` is supplied by the caller so the
+    terminal ``done`` event reports elapsed time over the caller's full window.
+    """
     exact_title_firing = exact_title_flow_data is not None
     similarity_firing = similarity_flow_data is not None
     non_character_franchise_firing = non_character_franchise_flow_data is not None

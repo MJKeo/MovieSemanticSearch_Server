@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import NamedTuple, Optional
+from typing import Annotated, Literal, NamedTuple, Optional, Union
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
@@ -57,14 +57,31 @@ from schemas.api_responses import (
     MovieDetails,
     WatchProvider,
 )
+from schemas.step_0_flow_routing import (
+    CharacterFranchiseFlowData,
+    ExactTitleFlowData,
+    NonCharacterFranchiseFlowData,
+    PersonFlowData,
+    PersonReference,
+    SimilarityFlowData,
+    SimilarityReference,
+    StudioFlowData,
+    StudioReference,
+)
 from search_v2.attribute_search import (
     DEFAULT_ATTRIBUTE_SEARCH_LIMIT,
     PersonSpec,
     run_attribute_search,
 )
 from search_v2.similar_movies import run_similar_movies_for_ids
-from search_v2.streaming_orchestrator import stream_full_pipeline
+from search_v2.streaming_orchestrator import (
+    RerunPlan,
+    stream_full_pipeline,
+    stream_rerun_pipeline,
+)
 from search_v2.query_input_validation import (
+    MAX_CLARIFICATION_CHARS,
+    MAX_QUERY_CHARS,
     QueryInputError,
     clean_clarification,
     clean_query,
@@ -456,6 +473,367 @@ async def query_search(body: QuerySearchBody):
         headers={
             # Disable buffering at common reverse-proxy layers so events
             # flush to the client immediately rather than accumulating.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# /rerun_query_search — replay a prior search with new filters, bypassing
+# Steps 0 (flow routing) and 1 (spin generation). The caller passes the same
+# branch data it received in the original /query_search `fetches_ready` event;
+# standard branches re-enter at Step 2, entity flows at their executor.
+# ---------------------------------------------------------------------------
+
+
+class StandardRerunBranch(BaseModel):
+    """A standard-flow branch to replay from Step 2.
+
+    `query` is the expanded branch sub-query (echoed from the original
+    response's standard fetch `query`). `ui_label` is an optional display
+    override (echoed from the fetch `label`); when omitted it defaults to the
+    query. The branch's internal `kind` (identity/label-only, never affects
+    scoring) is assigned positionally by `_to_rerun_plan`, so it is not part
+    of the wire contract — replaying branches in their original order
+    reproduces the same fetch ids.
+    """
+
+    type: Literal["standard"]
+    query: str = Field(min_length=1)
+    ui_label: Optional[str] = None
+
+
+class ExactTitleRerunBranch(BaseModel):
+    """Replay the exact-title entity flow. `release_year` is null when the
+    user never stated a year."""
+
+    type: Literal["exact_title"]
+    title: str = Field(min_length=1)
+    release_year: Optional[int] = None
+
+
+class SimilarityRefInput(BaseModel):
+    """One anchor reference for a similarity replay. `release_year` is null
+    when the user never stated a year."""
+
+    title: str = Field(min_length=1)
+    release_year: Optional[int] = None
+
+
+class SimilarityRerunBranch(BaseModel):
+    """Replay the similarity ("movies like X") entity flow."""
+
+    type: Literal["similarity"]
+    references: list[SimilarityRefInput] = Field(min_length=1)
+
+
+class NonCharacterFranchiseRerunBranch(BaseModel):
+    """Replay the non-character franchise entity flow."""
+
+    type: Literal["non_character_franchise"]
+    canonical_name: str = Field(min_length=1)
+
+
+class CharacterFranchiseRerunBranch(BaseModel):
+    """Replay the character-franchise entity flow."""
+
+    type: Literal["character_franchise"]
+    canonical_name: str = Field(min_length=1)
+
+
+class StudioRerunBranch(BaseModel):
+    """Replay the studio entity flow (one or more studio names)."""
+
+    type: Literal["studio"]
+    canonical_names: list[str] = Field(min_length=1)
+
+
+class PersonRerunBranch(BaseModel):
+    """Replay the person entity flow (one or more person names)."""
+
+    type: Literal["person"]
+    canonical_names: list[str] = Field(min_length=1)
+
+
+# Discriminated union over the branch `type` tag. Pydantic routes each entry
+# to the matching model and rejects an unknown `type` with 422 at the
+# request-parsing boundary.
+RerunBranch = Annotated[
+    Union[
+        StandardRerunBranch,
+        ExactTitleRerunBranch,
+        SimilarityRerunBranch,
+        NonCharacterFranchiseRerunBranch,
+        CharacterFranchiseRerunBranch,
+        StudioRerunBranch,
+        PersonRerunBranch,
+    ],
+    Field(discriminator="type"),
+]
+
+
+class RerunSearchBody(BaseModel):
+    """Request body for POST /rerun_query_search.
+
+    `branches` is the set of pipeline branches to replay — the same branch
+    data the client received in the original /query_search `fetches_ready`
+    event. `filters` is the new hard-filter set to apply (identical shape to
+    /query_search); unset / all-None means no filters.
+    """
+
+    branches: list[RerunBranch] = Field(min_length=1)
+    filters: Optional[MetadataFiltersInput] = None
+
+
+# Standard-flow kinds assigned positionally to replayed standard branches.
+# `kind` is identity/label-only (not load-bearing in scoring); reusing the
+# upstream literals keeps fetch ids in the shape the frontend expects, and
+# replaying branches in their original order reproduces the original ids. The
+# upstream pipeline never emits more than three standard branches, so the cap
+# is exact for a faithful replay rather than an arbitrary limit.
+_RERUN_STANDARD_KINDS: tuple[str, str, str] = ("original", "spin_1", "spin_2")
+
+# Largest branch query the upstream pipeline can emit. A normal branch query
+# is a raw query or a spin (≤150 chars), but the failed-clarification slot-1
+# branch is the merge `f"{raw_query}. {clarification}"` — up to
+# MAX_QUERY_CHARS + ". " + MAX_CLARIFICATION_CHARS. Bounding the rerun branch
+# query at that ceiling (rather than MAX_QUERY_CHARS) lets every branch the
+# pipeline can produce round-trip, while still bounding client-supplied Gemini
+# input for cost / prompt-injection surface.
+_MAX_RERUN_BRANCH_QUERY_CHARS = MAX_QUERY_CHARS + MAX_CLARIFICATION_CHARS + 2
+
+
+def _clean_branch_query(raw: str) -> str:
+    """Strip + non-empty + cap a standard-flow branch query.
+
+    Unlike `clean_query` (200-char cap for fresh user input), the rerun cap is
+    `_MAX_RERUN_BRANCH_QUERY_CHARS` so the largest branch query the upstream
+    pipeline can emit round-trips instead of being falsely rejected. 400 on
+    blank or over-cap, matching /query_search's QueryInputError → 400 contract.
+    """
+    query = raw.strip()
+    if not query:
+        raise HTTPException(
+            status_code=400, detail="standard branch query must be non-empty."
+        )
+    if len(query) > _MAX_RERUN_BRANCH_QUERY_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"standard branch query must be at most "
+                f"{_MAX_RERUN_BRANCH_QUERY_CHARS} characters (got {len(query)})."
+            ),
+        )
+    return query
+
+
+def _enforce_name_cap(name: str, flow_label: str) -> None:
+    """422 if a (stripped, non-empty) entity name exceeds the free-text cap.
+
+    Entity names are client-supplied and flow into LLM prompts (studio /
+    character-franchise translators) and Postgres lookups, so they get the
+    same length bound as the standard query for cost / injection-surface
+    parity (see query_input_validation.MAX_QUERY_CHARS).
+    """
+    if len(name) > MAX_QUERY_CHARS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{flow_label} branch name must be at most "
+                f"{MAX_QUERY_CHARS} characters (got {len(name)})."
+            ),
+        )
+
+
+def _clean_one(raw: str, flow_label: str) -> str:
+    """Strip a single entity name; 422 if blank or over the length cap.
+
+    The entity flow-data schemas strip-and-require their name fields, so an
+    all-whitespace value would raise a pydantic ValidationError (→ 500) deep
+    in construction. Validating here keeps it a clean 422 at the boundary.
+    """
+    name = raw.strip()
+    if not name:
+        raise HTTPException(
+            status_code=422, detail=f"{flow_label} branch has a blank name"
+        )
+    _enforce_name_cap(name, flow_label)
+    return name
+
+
+def _clean_names(raw_names: list[str], flow_label: str) -> list[str]:
+    """Strip names, drop blanks, cap length; 422 if none remain or any name is
+    over the cap (mirrors `_to_person_specs`). Returns at least one name."""
+    names = [n.strip() for n in raw_names if n.strip()]
+    if not names:
+        raise HTTPException(
+            status_code=422, detail=f"{flow_label} branch has no usable names"
+        )
+    for name in names:
+        _enforce_name_cap(name, flow_label)
+    return names
+
+
+def _to_rerun_plan(branches: list[RerunBranch]) -> RerunPlan:
+    """Translate the wire branch list into a `RerunPlan` (branch plan + entity
+    flow-data).
+
+    Mirrors `_to_metadata_filters`: all boundary validation lives here.
+    Standard branches become `(kind, branch_query, ui_label)` tuples (kind
+    assigned positionally; label defaulting to the query); each entity branch
+    becomes its executor's flow-data object.
+
+    Raises HTTPException 400 on a blank/over-length standard query, and 422
+    on a duplicate entity flow, a blank/over-length entity name, or more than
+    three standard branches.
+    """
+    branch_plan: list[tuple[str, str, str]] = []
+    exact_title_flow_data: ExactTitleFlowData | None = None
+    similarity_flow_data: SimilarityFlowData | None = None
+    non_character_franchise_flow_data: NonCharacterFranchiseFlowData | None = None
+    character_franchise_flow_data: CharacterFranchiseFlowData | None = None
+    studio_flow_data: StudioFlowData | None = None
+    person_flow_data: PersonFlowData | None = None
+
+    def reject_duplicate(existing: object, flow_label: str) -> None:
+        # The orchestrator has exactly one slot per entity flow, so a second
+        # branch of the same entity type is a malformed request.
+        if existing is not None:
+            raise HTTPException(
+                status_code=422, detail=f"duplicate {flow_label} branch"
+            )
+
+    standard_count = 0
+
+    for branch in branches:
+        if isinstance(branch, StandardRerunBranch):
+            if standard_count >= len(_RERUN_STANDARD_KINDS):
+                raise HTTPException(
+                    status_code=422,
+                    detail="at most 3 standard branches may be replayed",
+                )
+            # Validate the branch query (strip, non-empty, widened cap) → 400.
+            query = _clean_branch_query(branch.query)
+            # kind is assigned positionally — identity/label-only, and unique
+            # by construction (one per slot), so no collision check is needed.
+            kind = _RERUN_STANDARD_KINDS[standard_count]
+            ui_label = branch.ui_label if branch.ui_label else query
+            branch_plan.append((kind, query, ui_label))
+            standard_count += 1
+        elif isinstance(branch, ExactTitleRerunBranch):
+            reject_duplicate(exact_title_flow_data, "exact_title")
+            exact_title_flow_data = ExactTitleFlowData(
+                should_be_searched=True,
+                exact_title_to_search=_clean_one(branch.title, "exact_title"),
+                release_year=branch.release_year,
+            )
+        elif isinstance(branch, SimilarityRerunBranch):
+            reject_duplicate(similarity_flow_data, "similarity")
+            refs: list[SimilarityReference] = []
+            for r in branch.references:
+                title = r.title.strip()
+                if not title:
+                    continue  # drop blank refs; only 422 if none remain
+                _enforce_name_cap(title, "similarity")
+                refs.append(
+                    SimilarityReference(
+                        similar_search_title=title,
+                        release_year=r.release_year,
+                    )
+                )
+            if not refs:
+                raise HTTPException(
+                    status_code=422,
+                    detail="similarity branch has no usable references",
+                )
+            similarity_flow_data = SimilarityFlowData(
+                should_be_searched=True, references=refs
+            )
+        elif isinstance(branch, NonCharacterFranchiseRerunBranch):
+            reject_duplicate(
+                non_character_franchise_flow_data, "non_character_franchise"
+            )
+            non_character_franchise_flow_data = NonCharacterFranchiseFlowData(
+                canonical_name=_clean_one(
+                    branch.canonical_name, "non_character_franchise"
+                ),
+            )
+        elif isinstance(branch, CharacterFranchiseRerunBranch):
+            reject_duplicate(
+                character_franchise_flow_data, "character_franchise"
+            )
+            character_franchise_flow_data = CharacterFranchiseFlowData(
+                canonical_name=_clean_one(
+                    branch.canonical_name, "character_franchise"
+                ),
+            )
+        elif isinstance(branch, StudioRerunBranch):
+            reject_duplicate(studio_flow_data, "studio")
+            studio_flow_data = StudioFlowData(
+                references=[
+                    StudioReference(canonical_name=n)
+                    for n in _clean_names(branch.canonical_names, "studio")
+                ],
+            )
+        elif isinstance(branch, PersonRerunBranch):
+            reject_duplicate(person_flow_data, "person")
+            person_flow_data = PersonFlowData(
+                references=[
+                    PersonReference(canonical_name=n)
+                    for n in _clean_names(branch.canonical_names, "person")
+                ],
+            )
+
+    return RerunPlan(
+        branch_plan=branch_plan,
+        exact_title_flow_data=exact_title_flow_data,
+        similarity_flow_data=similarity_flow_data,
+        non_character_franchise_flow_data=non_character_franchise_flow_data,
+        character_franchise_flow_data=character_franchise_flow_data,
+        studio_flow_data=studio_flow_data,
+        person_flow_data=person_flow_data,
+    )
+
+
+@app.post("/rerun_query_search")
+async def rerun_query_search(body: RerunSearchBody):
+    """
+    Re-run a prior search with a new filter set, bypassing Steps 0 and 1.
+
+    Accepts the branches to replay (the same branch data returned in the
+    original /query_search `fetches_ready` event) plus an optional `filters`
+    block (identical shape to /query_search). Standard branches re-enter the
+    pipeline at Step 2 (`run_step_2` on the branch query → Step 3 → Stage 4);
+    entity flows re-enter at their executor. Streams the same Server-Sent
+    Event sequence as /query_search (fetches_ready → per-branch branch_traits
+    / branch_categories / branch_results → done), so the frontend consumes it
+    unchanged.
+
+    Returns:
+      HTTP 200 with `text/event-stream`. 400 on a blank/over-length standard
+      branch query; 422 on a duplicate entity flow, a blank/over-length entity
+      name, more than three standard branches, an unknown branch `type`, or an
+      unknown filter enum value.
+    """
+    # Translate the wire branches into a RerunPlan at the boundary (raises
+    # 400/422), then translate filters with the same helper /query_search uses.
+    plan = _to_rerun_plan(body.branches)
+    metadata_filters = _to_metadata_filters(body.filters)
+
+    async def event_stream():
+        async for event_name, payload in stream_rerun_pipeline(
+            plan, metadata_filters=metadata_filters,
+        ):
+            encoded = _json_encoder.encode(payload).decode("utf-8")
+            yield f"event: {event_name}\ndata: {encoded}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # Disable buffering at common reverse-proxy layers so events flush
+            # to the client immediately rather than accumulating.
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },

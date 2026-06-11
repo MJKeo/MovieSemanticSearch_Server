@@ -523,7 +523,7 @@ concurrently via `asyncio.gather`.
 | `run_test_queries.py` | Batch runner for Step 2+3 over test_queries.md queries with asyncio.Semaphore concurrency. |
 | `run_specs.py` | Diagnostic runner: Step 2→3→handler-LLM end-to-end, outputs combine_mode / combine_type / fired endpoints / keyword commits. |
 | `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline()` runs Steps 0+1→Step 2→Step 3→handler-LLM→Stage 4. |
-| `streaming_orchestrator.py` | **Production HTTP API entry point.** `stream_full_pipeline()` wraps `full_pipeline_orchestrator.run_full_pipeline()` and emits Server-Sent Events to the FastAPI route in `api/main.py`. |
+| `streaming_orchestrator.py` | **Production HTTP API entry point.** `stream_full_pipeline()` runs Steps 0/1, derives the branch plan + entity flow-data, then delegates to the shared `_stream_from_branch_plan()` (build fetches → launch tasks → merge loop), emitting Server-Sent Events to `/query_search`. `stream_rerun_pipeline()` is the second public entry: it accepts a pre-built `RerunPlan` (branch plan + entity flow-data) + filters and replays `_stream_from_branch_plan()` directly, **bypassing Steps 0/1** — backs `/rerun_query_search`. `BranchKind` is identity/label-only (not load-bearing in scoring). |
 | `stage_4_execution.py` | Stage 4 execution + ranking. 5-phase pipeline. |
 | `exact_title_search.py` | Exact-title entity-flow executor. 6-tier scoring. |
 | `similar_movies.py` | Similarity entity-flow executor. V3.4+ lane architecture. |
