@@ -62,9 +62,10 @@ _BASE_DIR = Path(__file__).parent
 _STEP_2_PATH = _BASE_DIR / "step_2_results.json"
 _RESULTS_DIR = _BASE_DIR / "results"
 
-# Number of repeat Step 3 runs per query. Three is the user-requested
-# balance between LLM stochasticity smoothing and total token spend.
-_REPEAT_RUNS = 3
+# Number of repeat Step 3 runs per query. Five repeats per query to
+# separate genuine behavior shifts from single-run LLM variance when
+# comparing schema/prompt/model variants.
+_REPEAT_RUNS = 5
 
 
 def _load_step_2_results() -> dict[str, dict]:

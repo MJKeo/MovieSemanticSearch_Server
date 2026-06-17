@@ -705,7 +705,12 @@ class QueryAnalysis(BaseModel):
             "wants. Describe the experience.\n"
             "- EXPAND NAMED THINGS. The reference is the signal; "
             "what it evokes belongs to atom evaluative_intent.\n"
-            "- INVENT DETAILS the query did not contain."
+            "- INVENT DETAILS the query did not contain.\n"
+            "- WIDEN ONE READ WITH A LOW-CONFIDENCE 'OR'. Bundling a "
+            "neighboring attribute into a single read via 'or …' is "
+            "itself an alternative — include it only if that attribute "
+            "is independently and comparably plausible from the "
+            "surface, not a stretch the dominant read drags along."
         ),
     )
     atoms: list[Atom] = Field(

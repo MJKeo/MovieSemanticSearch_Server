@@ -469,3 +469,192 @@ retained as a modifying_signal, not dropped) — a model difference, not caused 
 SHIPPED VARIANT: Gemini (gemini-3.5-flash, thinking minimal, temp 0.35) + these prompt fixes.
 The experiment harness/results were temporary scaffolding and have been deleted.
 Testing notes: no unit tests touched.
+
+## Reframe SENSITIVE_CONTENT to presence-only; allow MATURITY_RATING proxy use
+Files: schemas/trait_category.py
+Why: Step 3 was over-decomposing positive audience traits (e.g. "family friendly")
+into a SENSITIVE_CONTENT call framed as AVOIDANCE ("ensuring the absence of graphic
+violence"), which (a) violates the presence-only contract and (b) represents "safe
+content" poorly. Diagnosis traced the misroute to the SENSITIVE_CONTENT description,
+which advertised absence framing ("no gore", "mild language only", "safe content"),
+making it read as a clean fit for positive safety asks.
+Approach: (1) SENSITIVE_CONTENT description reframed to name only the PRESENCE/intensity
+of mature content; boundary now explicitly redirects "safe for kids"/absence asks to
+TARGET_AUDIENCE and states the category never indexes absence; an edge_case preserves
+Step-2 recognition that avoidance-framed content asks ("not too bloody") still route here
+(the polarity is tracked separately). (2) MATURITY_RATING boundary loosened from "fires
+only on an explicit rating" to allow sparing proxy use (e.g. "safe for kids" -> G/PG
+ceiling) when it is the best available inclusion signal, never as a default.
+Design context: part of a larger Step 3 trait-decomposition redesign (consolidation to
+minimum viable call set + inclusion-only routing) still in planning; these two category
+edits were authorized to land independently. Descriptions feed both the Step 2 and Step 3
+taxonomy prompts via _build_full_category_taxonomy_section.
+Testing notes: no unit tests touched; verify no test hardcodes the old description strings.
+
+## Step 3 consolidation redesign — minimum-viable-call set + inclusion-only routing
+Files: schemas/enums.py, schemas/step_3.py, search_v2/step_3.py,
+search_v2/category_candidates_experiment/ (queries.py, run_step_3_batch.py,
+summarize.py, CONSOLIDATION_EXPERIMENT.md)
+
+### Intent
+Step 3 over-fragmented single-concept traits into FACETS (PRODUCT) of
+multiple category calls, and routed positive traits to avoidance-framed
+categories. Move the minimum-viable-set discipline upstream so the trait
+(already one concept after Step 2) is represented by the fewest calls,
+with inclusion-only framing decided before a category is committed.
+
+### Key Decisions
+- aspects now enumerate distinct, non-overlapping, comprehensive PARTS
+  (not the whole restated alongside its parts); reassembly is the
+  consolidation step's job. No relevance enum on aspects (user decision:
+  over-enumeration is fine if consolidation can reduce it).
+- New `CandidateFit` enum (CLEAN_OWNERSHIP / COULD_CONSOLIDATE /
+  LIKELY_DISREGARD) on each CategoryCandidate. Inclusion-eligibility folds
+  into fit: a category usable here only by describing an absence caps at
+  LIKELY_DISREGARD (decided at fit time, not at the call layer — user's
+  #5). Candidate floor (min 5) kept; the label separates real fits from
+  floor-filler without lowering it.
+- `routing_exploration` renamed to `consolidation_analysis` and rewritten:
+  EXPLORE options first, THEN place the trait on the breadth↔single-shape
+  spectrum (continuous, not binary); minimum calls, fold finer parts into
+  a broader call rather than spawning brittle separate facets. The old
+  SOLO-coverage-short-circuit / FRAMINGS-vs-FACETS framing was replaced.
+- combine_mode now reads off the spectrum placement (point 6); FACETS vs
+  FRAMINGS logic otherwise unchanged.
+- Inclusion-only stated as generalized guidance (no merge/flip/orchestrator
+  mechanics — user's "no broader-system details"); merge-mechanics prose
+  stripped from _MINIMUM_SET_AND_POLARITY and the dimension absence pitfall.
+- SENSITIVE_CONTENT/MATURITY_RATING category edits (prior DIFF entry) are
+  the companion change.
+- All edits are generalized principles — no few-shot, no test-query
+  leakage (removed a "hidden gem"/"feel-good"/"underrated" example block
+  from the aspect section that also leaked a test query).
+
+### Validation
+3-way experiment (12 queries x 5 reps): base (gemini, category edits only,
+old prompt) vs fix_gemini vs fix_gpt (gpt-5.4-mini low/low). See
+search_v2/category_candidates_experiment/CONSOLIDATION_EXPERIMENT.md for
+the full findings. Summary: plot-shape/single-concept fragmentation
+reduced (SOLO rates up), family-friendly avoidance category dropped
+(gemini), regression guards stable EXCEPT gemini regressed `thrillers`
+(genre→genre+tone FACETS). Audio-language trap on nationality queries NOT
+fixed by the step-3 changes — needs a category-definition lever. gpt-5.4-mini
+at low/low consolidated more decisively than gemini in this run.
+
+### Testing Notes
+Step 3 unit tests (if any) that assert on TraitDecomposition shape will
+need updating: field `routing_exploration`→`consolidation_analysis`, and
+CategoryCandidate now requires a `fit` field. No tests were run/modified
+per test-boundaries rule. Model left as Gemini (production default);
+gpt-5.4-mini is an experiment candidate pending user decision.
+
+## Category-definition audit: overlap fixes + Step-3 fit definition-adherence
+Files: schemas/trait_category.py, schemas/step_3.py, search_v2/step_3.py
+
+### Intent
+Resolve category-overlap and definition-inconsistency findings the user
+prioritized from the taxonomy audit (clusters A1–A4 + B1/B2/B3/B6/B9), and
+wire the category definitions into Step 3's candidate `fit` ranking so a
+candidate that violates its category's definition (or where another category
+fits better) is ranked lower. Root cause established earlier: Step 3's
+over-fragmentation/mis-routing traces to the category DEFINITIONS, not Step 3
+reasoning.
+
+### Key Decisions
+- **Semantic core (A1+B2+B3):** rewrote STORY_THEMATIC_ARCHETYPE / PLOT_EVENTS
+  / CHARACTER_ARCHETYPE / ELEMENT_PRESENCE / CENTRAL_TOPIC with dense,
+  principle-based boundaries + generalized "decision tests" (no examples in
+  the prose). Encodes the user's framing rule: STORY = whole-film
+  elevator-pitch shape (even "X does Y"); PLOT = a beat WITHIN a larger story
+  (framing decides, not content); CHARACTER = static type, no arc; GENRE = a
+  (qualified) label; ELEMENT = explicit fallback for a present thing with no
+  better home. B3: deleted CHARACTER_ARCHETYPE's "Lone female protagonist
+  splits…" edge_case (it taught peeling a person-phrase into a facet).
+- **Suitability (A2+B4):** MATURITY_RATING fires only on an explicit rating
+  (removed the "MAY proxy for suitability" clause); SENSITIVE_CONTENT only on
+  explicit mature-content; TARGET_AUDIENCE owns an audience trait ALONE (its
+  handler already applies rating suitability — a separate rating/content call
+  is redundant).
+- **Reception (A3):** crisp generalized split across NUMERIC_RECEPTION_SCORE
+  (a number) / GENERAL_APPEAL (goodness-degree, no number) / CULTURAL_STATUS
+  (canonical position / reception shape) / SPECIFIC_PRAISE_CRITICISM (named
+  aspect) / AWARDS (formal ceremony outcome).
+- **Geography/language (A4):** aligned COUNTRY_OF_ORIGIN / CULTURAL_TRADITION
+  / FILMING_LOCATION / NARRATIVE_SETTING with the already-applied
+  AUDIO_LANGUAGE explicit-only gate, each with a "how to tell" test.
+- **B1:** TARGET_AUDIENCE = explicitly named audience (people); VIEWING_OCCASION
+  = occasion not defined by named people; a people-word inside an occasion
+  phrase does not promote to audience. NO rename (kept VIEWING_OCCASION — user
+  decision; WATCH_CONTEXT collides with the watch_context vector space).
+- **B6:** added route-elsewhere decision tests to EMOTIONAL_EXPERIENTIAL (a
+  genre/occasion/device/arc that merely evokes a feeling routes to its own
+  home). GENRE untouched (A6 out of scope). **B9:** docstring 45→43.
+- **Step-3 fit:** appended a definition-adherence criterion to
+  `CategoryCandidate.fit` (schemas/step_3.py) and the "COMMIT A FIT LABEL"
+  guidance (search_v2/step_3.py) — rank against the candidate's own taxonomy
+  entry; reserve CLEAN_OWNERSHIP for the category whose definition squarely
+  claims the aspect. Placed after the covers/misses prose (explore-before-commit).
+- **Authoring constraint honored:** all examples curated diverse and screened
+  against the 12 `QUERIES` + 25 `RESCORE_EVAL_QUERIES` (word-boundary scan of
+  edited categories: zero leakage).
+
+### Validation
+`audit_gpt` 5-rep run (gpt-5.4-mini low/low, Step 2 fixed). Vs `fix_gpt`:
+family-friendly redundancy fully fixed (5/5 solo Target audience); japanese
+audio-language trap eliminated; washed-up-boxer consolidation improved (4/5
+solo Story). Mixed: loser-guy traits now always anchor on Story (mis-anchor
+gone) but still peel a Character facet ~3/5. Not fixed: serbian audio-language
+(still 5/5 — Step 3 keeps Audio for a bare nationality lacking a strong
+tradition alternative; AUDIO_LANGUAGE's description/good_examples still imply
+nationality→language and are the Step-2-visible lever). Regression guards all
+held. See search_v2/category_candidates_experiment/CONSOLIDATION_EXPERIMENT.md.
+
+### Testing Notes
+Step 3 / category unit tests that assert on category-definition text or the
+`fit` field semantics may need updating; none run/modified per test-boundaries.
+Model restored to Gemini (production default). Pre-existing test-adjacent terms
+remain in NON-edited categories (NAMED_CHARACTER "anti-hero", GENRE "underdog
+stories") — left per the edited-categories-only scope.
+
+## Audio-language trap: Step-2 source fix (de-nationalize AUDIO, COUNTRY template, intent_exploration calibration)
+Files: schemas/trait_category.py, schemas/step_2.py, search_v2/step_2.py
+
+### Intent
+Eliminate the serbian audio-language trap (bare nationality query spuriously
+committing AUDIO_LANGUAGE). The prior round's boundary gate was necessary but
+could not bite, because the language read was injected upstream by Step 2.
+
+### Key Decisions
+- ROOT CAUSE (corrects prior DIFF entry / Round-2 finding): the Audio commit did
+  NOT originate at Step 3. Step 2's intent_exploration bundled "or in the Serbian
+  language" into the trait's evaluative_intent as a fake-single read ("no competing
+  interpretations"); Step 3 faithfully decomposed it into country + audio aspects.
+  Controlled proof: japanese Step-2 intent was origin-only → 0 Audio; serbian
+  carried the OR-language clause → Audio 5/5. Decided upstream, not by category defs.
+- Three reinforcing levers: (1) de-nationalized AUDIO_LANGUAGE description +
+  good_examples (removed the "<nationality>-language films" template that was
+  structurally identical to "serbian movies"; now framing-forward — subtitled /
+  dubbed / original-language); (2) added a bare "<nationality> films" template
+  ("Mexican films") to COUNTRY_OF_ORIGIN so the dominant origin read has a home as
+  clean as the one removed from AUDIO; (3) calibrated Step 2 intent_exploration —
+  framing + a QueryAnalysis.intent_exploration NEVER bullet forbidding "WIDEN ONE
+  READ WITH A LOW-CONFIDENCE 'OR'" (the exact serbian failure shape). Levers 1–2 are
+  the only category fields Step 2 renders (name+description+good_examples).
+- Examples screened against all 37 experiment queries (zero leakage); diverse per
+  the "principles-over-pattern-matching" guideline.
+
+### Validation
+Experiment `s2fix_gpt` (gpt-5.4-mini low/low; Step 2 regenerated, so NOT
+Step-3-isolated — old step_2_results.json saved as step_2_results.pre_s2fix.json).
+serbian movies 5/5 SOLO [Country of origin] (was 3× facets + 2× framings [Audio,
+Country]); family-friendly 'serbian' 5/5 SOLO [Country of origin] (was 5× framings).
+Zero committed Audio calls across all 12 queries (residual Audio appears only as a
+likely_disregard Step-3 candidate). Regression guards held; the spurious 2-call
+Audio+Country compound also disappeared. Caveat: Step-2 resampling reshuffled
+atomization on a few queries (anime/for-kids benign; standalone 'clean' routes
+inconsistently — flagged for future look). See CONSOLIDATION_EXPERIMENT.md Round 3.
+
+### Testing Notes
+Step 2 / QueryAnalysis tests asserting on intent_exploration field text and any
+category-vocabulary snapshot tests may need updating; none run/modified per
+test-boundaries. Model restored to Gemini in both step_2.py and step_3.py.

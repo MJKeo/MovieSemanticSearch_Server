@@ -1428,3 +1428,19 @@ class TraitCombineMode(StrEnum):
     SOLO = "solo"
     FRAMINGS = "framings"
     FACETS = "facets"
+
+
+# How well a candidate category fits the dimension it was surfaced for.
+# Assigned per-candidate during Step 3 dimension routing analysis and read
+# by the consolidation step to build the minimum viable call set. The
+# candidate floor deliberately surfaces more options than will be
+# committed; this label is how the filler is separated from the real fits
+# without lowering the floor. Inclusion-eligibility folds in here too: a
+# category that could only represent this dimension by describing an
+# absence (rather than the presence of an attribute to find) cannot
+# cleanly own it, so its fit is capped at LIKELY_DISREGARD regardless of
+# how well it matches topically.
+class CandidateFit(StrEnum):
+    CLEAN_OWNERSHIP = "clean_ownership"
+    COULD_CONSOLIDATE = "could_consolidate"
+    LIKELY_DISREGARD = "likely_disregard"

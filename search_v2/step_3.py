@@ -132,16 +132,15 @@ You produce a TraitDecomposition with these coupled layers:
    dimension carries plausible category candidates with what's-\
    covered / what's-missing prose — the routing decisions, not a \
    re-authoring of the aspect.
-4. ROUTING EXPLORATION — exploratory prose between candidates and \
-   combine_mode. Walks dedup, the granularity gate (identity vs \
-   attribute categories filtered by aspect granularity), the \
-   coverage check (does one surviving category cover every \
-   dimension cleanly → SOLO), and only when no SOLO candidate \
-   exists, the FRAMINGS-vs-FACETS relationship question plus \
-   minimum-set commit. Forward reasoning that produces the \
+4. CONSOLIDATION ANALYSIS — exploratory prose between candidates and \
+   combine_mode. Reads the candidate fit labels, applies dedup and \
+   the granularity gate, then EXPLORES the routing options and places \
+   the trait on the spectrum from one combined shape to a breadth of \
+   distinct calls — the minimum viable set, folding in parts a \
+   broader call already covers. Forward reasoning that produces the \
    conclusions combine_mode and category_calls then read off.
 5. COMBINE MODE — TraitCombineMode (SOLO / FRAMINGS / FACETS). \
-   Mechanical translation of the routing_exploration conclusion. \
+   Mechanical translation of the consolidation_analysis conclusion. \
    Tells stage-4 how to fold per-category scores: SOLO → \
    passthrough (one category covers everything alone); FRAMINGS → \
    MAX (alternative homes for one signal, no single category \
@@ -150,7 +149,7 @@ You produce a TraitDecomposition with these coupled layers:
    ends up owning >=1 expression. Multi-expression calls when one \
    category cleanly owns several dimensions of this trait. The \
    set of categories and the dedup decisions were committed by \
-   routing_exploration above; this layer is the mechanical \
+   consolidation_analysis above; this layer is the mechanical \
    structured-call translation.
 
 Read the response schema's field descriptions before producing \
@@ -159,19 +158,19 @@ output.
 Two phases drive the work.
 
 ANALYSIS PHASE — produce the trait restatement, then restate the \
-population, commit the role analysis, enumerate aspects (honoring \
-role-driven axis constraints), translate aspects into dimensions, \
-list per-dimension candidates with explicit coverage prose, and \
-finish with routing_exploration that prunes the candidate set and \
-argues for SOLO vs FRAMINGS vs FACETS. No calls yet.
+population, commit the role analysis, enumerate aspects as distinct \
+parts (honoring role-driven axis constraints), route each part into \
+dimensions, list per-dimension candidates with coverage prose and a \
+fit label, and finish with consolidation_analysis that explores the \
+options and places the trait on the breadth-vs-shape spectrum. No \
+calls yet.
 
-COMMITMENT PHASE — read routing_exploration's conclusions, commit \
-combine_mode (mechanical from the relationship argument), then \
-emit minimum calls (mechanical from the minimum-set conclusion). \
-Multi-expression calls are the natural shape when one category \
-covers multiple dimensions. Calls describe PRESENCE — even when \
-source trait polarity is negative (committed upstream and applied \
-at merge time, not by you).
+COMMITMENT PHASE — read consolidation_analysis's conclusion, commit \
+combine_mode (mechanical from where the trait landed on the \
+spectrum), then emit the minimum calls. Multi-expression calls are \
+the natural shape when one category owns several parts. Every call \
+describes the PRESENCE of an attribute to find — never an absence, \
+even when the trait is about steering away from something.
 
 The sections below cover analysis (trait-role analysis, aspect \
 enumeration, dimension inventory, per-dimension candidates, \
@@ -399,7 +398,7 @@ even if prior knowledge associates specific named instances with \
 that category. The discriminator is whether the aspect names a \
 MEMBER of the category or names the category itself. This gate is \
 the structural enforcement of Categorical-to-Specific Drift; the \
-ROUTING EXPLORATION step below operates the gate per-dimension.
+CONSOLIDATION step below operates the gate per-dimension.
 
 LAYER 2 — ROLE-DRIVEN RESTRICTIONS (applied after granularity \
 passes).
@@ -512,14 +511,15 @@ synonymy in user terms; when in doubt, lean toward the drop \
 dropping a borderline aspect leaves it to the sibling that owns \
 the axis).
 
-READ ALL OF target_population. Do not stop at the first axis you \
-identify. Multi-faceted figurative traits ("hidden gem", "feel-\
-good", "underrated") reliably encode three or more axes — \
-quality + visibility + commercial footprint, or warmth + \
-accessibility + emotional payoff. Walk the prose end to end and \
-list every axis it names, even ones that look adjacent or \
-trivial; the dimension layer cannot recover an axis you didn't \
-enumerate here.
+READ ALL OF target_population. Do not stop at the first part you \
+identify; a multi-faceted trait can decompose into several distinct \
+parts, and the dimension layer cannot recover a part you didn't \
+enumerate here. But enumerate the genuine PARTS, not the whole \
+restated alongside them: if one entry would name the entire trait \
+while other entries name its components, the entry restating the \
+whole is the overlap to drop. Reassembling the parts into the \
+minimum set of searches is the consolidation step's job downstream, \
+not this step's.
 
 Why this step exists. The next step (dimensions) routes each \
 aspect to its plausible categories, with the aspect string itself \
@@ -567,12 +567,13 @@ dimensions. Drift here propagates directly into the dimension and \
 expression layers — they cannot recover a constraint the aspect \
 already lost.
 
-DISTINCTNESS. Two phrases that name the same axis from different \
-angles collapse into one entry. Two phrases that name independent \
-axes — axes that could vary independently in a candidate film — \
-stay as separate entries. The test is whether the population \
-description requires both simultaneously, not whether the prose \
-mentioned both.
+DISTINCTNESS AND NON-OVERLAP. Two phrases that name the same axis \
+from different angles collapse into one entry. Two phrases that name \
+independently-varying axes stay separate. And no entry may restate \
+the whole trait while other entries name its components — parts \
+partition the trait, they do not nest inside one another. Taken \
+together the parts stay COMPREHENSIVE: they reconstruct the trait \
+with nothing important dropped.
 
 CARDINALITY follows the trait. A trait whose population is \
 defined by a single axis resolves to one aspect. A trait whose \
@@ -742,12 +743,11 @@ COMMON PITFALLS.
 - CATEGORY NAMING. Categories belong to candidates / calls, not \
   expressions. expression is the aspect verbatim; let \
   category_candidates record the routing options.
-- ABSENCE FRAMING. Polarity was committed upstream. Even when the \
-  trait is negative, expressions describe presence (the attribute \
-  being avoided). Merge step flips direction; you don't. If an \
-  aspect was framed as absence ("lack of whimsy"), the aspect \
-  itself should be the presence form ("whimsy") — fix it \
-  upstream, not by rephrasing here.
+- ABSENCE FRAMING. Describe presence, not absence. Even when the \
+  trait is about steering away from something, the expression names \
+  that thing as present, never its absence. If a part was framed as \
+  an absence, restate it in its presence form upstream rather than \
+  rephrasing it here.
 - BUNDLING UNRELATED CHECKS into one Dimension.expression. One \
   dimension = one aspect. Multiple same-category aspects aren't \
   bundling — they belong as separate dimensions that merge into \
@@ -788,14 +788,34 @@ only do that job if your what_this_covers / what_this_misses prose \
 honestly describes each candidate. So: surface the candidate, \
 write substantive prose, and trust the next step to prune.
 
-LEAN BROAD HERE. The next step (ROUTING EXPLORATION) is where the \
+LEAN BROAD HERE. The consolidation step that follows is where the \
 candidate set gets pruned to the minimum useful commit. This \
 layer's job is to surface ENOUGH options for that pruning to work \
 honestly — not to pre-commit. When in doubt, surface the candidate \
 and let the consolidation step decide. The downstream pipeline \
 treats your candidates and dimensions as ROUGH input that the \
-routing step refines; honest exploration here is more valuable \
+consolidation step refines; honest exploration here is more valuable \
 than premature commitment.
+
+COMMIT A FIT LABEL on every candidate, AFTER its what_this_covers / \
+what_this_misses prose, so the consolidation step can separate real \
+fits from floor-filler without re-deriving it. CLEAN_OWNERSHIP: \
+squarely owns the dimension, no substantive gap, and expressible as \
+the PRESENCE of an attribute to find. COULD_CONSOLIDATE: a real \
+neighbor that could host the dimension or be absorbed alongside a \
+stronger category. LIKELY_DISREGARD: weak or floor-only coverage. \
+INCLUSION GATE — apply it HERE, not later: if the only way to use a \
+category for this dimension would be to describe an ABSENCE (what \
+should NOT be present) rather than the presence of an attribute, it \
+cannot cleanly own the dimension — cap its fit at LIKELY_DISREGARD \
+however well it matches topically. Deciding inclusion at fit time \
+keeps a category that can't be framed as presence from being \
+committed and then framed as avoidance after the fact. DEFINITION \
+CHECK — rank against each candidate's OWN taxonomy entry: if applying \
+the category to this dimension would violate its boundary, or another \
+category's definition is honestly the better home for the aspect's \
+intent, rank it below CLEAN_OWNERSHIP; reserve CLEAN_OWNERSHIP for the \
+category whose definition squarely claims this aspect.
 
 PROCESS. For each dimension:
 1. Find categories whose description, boundary, or edge_cases \
@@ -846,147 +866,74 @@ dimension itself is wrong (too abstract, too compound) — revisit.
 """
 
 
-_ROUTING_EXPLORATION = """\
-ROUTING EXPLORATION — think before committing combine_mode and \
-category_calls
+_CONSOLIDATION = """\
+CONSOLIDATION — reconstruct the trait from its parts as the minimum \
+viable set of calls
 
-After the per-dimension candidate analysis above, BEFORE committing \
-combine_mode and category_calls, walk the candidate set as a whole \
-and decide which categories actually deserve commits. The candidate \
-analysis was deliberately allowed to be broad — this step is where \
-breadth gets pruned to the minimum useful set, AND where the \
-relationship among surviving categories gets named.
+After the per-dimension candidates above, and BEFORE combine_mode and \
+category_calls, EXPLORE the routing options across the whole candidate \
+set, THEN conclude where this trait lands on the spectrum from one \
+combined shape to a breadth of distinct calls. The aspects step \
+deliberately enumerated parts; this step reassembles them. Explore \
+first: committing the breadth-vs-shape verdict before weighing the \
+options locks you into a path and forces the call list to fit it.
 
-EXPECT FILLER IN THE CANDIDATE SET. The per-dimension candidates \
-list was held to a floor of 5 categories per dimension to force \
-broad exploration. That floor produces some real adjacencies and \
-some filler — candidates with thin what_this_covers prose, or \
-candidates whose what_this_misses openly admits the category does \
-not fit. Treat the upstream dimensions and candidate lists as \
-ROUGH input that this step refines. Your job here is to:
-- Identify the filler (vague coverage, indefensible presence, \
-  candidate that contradicts its own what_this_misses)
-- Discard it without ceremony
-- Commit only the categories that materially help retrieval
+START FROM THE FIT LABELS. Drop every LIKELY_DISREGARD candidate \
+outright (including any whose only framing would describe an absence — \
+those were capped at fit time). Treat CLEAN_OWNERSHIP candidates as \
+the anchors. Genuinely weigh each COULD_CONSOLIDATE candidate: it may \
+be absorbed alongside a stronger category, dropped, or kept as its own \
+call — decide from the evidence, not by defaulting to any one outcome.
 
-A category committed because it was on the list is not a real \
-commit — it's a hedge that pads the call list and dilutes the \
-trait's score sum. Be ruthless. If a candidate doesn't make the \
-cut here, it must not appear in category_calls below.
+MINIMUM VIABLE SET. The trait is a single concept — cross-concept \
+splitting already happened upstream — so it is often best represented \
+by one combined shape. Take the strongest call first, then for each \
+remaining part ask: is this part genuinely important AND not already \
+captured by a call I have? Only then does it earn an additional call. \
+A part that a broader call already implies folds into that call \
+(enriching what that call retrieves) rather than spawning a brittle \
+separate call. One category should own as many parts as it cleanly \
+can, as a single multi-expression call.
 
-Write in FORWARD-REASONING shape: "I see X across these dimensions, \
-so I'm leaning toward Y." Not back-rationalization: "My answer is \
-Y because X." The fields below copy your conclusions; the \
-conclusions themselves are reached here.
+WALK THESE, IN ORDER:
 
-WALK FOUR CHECKS, IN ORDER. The order is load-bearing — earlier \
-checks shrink the candidate set or short-circuit the decision \
-entirely, so applying them out of sequence inflates the call list.
+(1) DEDUP. Parts whose clean-fit category is the same merge into one \
+multi-expression call.
 
-(1) DEDUP. Look at category_candidates across all dimensions. \
-When the same category appears as a clean-fit (or near-clean-fit) \
-on more than one dimension, note it — those dimensions will merge \
-into one multi-expression call at the commitment step. Identifying \
-merges here keeps the call list minimal without dropping coverage.
+(2) GRANULARITY. A category that retrieves specific named entities is \
+admissible only when the part itself names a specific entity. When the \
+part names a category or kind — defined by what its members share — \
+such categories are out-of-scope however cleanly prior knowledge ties \
+named instances to it. Routing a kind-of-trait to a hand-picked subset \
+of named instances narrows its scope rather than covering it; this \
+holds for both polarities.
 
-(2) GRANULARITY GATE. For each candidate still in play, ask \
-whether the aspect it serves is at the granularity the category \
-retrieves. Identity categories retrieve specific named entities; \
-they are admissible ONLY when the aspect itself names a specific \
-entity that lives in that category. When the aspect names a \
-CATEGORY — a genre, an archetype, a kind-of-movie defined by what \
-its members share — identity-category candidates are out-of-scope \
-no matter how cleanly prior knowledge associates specific named \
-instances with that category. Drop them here.
+(3) PLACE ON THE SPECTRUM. Given the survivors, decide how many calls \
+are genuinely warranted — from one combined shape up to a breadth of \
+distinct calls — and state, per call, the distinct part(s) it owns and \
+what it adds that the others don't. A part with no clean home of its \
+own that a broader call already covers folds in; it does not get a \
+separate call.
 
-The discriminator: does the aspect string name a MEMBER of the \
-category, or does it name the category itself? Members route to \
-identity; categories route to attribute.
-
-(3) COVERAGE — the SOLO short-circuit. After dedup and granularity \
-pruning, ask whether a single surviving category cleanly covers \
-EVERY dimension this trait routes. The per-dimension \
-what_this_misses analysis is the source of truth: a candidate that \
-named no substantive gap (the "Nothing" / no-real-gap form) across \
-every dimension it could serve provides complete coverage by \
-itself. When that is the case, the trait is SOLO — that category \
-is the only commit, every other candidate was adjacency context \
-that surfaced for honesty rather than coverage the primary lacked. \
-State this conclusion explicitly when it applies.
-
-The discipline of this check: a candidate whose what_this_misses \
-names a real gap on any dimension does not heal the gap by being \
-paired with another partial candidate that misses something else. \
-What heals a gap is a single category whose own coverage closes it. \
-When such a category exists, the trait commits SOLO regardless of \
-how cleanly adjacent candidates might also have routed.
-
-Only if NO single surviving candidate covers everything cleanly \
-does step (4) come into play.
-
-(4) RELATIONSHIP & MINIMUM SET (skipped when SOLO applies). Among \
-the surviving candidates, are they alternative HOMES for one \
-underlying thing the trait names (matching any one is sufficient \
-evidence → leans FRAMINGS), or do they describe DIFFERENT axes of \
-a compound concept the user wants compounded (all must fire to a \
-degree → leans FACETS)? State which direction the dimensions \
-actually support and why, then commit the minimum set of \
-categories that together cover every dimension. Each surviving \
-category must add NEW signal — if a category is redundant with a \
-stronger sibling and FRAMINGS gives no incremental reinforcement \
-(or FACETS would double-fire on the same axis), drop it.
-
-CATEGORICAL-TO-SPECIFIC DRIFT — the named failure mode this step \
-exists to catch. When the trait names a category (a genre, an \
-archetype, a kind-of-movie defined by what its members share), do \
-not commit a category whose job is to retrieve specific named \
-instances of that category. The category is broader than any \
-single instance; the specific instance covers only a part. \
-Routing the trait to identity categories swaps the trait's truth \
-conditions for a strictly narrower set, and adding multiple \
-specific instances as 'framings' does not heal the gap — it just \
-narrows the scope to a hand-picked subset.
-
-This applies to BOTH polarities. For positive traits, the drift \
-inflates the score on a narrow subset of films that happen to be \
-canonical exemplars of the category, instead of scoring the whole \
-category evenly. For negative traits, the drift over-excludes \
-films that are adjacent to the canonical exemplars while missing \
-other films that genuinely belong to the category. Polarity does \
-not heal the drift; it changes which way the error tilts.
+FORWARD-REASONING SHAPE: "I see X across these parts, so I'm leaning \
+toward Y," never "the answer is Y because X." combine_mode and \
+category_calls below read your conclusion off this prose.
 
 OPERATIONAL TESTS:
-- GRANULARITY PASS. "Did I reach for a particular franchise / \
-  character / studio / person name to justify a candidate the \
-  trait did not itself name?" Yes → drop the candidate; the \
-  Categorical-to-Specific Drift trap is firing.
-- SAME-LEVEL CHECK. "Are the surviving candidates at the same \
-  granularity as the aspects they serve?" If a candidate retrieves \
-  specific instances but the aspect names a category, it does not \
-  survive.
-- COVERAGE CHECK. "Is there a single surviving category whose \
-  what_this_misses analysis showed no substantive gap across every \
-  dimension this trait routes?" Yes → SOLO; drop the other \
-  candidates. No → proceed to FRAMINGS vs FACETS.
-- MINIMUM-SET CHECK. "If I removed each surviving candidate one \
-  at a time, would the remaining set lose meaningful coverage?" If \
-  no for any candidate, that candidate was padding.
+- EARN-EACH-CALL. "If I removed this call, would an important part of \
+  the trait go uncovered?" No → it was padding; fold or drop it.
+- DISTINCT-SIGNAL. "Does each call add coverage the others don't?" \
+  Overlapping calls that repeat one signal collapse into one.
+- GRANULARITY PASS. "Did I reach for a specific named entity to host a \
+  part the trait stated only as a kind?" Yes → drop it.
 
 NEVER:
-- SKIP THE COVERAGE CHECK and jump straight to FRAMINGS vs FACETS. \
-  When one category cleanly covers the trait, the relationship \
-  question has no work to do — the answer is SOLO.
-- COMMIT EXTRA CATEGORIES AS HEDGES. When a clean primary covers \
-  the trait, partial-coverage adjacents do not reinforce the \
-  signal; they pad the call list. The commit is the minimum \
-  sufficient set, not the broadest defensible set.
-- WRITE BACKWARD FROM A COMMITTED ANSWER. The reasoning leads the \
-  conclusion, not justifies it.
-- ELABORATE BEYOND THE CANDIDATES. Only categories surfaced in \
-  the candidate analysis above are in scope here.
-- USE THIS FIELD TO INTRODUCE NEW NAMED ENTITIES. The trait \
-  either named the entity or it didn't. The exploration is a \
-  pruning pass, not a re-expansion pass.
+- DECIDE BREADTH-VS-SHAPE BEFORE EXPLORING. Explore, then place.
+- COMMIT A LIKELY_DISREGARD CANDIDATE, or one usable here only by \
+  describing an absence.
+- ADD A CALL THAT REPEATS another call's signal, or pad the set with \
+  partial-coverage hedges.
+- INTRODUCE NEW NAMED ENTITIES the trait did not name.
 
 ---
 
@@ -1105,7 +1052,7 @@ NEVER:
 _CATEGORY_ROUTING = """\
 CATEGORY ROUTING — committing the call list
 
-Read the routing_exploration's minimum-set conclusion and the \
+Read the consolidation_analysis's minimum-set conclusion and the \
 combine_mode that followed. The category set, dedup decisions, and \
 granularity pruning were all reasoned through upstream — this \
 field is the mechanical translation into structured calls. For \
@@ -1219,17 +1166,14 @@ sum. No per-call weighting, no cross-call interaction. If calls \
 don't add up to reproduce the trait's intent, the decomposition \
 is wrong — revisit dimensions and candidates.
 
-PRESENCE ONLY. Every call expresses presence of an attribute. \
-Polarity was committed upstream and is applied at merge time by \
-code that flips scoring direction. You never describe absence.
-
-When trait.polarity == "negative":
-- Trait says "avoid X."
-- Dimensions describe X (the attribute being avoided).
-- Call expressions describe X as the thing to retrieve.
-- Merge step flips direction so movies high in X get downranked.
-- Describing absence ("low violence", "no romance") breaks the \
-  merge contract: it would double-flip and score backwards.
+INCLUSION ONLY. Every call describes the PRESENCE of an attribute \
+to find — what the movie HAS, the thing you want to see. Never \
+describe an absence, an avoidance, or being "free of" something. \
+Even when the trait is about steering away from something, name \
+that thing itself as present; do not phrase the call around its \
+absence. A category that could only be applied to a part by \
+describing an absence is not a valid home for it — it should have \
+been capped at fit time and must never be committed.
 
 MINIMUM SET = set of CategoryCall entries (not expressions). \
 Multiple expressions in one call is the natural shape when a \
@@ -1334,7 +1278,7 @@ SYSTEM_PROMPT = (
     + _ASPECT_ENUMERATION
     + _DIMENSION_INVENTORY
     + _PER_DIMENSION_CANDIDATES
-    + _ROUTING_EXPLORATION
+    + _CONSOLIDATION
     + VAGUE_TEMPORAL_VOCABULARY_COMPACT
     + _COMBINE_MODE_COMMIT
     + _CATEGORY_ROUTING
@@ -1347,17 +1291,19 @@ SYSTEM_PROMPT = (
 #                      Executor
 # ===============================================================
 #
-# Model is finalized to Gemini 3.5 Flash with minimal thinking
-# enabled (`thinking_level="minimal"`) and a low temperature. Callers
-# cannot override — this keeps the step reproducible and makes
-# cost/latency predictable end-to-end.
+# Model is finalized to gpt-5.4-mini at low reasoning effort and low
+# verbosity. Callers cannot override — this keeps the step reproducible
+# and makes cost/latency predictable end-to-end. Chosen over Gemini 3.5
+# Flash after the consolidation experiments (see
+# search_v2/category_candidates_experiment/CONSOLIDATION_EXPERIMENT.md):
+# gpt-5.4-mini consolidated single concepts more decisively at low/low.
 
 
-_PROVIDER = LLMProvider.GEMINI
-_MODEL = "gemini-3.5-flash"
+_PROVIDER = LLMProvider.OPENAI
+_MODEL = "gpt-5.4-mini"
 _MODEL_KWARGS: dict = {
-    "thinking_config": {"thinking_level": "minimal"},
-    "temperature": 0.15,
+    "reasoning_effort": "low",
+    "verbosity": "low",
 }
 
 

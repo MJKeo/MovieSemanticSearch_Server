@@ -19,7 +19,7 @@ member carries:
 All five text fields are programmatically inserted into the step-2
 system prompt — wording is kept tight to avoid prompt bloat.
 
-The 45-category list and granularity principles live in
+The 43-category list and granularity principles live in
 `search_improvement_planning/query_categories.md` and
 `search_improvement_planning/v3_category_attributes.md`.
 """
@@ -276,24 +276,26 @@ class CategoryName(str, Enum):
     CENTRAL_TOPIC = (
         "Central topic / about-ness",
         (
-            "Concrete subject the film is ABOUT — JFK, Vietnam War, "
-            "Titanic, Watergate, Princess Diana, the moon landing."
+            "A concrete, nameable subject the film centers on — a real or "
+            "specific person, event, place, or phenomenon it is ABOUT."
         ),
         (
-            "Concrete subjects only. Thematic essence (grief, redemption, "
-            "found family) → STORY_THEMATIC_ARCHETYPE. 'Has X' framing → "
-            "ELEMENT_PRESENCE. Time/place setting → NARRATIVE_SETTING."
+            "Concrete nameable subjects only. An abstract human experience "
+            "or moral essence is the story's shape → STORY_THEMATIC_ARCHETYPE. "
+            "Mere presence of a thing → ELEMENT_PRESENCE. The story's "
+            "time/place backdrop → NARRATIVE_SETTING."
         ),
         (
-            "'About' vs 'has': 'movies about sharks' (subject) vs 'shark "
-            "movies' (element-presence).",
-            "'Set during Vietnam' is setting → NARRATIVE_SETTING; 'about "
-            "Vietnam' is centrality.",
+            "Test: could you point to the subject as an entry in an "
+            "encyclopedia? If yes it is concrete and lands here.",
+            "'About X' names the subject; 'has X' is mere presence "
+            "(→ ELEMENT_PRESENCE); an abstract condition is thematic "
+            "(→ STORY_THEMATIC_ARCHETYPE).",
         ),
-        ("about the moon landing", "Watergate movie", "Princess Diana biopic"),
+        ("about the moon landing", "the sinking of the Titanic", "the Watergate scandal"),
         (
-            "'movies about grief' → STORY_THEMATIC_ARCHETYPE (thematic).",
-            "'movies with sharks' → ELEMENT_PRESENCE (presence).",
+            "'a film exploring loneliness' → STORY_THEMATIC_ARCHETYPE (abstract theme).",
+            "'has sharks in it' → ELEMENT_PRESENCE (presence, not subject).",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
@@ -302,23 +304,29 @@ class CategoryName(str, Enum):
     ELEMENT_PRESENCE = (
         "Element / motif presence",
         (
-            "Concrete element appears in the story — 'has clowns', 'zombie "
-            "movies', 'shark movies', 'robots', 'with horses', 'has a heist'."
+            "A concrete element or motif is merely present in the film — an "
+            "object, creature, set piece, or recurring motif — with no claim "
+            "about genre, story shape, or character type."
         ),
         (
-            "'Has X' / mere presence framing. Centrality → CENTRAL_TOPIC. "
-            "Character types → CHARACTER_ARCHETYPE. Thematic abstraction "
-            "→ STORY_THEMATIC_ARCHETYPE. Structural devices → NARRATIVE_DEVICES."
+            "The FALLBACK for a concrete thing that is present but not better "
+            "owned elsewhere: not a genre, not the story's shape, not a "
+            "character type, not a narrative technique, not sensitive content. "
+            "If a sharper category claims it, prefer that. A film centered ON "
+            "the thing → CENTRAL_TOPIC. Full event prose → PLOT_EVENTS."
         ),
         (
-            "Bare-noun ('heist movies', 'zombie movies') reads as presence; "
-            "full plot description ('a heist crew unravels…') → PLOT_EVENTS.",
+            "Test: if the only claim is 'this thing appears', it lands here; "
+            "if stripping the element leaves a shape, type, or subject, route "
+            "there instead.",
+            "Bare element nouns read as presence; a multi-clause account of "
+            "what happens → PLOT_EVENTS.",
         ),
-        ("movies with clowns", "zombie movies", "has horses"),
+        ("movies with clowns", "features dragons", "has a shipwreck"),
         (
-            "'underdog stories' → STORY_THEMATIC_ARCHETYPE.",
-            "'anti-hero' → CHARACTER_ARCHETYPE.",
-            "'twist ending' → EMOTIONAL_EXPERIENTIAL.",
+            "'a rise-from-nothing arc' → STORY_THEMATIC_ARCHETYPE (shape).",
+            "'a wise-mentor figure' → CHARACTER_ARCHETYPE (type).",
+            "'a gut-punch finale' → EMOTIONAL_EXPERIENTIAL.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
@@ -327,23 +335,26 @@ class CategoryName(str, Enum):
     CHARACTER_ARCHETYPE = (
         "Character archetype",
         (
-            "Static character TYPES — anti-hero, femme fatale, lovable rogue, "
-            "reluctant hero, manic pixie dream girl, love-to-hate villain, "
-            "underdog protagonist."
+            "A static character TYPE defined by disposition or role and "
+            "carrying no arc — the kind of figure that appears, not what "
+            "happens to them."
         ),
         (
-            "Static type only. Specific named personas → NAMED_CHARACTER. "
-            "Story shape / character trajectory (redemption arc, coming-of-age) "
-            "→ STORY_THEMATIC_ARCHETYPE. Single-lead/ensemble framing → "
-            "NARRATIVE_DEVICES."
+            "Fixed type only. A specific named persona → NAMED_CHARACTER. A "
+            "trajectory or change-over-time (how a figure rises, falls, or "
+            "transforms) is the story's shape → STORY_THEMATIC_ARCHETYPE. "
+            "Lead/cast structure (single lead, ensemble) → NARRATIVE_DEVICES."
         ),
         (
-            "'Lone female protagonist' splits: 'female protagonist' here + "
-            "'lone' → NARRATIVE_DEVICES.",
+            "Test: does the trait name WHAT KIND of person (static) or WHAT "
+            "THEY GO THROUGH (an arc)? Static type → here; arc or "
+            "transformation → STORY_THEMATIC_ARCHETYPE.",
+            "A compound figure stays one trait — do not peel its descriptors "
+            "into separate facets.",
         ),
-        ("anti-hero protagonist", "femme fatale", "reluctant hero"),
+        ("femme fatale", "reluctant hero", "lovable rogue"),
         (
-            "'redemption arc' → STORY_THEMATIC_ARCHETYPE (trajectory).",
+            "'a slow fall from grace' → STORY_THEMATIC_ARCHETYPE (trajectory, not type).",
             "'ensemble cast' → NARRATIVE_DEVICES.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
@@ -353,25 +364,27 @@ class CategoryName(str, Enum):
     AWARDS = (
         "Award records",
         (
-            "Formal award wins/nominations — Oscar, BAFTA, Palme d'Or, "
-            "Cannes, Sundance, Golden Globes, multi-win superlatives."
+            "Formal award wins or nominations from a named ceremony or body "
+            "— the major international film awards (Cannes/Palme d'Or, BAFTA, "
+            "Golden Globes, Sundance, and their peers) — including multi-win "
+            "superlatives."
         ),
         (
-            "Structured ceremony/outcome data only. Qualitative quality "
-            "without award reference → GENERAL_APPEAL. Broad reputation "
-            "('acclaimed', 'classic') → CULTURAL_STATUS. Specific aspect "
-            "praise → SPECIFIC_PRAISE_CRITICISM. Aspirational praise "
-            "('Oscar-worthy') → GENERAL_APPEAL — actual outcome ('won an "
-            "Oscar', 'Oscar-nominated') routes here."
+            "A formal ceremony OUTCOME (won/nominated/awarded). A plain "
+            "goodness-degree with no award reference → GENERAL_APPEAL. Broad "
+            "acclaim or canonical standing → CULTURAL_STATUS. Praise of a "
+            "named aspect → SPECIFIC_PRAISE_CRITICISM. Aspirational praise "
+            "('award-worthy') → GENERAL_APPEAL; an actual win/nomination "
+            "routes here."
         ),
         (
-            "Trigger: ceremony name (Oscars, Cannes, BAFTAs, Globes) + "
-            "outcome verb (won/nominated/awarded).",
+            "Trigger: a named ceremony or awarding body plus an outcome verb "
+            "(won/nominated/awarded).",
         ),
-        ("Academy Award winners", "Cannes Palme d'Or", "Oscar-nominated for Best Director"),
+        ("Cannes Palme d'Or winner", "BAFTA-nominated", "Golden Globe winner"),
         (
             "'highly acclaimed' → CULTURAL_STATUS.",
-            "'Oscar-worthy' → GENERAL_APPEAL (aspirational, not actual win).",
+            "'award-worthy' → GENERAL_APPEAL (aspirational, not an actual win).",
         ),
         (EndpointRoute.AWARDS,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
@@ -458,18 +471,23 @@ class CategoryName(str, Enum):
         "Maturity rating",
         "Rating ceiling/floor — 'PG-13 max', 'rated R', 'G-rated', 'no NC-17'.",
         (
-            "Fires only on an explicit rating (G/PG/PG-13/R/NC-17). Audience "
-            "framing ('family movies') → TARGET_AUDIENCE. Content-sensitivity "
-            "('no gore') → SENSITIVE_CONTENT. 'PG-13 family movies' splits: "
-            "rating here + audience → TARGET_AUDIENCE."
+            "Fires ONLY when the trait explicitly names or constrains a "
+            "certification rating (G/PG/PG-13/R/NC-17 or an explicit "
+            "ceiling/floor). Never a proxy for an audience or a suitability "
+            "wish: an audience description → TARGET_AUDIENCE (which already "
+            "applies rating suitability internally, so a separate rating call "
+            "is redundant). Content-sensitivity → SENSITIVE_CONTENT."
         ),
         (
-            "'No R-rated' is a negative-polarity ceiling, still routes here.",
+            "'No R-rated' is a negative-polarity ceiling — still an explicit "
+            "rating, routes here.",
+            "An audience or suitability ask that names no rating does NOT "
+            "route here — never infer a rating ceiling from who a film is for.",
         ),
         ("PG-13 or below", "rated R", "G-rated"),
         (
-            "'family-friendly' → TARGET_AUDIENCE (no explicit rating).",
-            "'no gore' → SENSITIVE_CONTENT.",
+            "'aimed at grown-ups' → TARGET_AUDIENCE (audience pitch, no explicit rating).",
+            "'graphic violence' → SENSITIVE_CONTENT (content axis).",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
@@ -477,16 +495,20 @@ class CategoryName(str, Enum):
     )
     AUDIO_LANGUAGE = (
         "Audio language",
-        "Original audio language — 'in Korean', 'Spanish-language', 'subtitled', 'French-original'.",
+        "Original audio language — the spoken track or its subtitling/dubbing ('subtitled', 'dubbed into English', 'in the original Cantonese').",
         (
-            "Original audio only. Production country → COUNTRY_OF_ORIGIN. "
-            "Cultural tradition → CULTURAL_TRADITION. A Korean-language film "
-            "may not be Korean cinema and vice versa."
+            "Fires ONLY when the surface form explicitly names a spoken/audio "
+            "language or names subtitling or dubbing. A bare nationality or "
+            "country adjective NEVER implies audio language — do not infer a "
+            "spoken language from where a film is made or its cultural "
+            "tradition; those route to COUNTRY_OF_ORIGIN / CULTURAL_TRADITION. "
+            "Original audio only — a film's language may not match its "
+            "production country or cinematic tradition."
         ),
         (
             "'Subtitled' implies non-English audio.",
         ),
-        ("Korean-language", "Spanish-language films", "in Japanese with subtitles"),
+        ("subtitled, not dubbed", "spoken in Mandarin", "in the original Tamil"),
         (
             "'Bollywood' → CULTURAL_TRADITION.",
             "'made in France' → COUNTRY_OF_ORIGIN.",
@@ -542,16 +564,18 @@ class CategoryName(str, Enum):
         "Numeric reception score",
         "Specific numeric reception thresholds — 'rated above 8', '70%+ on RT', '5-star', 'IMDb over 7.5'.",
         (
-            "Numeric framing only. Qualitative quality ('well-rated', 'best', "
-            "'highly regarded') → GENERAL_APPEAL."
+            "Quality expressed as a NUMBER or rating-system threshold (stars, "
+            "points, percent). Quality stated qualitatively without a number "
+            "→ GENERAL_APPEAL."
         ),
         (
-            "Surface form must contain a number or rating-system reference (stars, percent).",
+            "Test: is there a number or a rating-system reference? If not, it "
+            "is not this category.",
         ),
         ("rated above 8", "5-star movies", "above 75% on RT"),
         (
-            "'highly rated' → GENERAL_APPEAL.",
-            "'Oscar-worthy' → GENERAL_APPEAL.",
+            "'highly rated' → GENERAL_APPEAL (no number).",
+            "'award-worthy' → GENERAL_APPEAL (aspirational, not a score).",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
@@ -560,24 +584,27 @@ class CategoryName(str, Enum):
     COUNTRY_OF_ORIGIN = (
         "Country of origin",
         (
-            "Legal/financial production country — 'produced in', 'American "
-            "films', 'British production', 'Canadian co-production'."
+            "The legal/financial production nation — where a film was "
+            "produced or financed ('Mexican films', 'produced in', "
+            "'British co-production')."
         ),
         (
-            "Production country only. Filming geography → FILMING_LOCATION. "
-            "Cultural tradition → CULTURAL_TRADITION. When a tradition tag "
-            "exists, country is misleading (Hollywood-funded HK action carries "
-            "US country_of_origin)."
+            "Production nation only. Where it was physically shot → "
+            "FILMING_LOCATION. A named cinema tradition/aesthetic → "
+            "CULTURAL_TRADITION. The spoken language → AUDIO_LANGUAGE. The "
+            "story's in-world place → NARRATIVE_SETTING."
         ),
         (
-            "Bare 'French/Korean/Japanese movies' is ambiguous between this, "
-            "AUDIO_LANGUAGE, and CULTURAL_TRADITION — favor CULTURAL_TRADITION "
-            "for cinema-as-aesthetic phrasing, this for explicit production framing.",
+            "Test: does the trait assert WHERE THE FILM WAS MADE/FINANCED? "
+            "Then here. A bare nationality is ambiguous between this and "
+            "CULTURAL_TRADITION — favor CULTURAL_TRADITION for "
+            "cinema-as-aesthetic phrasing, this for explicit production "
+            "framing — and never implies AUDIO_LANGUAGE.",
         ),
-        ("produced in France", "American films", "British production"),
+        ("Mexican films", "produced in France", "British co-production"),
         (
-            "'filmed in New Zealand' → FILMING_LOCATION.",
-            "'Korean cinema' → CULTURAL_TRADITION.",
+            "'shot in New Zealand' → FILMING_LOCATION (physical filming).",
+            "'Korean cinema' → CULTURAL_TRADITION (named aesthetic).",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
@@ -641,22 +668,24 @@ class CategoryName(str, Enum):
     CULTURAL_TRADITION = (
         "Cultural tradition / national cinema",
         (
-            "Named cinema traditions — Bollywood, Korean cinema, Hong Kong "
-            "action, Italian neorealism, French New Wave, Nordic noir, "
-            "J-horror, Dogme 95."
+            "A named cinema tradition or movement treated as an aesthetic — "
+            "Bollywood, Korean cinema, Hong Kong action, Italian neorealism, "
+            "French New Wave, Nordic noir, Dogme 95."
         ),
         (
-            "Tradition-as-aesthetic. Production country → COUNTRY_OF_ORIGIN. "
-            "Audio language → AUDIO_LANGUAGE."
+            "A named tradition-as-aesthetic. Where the film was made/financed "
+            "→ COUNTRY_OF_ORIGIN. The spoken language → AUDIO_LANGUAGE."
         ),
         (
-            "If a tradition tag exists, country is misleading (Hollywood-funded "
-            "HK action isn't HK by production country).",
+            "Test: does the trait name a recognized film tradition/movement "
+            "(an aesthetic lineage) rather than just a country? A tradition "
+            "can diverge from production nation (its films may be "
+            "foreign-financed), so prefer this when the aesthetic is named.",
         ),
         ("Bollywood", "Korean cinema", "French New Wave"),
         (
-            "'made in France' → COUNTRY_OF_ORIGIN.",
-            "'in Korean' → AUDIO_LANGUAGE.",
+            "'produced in France' → COUNTRY_OF_ORIGIN (production nation).",
+            "'in the original Korean' → AUDIO_LANGUAGE (spoken language).",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
@@ -665,22 +694,23 @@ class CategoryName(str, Enum):
     FILMING_LOCATION = (
         "Filming location",
         (
-            "Where a movie was physically shot — 'filmed in New Zealand', "
+            "Where a film was physically SHOT — 'filmed in New Zealand', "
             "'shot on location in Iceland', 'Morocco shoots'."
         ),
         (
-            "Filming geography only. Production country → COUNTRY_OF_ORIGIN. "
-            "Narrative setting ('set in Tokyo') → NARRATIVE_SETTING."
+            "Physical filming geography only. Where it was made/financed → "
+            "COUNTRY_OF_ORIGIN. The story's in-world place → NARRATIVE_SETTING."
         ),
         (
-            "Production country is the wrong fit — Dune (US production) shot "
-            "in Jordan/UAE; Mission Impossible Fallout shot across "
-            "Kashmir/UAE/NZ.",
+            "Test: does the trait say where the CAMERAS rolled? Then here — "
+            "this can differ from both the production nation and the story's "
+            "setting (a film is often shot somewhere it is neither set nor "
+            "financed).",
         ),
         ("shot in Iceland", "filmed in Morocco", "on location in Vietnam"),
         (
-            "'set in Tokyo' → NARRATIVE_SETTING.",
-            "'American films' → COUNTRY_OF_ORIGIN.",
+            "'set in a distant future' → NARRATIVE_SETTING (story world).",
+            "'a British co-production' → COUNTRY_OF_ORIGIN (production nation).",
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
@@ -745,28 +775,28 @@ class CategoryName(str, Enum):
     TARGET_AUDIENCE = (
         "Target audience",
         (
-            "Audience being pitched to — 'family movies', 'teen movies', "
-            "'kids movie', 'for adults', 'watch with the grandparents', "
-            "'something for grown-ups'."
+            "The trait names a specific audience — a group of PEOPLE the film "
+            "is pitched to or suitable for (by age or demographic)."
         ),
         (
-            "Packaged-audience framing only. Story archetype like "
-            "coming-of-age → STORY_THEMATIC_ARCHETYPE. Content-sensitivity "
-            "('no gore') → SENSITIVE_CONTENT. Concrete situation ('date "
-            "night') → VIEWING_OCCASION."
+            "Fires when the trait's subject is an explicitly named audience. "
+            "This category alone carries the audience ask — its handler "
+            "already applies the matching rating/suitability, so do NOT add a "
+            "separate MATURITY_RATING or SENSITIVE_CONTENT call for the same "
+            "audience. A viewing situation not defined by people → "
+            "VIEWING_OCCASION. A story archetype → STORY_THEMATIC_ARCHETYPE."
         ),
         (
-            "An implicit rating ceiling ('family' implying PG) is NOT a "
-            "separate trait — only an explicitly named rating fires "
-            "MATURITY_RATING.",
-            "Imperative-mood 'watch with X' → VIEWING_OCCASION; "
-            "attribute-mood 'X movies' here.",
+            "The audience must be explicitly named — do not infer an audience "
+            "from an occasion or a genre.",
+            "An explicit rating or an explicit mature-content axis is a "
+            "separate trait (MATURITY_RATING / SENSITIVE_CONTENT); a bare "
+            "audience pitch is not.",
         ),
-        ("family-friendly", "teen movies", "for adults"),
+        ("for grown-ups", "aimed at older audiences", "grandparent-friendly"),
         (
-            "'coming-of-age' → STORY_THEMATIC_ARCHETYPE.",
-            "'date night' → VIEWING_OCCASION.",
-            "'no gore' → SENSITIVE_CONTENT.",
+            "'date night' → VIEWING_OCCASION (occasion, not a named audience).",
+            "'a fish-out-of-water story' → STORY_THEMATIC_ARCHETYPE (story shape).",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
         HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
@@ -775,23 +805,27 @@ class CategoryName(str, Enum):
     SENSITIVE_CONTENT = (
         "Sensitive content",
         (
-            "Content presence/absence and intensity — 'no gore', 'not too "
-            "bloody', 'with nudity', 'violent but not graphic', 'no animal "
-            "death', 'mild language only'."
+            "Presence and intensity of mature or objectionable content the "
+            "film CONTAINS — graphic violence, sexual content, nudity, strong "
+            "language, drug use, disturbing imagery."
         ),
         (
-            "Content-on-its-own-spectrum. Audience pitch → TARGET_AUDIENCE. "
-            "Explicit rating mention → MATURITY_RATING. An implied ceiling "
-            "(no explicit rating) is NOT a separate trait."
+            "Fires ONLY when the trait is explicitly about the mature content "
+            "itself (its presence or intensity). An audience description → "
+            "TARGET_AUDIENCE (which handles suitability). An explicit rating "
+            "→ MATURITY_RATING. Indexes the content axis itself; an implied "
+            "ceiling inferred from who a film is for is not this category."
         ),
         (
-            "Negative polarity ('no gore', 'not too bloody') is common; "
-            "trait still fires here regardless of presence/absence framing.",
+            "A content ask framed as avoidance still routes here: it names "
+            "the mature-content axis, and present-vs-avoid is tracked "
+            "separately as polarity — the call still describes the content, "
+            "not its absence.",
         ),
-        ("no gore", "not too bloody", "no animal harm"),
+        ("graphic violence", "strong sexual content", "heavy drug use"),
         (
-            "'family-friendly' → TARGET_AUDIENCE.",
-            "'PG-13 only' → MATURITY_RATING.",
+            "'aimed at a younger audience' → TARGET_AUDIENCE (audience pitch, not a content axis).",
+            "'rated R' → MATURITY_RATING (explicit rating).",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
         HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
@@ -830,28 +864,31 @@ class CategoryName(str, Enum):
     PLOT_EVENTS = (
         "Plot events",
         (
-            "Literal plot events as transcript-style prose — 'a heist crew "
-            "unravels when a member betrays them', 'a man wakes up with no "
-            "memory and tries to find his wife's killer', 'stranded on an "
-            "island after a plane crash'."
+            "Literal plot beats as transcript-style prose — specific actions "
+            "or events that occur inside the film, described concretely."
         ),
         (
-            "Multi-clause event prose. Bare element nouns ('heist', 'zombie') "
-            "→ ELEMENT_PRESENCE. Time/place setting → NARRATIVE_SETTING. "
-            "Thematic essence → STORY_THEMATIC_ARCHETYPE."
+            "A specific beat framed as happening WITHIN a larger story. The "
+            "same content framed as the film's whole-arc shape (its elevator "
+            "pitch) → STORY_THEMATIC_ARCHETYPE. A bare element noun → "
+            "ELEMENT_PRESENCE. Time/place backdrop → NARRATIVE_SETTING."
         ),
         (
-            "Threshold is descriptive depth: full event description here; "
-            "bare noun → ELEMENT_PRESENCE.",
+            "Test: is this the elevator-pitch SHAPE of the whole film, or one "
+            "thing that happens inside a larger story? Whole-arc shape → "
+            "STORY_THEMATIC_ARCHETYPE; an internal beat → here.",
+            "Framing decides, not content — the same event routes either way "
+            "depending on whether it is presented as the overall arc or as a "
+            "step within it.",
         ),
         (
-            "a heist crew gets double-crossed",
-            "a man hunts down his wife's killer",
-            "stranded after a plane crash",
+            "a getaway driver is double-crossed mid-job",
+            "a diver is left stranded far offshore",
+            "two strangers secretly swap lives for a week",
         ),
         (
-            "'heist movies' → ELEMENT_PRESENCE.",
-            "'set in Tokyo' → NARRATIVE_SETTING.",
+            "'a rags-to-riches rise' → STORY_THEMATIC_ARCHETYPE (whole-arc shape).",
+            "'has a shipwreck' → ELEMENT_PRESENCE (bare element).",
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
@@ -860,25 +897,25 @@ class CategoryName(str, Enum):
     NARRATIVE_SETTING = (
         "Narrative setting (time/place)",
         (
-            "Story's narrative time and place — 'set in 1940s Berlin', "
-            "'during the Cold War', 'takes place in Tokyo', 'small desert "
-            "town', 'remote island', 'medieval Europe'."
+            "The story's in-world time and place — 'set in 1940s Berlin', "
+            "'during the Cold War', 'a remote island', 'medieval Europe', "
+            "'deep space'."
         ),
         (
-            "'Set in / takes place in / during' framings. Production era "
-            "('90s movies') → RELEASE_DATE. Filming geography → "
-            "FILMING_LOCATION. Concrete focal subject ('about WWII') → "
-            "CENTRAL_TOPIC."
+            "The story's internal time/place ('set in / takes place in / "
+            "during'). Production era ('90s movies') → RELEASE_DATE. Where it "
+            "was physically shot → FILMING_LOCATION. A concrete focal subject "
+            "('about WWII') → CENTRAL_TOPIC."
         ),
         (
-            "Setting prose lives near plot prose semantically; the routing "
-            "label is what distinguishes them — keep settings tagged here, "
-            "not as plot events.",
+            "Test: does the trait describe WHERE/WHEN THE STORY HAPPENS "
+            "(in-world)? Then here — distinct from when the film was released "
+            "and from where it was shot.",
         ),
-        ("set in feudal Japan", "takes place in space", "during the Cold War"),
+        ("set in 1920s Chicago", "takes place in deep space", "during the Cold War"),
         (
-            "'90s movies' → RELEASE_DATE.",
-            "'about JFK' → CENTRAL_TOPIC.",
+            "'90s movies' → RELEASE_DATE (production era).",
+            "'about the Cold War' → CENTRAL_TOPIC (concrete subject).",
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
@@ -887,26 +924,28 @@ class CategoryName(str, Enum):
     STORY_THEMATIC_ARCHETYPE = (
         "Story / thematic archetype",
         (
-            "Story shape and thematic essence — 'about grief', 'redemption "
-            "arcs', 'man-vs-nature', 'underdog stories', 'revenge', "
-            "'post-apocalyptic', 'coming-of-age', 'found-family', "
-            "'man-vs-self'."
+            "The overall SHAPE or thematic essence of the film — its "
+            "elevator-pitch arc, or the abstract human experience at its "
+            "core. Captures what kind of story this is at the whole-film level."
         ),
         (
-            "Thematic abstraction. Concrete focal subject (JFK, Titanic) → "
-            "CENTRAL_TOPIC. Static character types (anti-hero, femme fatale) "
-            "→ CHARACTER_ARCHETYPE."
+            "The whole-film arc/theme. A specific internal beat (one action "
+            "within the larger story) → PLOT_EVENTS. A concrete nameable "
+            "subject → CENTRAL_TOPIC. A static character type → "
+            "CHARACTER_ARCHETYPE. A genre label, even one that implies a "
+            "shape → GENRE."
         ),
         (
-            "Spectrum framings ('kind of about grief', 'leans redemptive') "
-            "fire here as one trait with weakened intensity — no separate "
-            "branch.",
-            "'Post-apocalyptic' is story shape here, not a genre.",
+            "Test: does this describe the film's overall arc — its elevator "
+            "pitch — even when phrased as 'someone does something'? Then here: "
+            "an actor performing the arc is still the shape.",
+            "One beat inside a larger story → PLOT_EVENTS; a (possibly "
+            "qualified) category label → GENRE.",
         ),
-        ("redemption arc", "found family", "underdog stories"),
+        ("rags-to-riches climb", "forbidden romance across a divide", "a slow fall from grace"),
         (
-            "'anti-hero' → CHARACTER_ARCHETYPE.",
-            "'about JFK' → CENTRAL_TOPIC.",
+            "'a getaway goes wrong mid-job' → PLOT_EVENTS (an internal beat).",
+            "'a quiet character drama' → GENRE (a qualified label).",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
@@ -916,31 +955,34 @@ class CategoryName(str, Enum):
         "Emotional / experiential",
         (
             "All emotional/experiential framings — tone (dark, whimsical, "
-            "gritty, cozy, melancholic), cognitive demand (mindless vs "
-            "cerebral), pacing-as-experience ('slow burn', 'frenetic'), "
+            "cozy, eerie, uplifting), cognitive demand (mindless vs "
+            "cerebral), pacing-as-experience ('languid', 'frenetic'), "
             "self-experience goals ('make me cry', 'cheer me up'), "
-            "comfort-watch ('feel-better movie', 'good first anime'), "
-            "post-viewing resonance ('haunting', 'gut-punch ending', "
-            "'forgettable'), structural ending types ('happy ending', "
-            "'twist ending', 'downer ending', 'ambiguous ending')."
+            "comfort-watch ('feel-better movie'), post-viewing resonance "
+            "('haunting', 'gut-punch ending', 'forgettable'), structural "
+            "ending types ('happy ending', 'downer ending', 'ambiguous "
+            "ending')."
         ),
         (
-            "Anything emotional/experiential — before, during, or after "
-            "watching. Concrete viewing SITUATIONS ('date night') → "
-            "VIEWING_OCCASION (named events, not feelings). Genre → GENRE. "
-            "Mid-story structural devices → NARRATIVE_DEVICES."
+            "Route here ONLY when the affective/experiential quality is the "
+            "trait's PRIMARY content. A feeling carried by another axis goes "
+            "to that axis: a named genre that connotes a mood is still GENRE; "
+            "a viewing situation → VIEWING_OCCASION; a mid-story structural "
+            "device → NARRATIVE_DEVICES; a story arc → STORY_THEMATIC_ARCHETYPE."
         ),
         (
-            "Structural ending types ('twist ending', 'happy ending', "
-            "'downer ending') live HERE despite being structural — emotional "
-            "weight is what defines them.",
-            "'Dark action' splits: action → GENRE + dark here.",
+            "Test: is the affective quality ITSELF the ask, or merely a "
+            "connotation of something with a sharper home? A genre, occasion, "
+            "device, or arc that just evokes a feeling routes to its own "
+            "category — not here, even when the emotional read looks correct.",
+            "Structural ending types live HERE despite being structural — "
+            "their emotional weight is what defines them.",
         ),
-        ("slow burn", "make me cry", "haunting", "twist ending"),
+        ("make me cry", "haunting", "a feel-better comfort watch"),
         (
-            "'date night' → VIEWING_OCCASION.",
-            "'horror' → GENRE.",
-            "'nonlinear timeline' → NARRATIVE_DEVICES.",
+            "'date night' → VIEWING_OCCASION (a situation, not a feeling).",
+            "'a moody noir' → GENRE (a genre that connotes a mood).",
+            "'nonlinear timeline' → NARRATIVE_DEVICES (a structural device).",
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
@@ -949,23 +991,24 @@ class CategoryName(str, Enum):
     VIEWING_OCCASION = (
         "Viewing occasion",
         (
-            "Concrete named viewing situations — 'date night', 'rainy "
-            "Sunday', 'long flight', 'with kids on Saturday', 'background "
-            "watching', 'family movie night', 'put on while cooking'."
+            "A viewing situation or occasion — the setting, moment, or "
+            "activity a film is wanted FOR — that is not defined by a named "
+            "audience of people."
         ),
         (
-            "Named-event surface form. Feelings/states ('comfort watch', "
-            "'feel-good') → EMOTIONAL_EXPERIENTIAL. Audience pitch ('family "
-            "movies') → TARGET_AUDIENCE."
+            "The trait's subject is the occasion itself. A named audience of "
+            "people → TARGET_AUDIENCE. A feeling or emotional state sought "
+            "→ EMOTIONAL_EXPERIENTIAL."
         ),
         (
-            "Imperative-mood 'watch with X' = this; attribute-mood 'X "
-            "movies' = TARGET_AUDIENCE.",
+            "A people-word appearing inside an occasion phrase does not "
+            "promote it to TARGET_AUDIENCE — route by whether the subject is "
+            "the occasion or the audience.",
         ),
-        ("date night", "rainy Sunday", "long flight"),
+        ("date night", "rainy Sunday afternoon", "background while cooking"),
         (
-            "'comfort watch' → EMOTIONAL_EXPERIENTIAL.",
-            "'family movies' → TARGET_AUDIENCE.",
+            "'comfort watch' → EMOTIONAL_EXPERIENTIAL (a feeling, not an occasion).",
+            "'aimed at grown-ups' → TARGET_AUDIENCE (a named audience).",
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
@@ -1048,29 +1091,26 @@ class CategoryName(str, Enum):
     GENERAL_APPEAL = (
         "General appeal / quality baseline",
         (
-            "Qualitative quality without numeric threshold — 'well-received', "
-            "'highly rated', 'popular', 'best', 'great', 'highly regarded', "
-            "'crowd-pleaser'."
+            "Quality as a DEGREE of goodness or popularity, stated "
+            "qualitatively with no number — 'well-received', 'highly "
+            "regarded', 'popular', 'great', 'crowd-pleaser'."
         ),
         (
-            "Qualitative quality without numeric threshold. Specific numeric "
-            "thresholds → NUMERIC_RECEPTION_SCORE. Cultural / canonical "
-            "status ('classic', 'cult', 'underrated', 'era-defining') → "
-            "CULTURAL_STATUS. Specific aspect praise/criticism ('praised "
-            "for X', 'criticized for pacing') → SPECIFIC_PRAISE_CRITICISM. "
-            "Live trending → TRENDING."
+            "Goodness-degree without a number. A numeric/rating threshold → "
+            "NUMERIC_RECEPTION_SCORE. The work's canonical position or "
+            "reception SHAPE (its standing in the culture) → CULTURAL_STATUS. "
+            "Praise/criticism tied to a named aspect → "
+            "SPECIFIC_PRAISE_CRITICISM. Formal award outcomes → AWARDS. Live "
+            "right-now popularity → TRENDING."
         ),
         (
-            "'Best horror of the 80s' splits 3 ways: 'best' here + 'horror' "
-            "→ GENRE + 'of the 80s' → RELEASE_DATE.",
-            "'Classic' alone → CULTURAL_STATUS; add a separate RELEASE_DATE "
-            "trait only when an explicit era word is present ('old classic', "
-            "'modern classic').",
+            "Test: is this just 'how good or popular' — no number, no named "
+            "aspect, no claim about cultural standing? Then here.",
         ),
-        ("well-received", "highly regarded", "popular"),
+        ("well-received", "highly regarded", "crowd-pleaser"),
         (
-            "'rated above 8' → NUMERIC_RECEPTION_SCORE.",
-            "'classic' → CULTURAL_STATUS.",
+            "'rated above 8' → NUMERIC_RECEPTION_SCORE (a number).",
+            "'a cult classic' → CULTURAL_STATUS (cultural standing).",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
@@ -1079,32 +1119,30 @@ class CategoryName(str, Enum):
     CULTURAL_STATUS = (
         "Cultural status / canonical stature",
         (
-            "Broad reputation, canon, and reception-shape labels — "
-            "'classic', 'cult classic', 'underrated', 'overhyped', "
-            "'divisive', 'era-defining', 'still holds up', 'influential', "
-            "'iconic', 'landmark', 'culturally significant', 'ahead of its "
-            "time'."
+            "The work's standing in the culture and its reception SHAPE — "
+            "'classic', 'cult classic', 'overhyped', 'divisive', "
+            "'era-defining', 'still holds up', 'influential', 'iconic', "
+            "'landmark', 'ahead of its time'."
         ),
         (
-            "Whole-work cultural position, not a specific part liked or "
-            "disliked. Specific aspect praise/criticism → "
-            "SPECIFIC_PRAISE_CRITICISM. Numeric prior ('well-received', "
-            "'popular') → GENERAL_APPEAL. Formal awards → AWARDS."
+            "The whole-work's cultural position, not a part liked or disliked "
+            "and not a plain goodness-degree. Praise/criticism of a named "
+            "aspect → SPECIFIC_PRAISE_CRITICISM. Goodness-degree "
+            "('well-received', 'popular') → GENERAL_APPEAL. A numeric "
+            "threshold → NUMERIC_RECEPTION_SCORE. Formal award outcomes → "
+            "AWARDS."
         ),
         (
+            "Test: does the trait place the whole film in the culture (its "
+            "canon, legacy, or how reception split) rather than rate how good "
+            "it is? Then here.",
             "'Classic' alone lives here; add RELEASE_DATE only when an "
-            "explicit era word is present ('old classic', 'modern classic').",
-            "'Underrated' primarily needs semantic reception/status prose; "
-            "metadata is optional and must not be treated as a simple "
-            "well-received floor.",
-            "'Cult', 'divisive', 'overhyped' describe reception shape, not "
-            "specific praised/criticized qualities.",
+            "explicit era word is also present.",
         ),
-        ("classic", "cult classic", "underrated", "still holds up", "era-defining"),
+        ("classic", "cult classic", "era-defining", "still holds up", "divisive"),
         (
-            "'praised for tension' → SPECIFIC_PRAISE_CRITICISM.",
-            "'rated above 8' → NUMERIC_RECEPTION_SCORE.",
-            "'Oscar-winning' → AWARDS.",
+            "'praised for its taut pacing' → SPECIFIC_PRAISE_CRITICISM (named aspect).",
+            "'well-received' → GENERAL_APPEAL (goodness-degree).",
         ),
         (EndpointRoute.SEMANTIC, EndpointRoute.METADATA),
         HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
@@ -1113,36 +1151,31 @@ class CategoryName(str, Enum):
     SPECIFIC_PRAISE_CRITICISM = (
         "Specific praise / criticism",
         (
-            "Reception prose for specific parts/qualities/aspects people "
-            "liked or disliked — 'praised for tension', 'criticized as "
-            "plodding', 'praised for performances', 'criticized for weak "
-            "ending', 'loved for its dialogue', 'hated for pacing'."
+            "Reception prose tied to a SPECIFIC part, quality, or aspect "
+            "people liked or disliked — 'praised for its tension', "
+            "'criticized as plodding', 'loved for its dialogue', 'criticized "
+            "for a weak ending'."
         ),
         (
-            "Aspect-level praise/criticism only. Broad cultural status "
-            "('classic', 'cult', 'underrated', 'divisive', 'era-defining', "
-            "'still holds up') → CULTURAL_STATUS. Numeric prior → "
-            "GENERAL_APPEAL. Formal awards ('Oscar-winning', "
-            "'BAFTA-nominated') → AWARDS."
+            "Aspect-level praise/criticism only. The whole-work's cultural "
+            "standing or reception shape → CULTURAL_STATUS. A plain "
+            "goodness-degree → GENERAL_APPEAL. A numeric threshold → "
+            "NUMERIC_RECEPTION_SCORE. Formal award outcomes → AWARDS."
         ),
         (
-            "Ask 'what other trait does this qualify?' If the answer is a "
-            "specific aspect (pacing, tension, performances, ending, "
-            "script), it can live here. If only the whole movie's place in "
-            "culture → CULTURAL_STATUS.",
+            "Test: does the praise/criticism attach to a NAMED aspect "
+            "(pacing, tension, dialogue, ending, score, script)? Then here. "
+            "If it rates the whole film's standing instead → CULTURAL_STATUS.",
         ),
         (
-            "praised for tension",
+            "praised for its tension",
             "criticized as plodding",
-            "praised for performances",
-            "criticized for weak ending",
+            "loved for its dialogue",
+            "criticized for a weak ending",
         ),
         (
-            "'classic' → CULTURAL_STATUS.",
-            "'cult classic' → CULTURAL_STATUS.",
-            "'underrated' → CULTURAL_STATUS.",
-            "'highly rated' → GENERAL_APPEAL.",
-            "'Oscar-winning' → AWARDS.",
+            "'a cult classic' → CULTURAL_STATUS (whole-work standing).",
+            "'highly rated' → GENERAL_APPEAL (goodness-degree, no named aspect).",
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,

@@ -73,7 +73,11 @@ natural-language query comes in; you produce three coupled outputs:
 1. intent_exploration — query-level exploratory analysis. Surface \
    the plausible high-level intents the query could be expressing, \
    in concrete terms, and weigh which is more likely from the \
-   query's context. No verdict; downstream stages commit.
+   query's context. Enumerate multiple reads only when they are \
+   comparably plausible; when one read clearly dominates and the \
+   alternative is a stretch, surface the dominant read alone rather \
+   than manufacturing a low-probability alternative. No verdict; \
+   downstream stages commit.
 2. atoms — descriptive layer. surface_text + modifying_signals + \
    evaluative_intent + split_exploration + standalone_check. Atoms \
    record and analyze.
