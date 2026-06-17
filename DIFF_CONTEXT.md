@@ -438,3 +438,34 @@ Files: search_v2/streaming_orchestrator.py, api/main.py, docs/modules/api.md, do
 Why: self-review of the rerun endpoint surfaced one convention violation + three minor gaps.
 Approach: (1) `_to_rerun_plan` returned a 7-element positional tuple (violates conventions.md "return a dataclass for >2 values" — positional unpack of 7 names silently misbinds on reorder). Added frozen `RerunPlan` dataclass in streaming_orchestrator.py; `stream_rerun_pipeline` now accepts `RerunPlan` (satisfies "accept domain objects, destructure internally") and `_to_rerun_plan` returns it. `_stream_from_branch_plan` keeps its 6-kwarg signature (shared by stream_full_pipeline's separate locals). (2) Entity-name fields were unbounded client free-text reaching LLM prompts (studio / character-franchise translators) + Postgres; added `_enforce_name_cap` (MAX_QUERY_CHARS) wired into `_clean_one`/`_clean_names`/similarity-refs → 422 over cap, for parity with /query_search's query bound. (3) Standard branch query used `clean_query` (200 cap), which could falsely 400 the failed-clarification slot-1 merge `f"{raw_query}. {clarification}"` (up to ~402 chars) — a branch the pipeline itself emits. Added `_clean_branch_query` capped at `MAX_QUERY_CHARS + MAX_CLARIFICATION_CHARS + 2` so every emittable branch round-trips while still bounding Gemini input. (4) Removed the optional `kind` override field from `StandardRerunBranch` (type honesty — BranchKind is Literal; overrides could deviate) — kind is now always positional, which also deleted the used_kinds collision check; replaying branches in order reproduces the original fetch ids.
 Testing notes: re-validated by importing api.main — RerunPlan return shape, positional kinds, blank/over-length entity names → 422, branch query at 402 accepted / 403 → 400, duplicate-entity / >3-standard / unknown-type / empty-branches still correct. Both files parse. Still not run end-to-end against live services (same plan verification section applies). `kind`-collision error path is gone (field removed).
+
+## Step 2 plot-shape guidance — keep a described plot in one trait
+Files: search_v2/step_2.py
+Why: Step 2 stochastically split story/plot-shape descriptions into peer atoms
+when a query named two independently-searchable character archetypes bound by a
+plot verb (e.g. "shy nerd wins over the popular cheerleader" broke apart 4/5 runs,
+sometimes orphaning the bare verb "wins over" as its own trait). Searching the
+participants independently and intersecting loses the relation the user described.
+Approach: added generalized, example-free guidance framed as a recognition, not a
+reconstruction test — "if the content describes the shape of a plot, keep the whole
+description in one atom/trait." Five edits to step_2.py: (1) new PLOT SHAPES
+subsection in _ATOMICITY (primary); (2) cross-link on the peer-atoms OUTCOME;
+(3) a COMMON PITFALL; (4) a clause on split_exploration's FORWARD check;
+(5) an ACT ON PLOT-SHAPE SPLITS backstop in _COMMIT_PHASE worded to not collide
+with the existing "single-direction shaping is NOT a fuse trigger" rule. The guard
+is the describe-the-story-vs-name-a-property distinction, which prevents over-firing
+onto parallel filters / qualifier-on-population / positioning references.
+Design context: builds on the atomicity population-test machinery; deliberately
+NOT a schema change (procedural reasoning belongs in the prompt per the file's
+schema=micro-prompts / prompt=procedural split).
+Validation: 4-way experiment (12 queries x 5 reps) via a throwaway harness
+(baseline gemini / changes gemini / changes gpt-5.4-mini none / changes gpt-5.4-mini low).
+Changes-gemini fixed both breaking targets ("shy nerd wins over the popular cheerleader",
+"underdog boxer beats the reigning champion") to 5/5 whole with NO control regressions
+(several controls got more stable); the fix also held across gpt-5.4-mini. Note:
+gpt-5.4-mini rejects reasoning_effort="minimal" (valid: none/low/medium/high/xhigh), and
+its qualifier-on-population handling collapses to 1 trait vs gemini's 2 (the qualifier is
+retained as a modifying_signal, not dropped) — a model difference, not caused by this change.
+SHIPPED VARIANT: Gemini (gemini-3.5-flash, thinking minimal, temp 0.35) + these prompt fixes.
+The experiment harness/results were temporary scaffolding and have been deleted.
+Testing notes: no unit tests touched.

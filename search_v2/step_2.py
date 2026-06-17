@@ -160,7 +160,11 @@ OUTCOMES.
   the populations they each name (filtering, scoring, or both). The \
   cross-relation between them — whatever grammar carries it — \
   records as a modifying_signal on each peer atom, in the user's \
-  words. Both peers survive; neither absorbs the other.
+  words. Both peers survive; neither absorbs the other. This \
+  outcome holds when the phrases name separable properties the \
+  user wants together; when they instead form a description of \
+  the plot's shape, the PLOT SHAPES rule governs and the \
+  description stays one atom.
 
 - One phrase passes; the other piece is operator-only language with \
   no standalone population (hedges, intensifiers, polarity setters, \
@@ -182,6 +186,39 @@ OUTCOMES.
 The trap to avoid: treating a content phrase as a modifier just \
 because it sits in a prepositional / operator-shaped position. \
 Position is grammar; population is meaning.
+
+PLOT SHAPES — a described plot is one unit
+
+Some queries describe the shape of a story rather than naming a \
+property a movie has — a premise, an arc, a situation that plays \
+out: who is involved and what happens to or between them, or how \
+things change over the course of the film. When the query is \
+doing this, the description of the plot shape is the searchable \
+unit. Keep it whole as one atom and carry it through as one trait.
+
+This holds even when the pieces of the description look \
+searchable on their own. The characters, relationships, and \
+events a plot description mentions will often each pass the \
+population test individually — but the user is describing one \
+story, not asking for the intersection of the populations those \
+pieces name. Splitting the description searches for movies that \
+contain the pieces and loses the plot the user described. \
+surface_text spans the whole description; evaluative_intent \
+restates the plot shape as one thing, not its pieces listed back.
+
+Recognition is by what the content is doing, not by any signpost. \
+A query need not announce that it is describing a plot for it to \
+be one — a bare description, with nothing framing it as such, is \
+still a description. Read whether the content tells you how a \
+story goes; if it does, it is a plot shape and stays together.
+
+The guard runs the other way too. Content that names a property \
+the movie carries — something true of the film independent of how \
+its story goes — is not a plot shape; it splits from the plot \
+description as its own atom in the usual way. The question is \
+whether the content describes how the story goes or names a \
+separable property: describe-the-story stays whole, name-a-\
+property splits.
 
 GENERATION DISCIPLINE.
 
@@ -217,6 +254,12 @@ COMMON PITFALLS.
   whose only function is to narrow it, splitting a named entity \
   mid-name.
 
+- Breaking a described plot into the characters, relationships, or \
+  events it mentions. When the content describes the shape of a \
+  story, that description is the unit; pulling out the pieces it \
+  names searches for movies that contain the pieces and loses the \
+  plot. Recognize the description and keep it whole.
+
 - Absorbing a content phrase as a modifier just because it sits in \
   an operator-shaped position. Re-run the population test on the \
   content, stripped of the operator. If it passes, peer atoms.
@@ -238,7 +281,11 @@ decisions.
 split_exploration walks two checks:
 - FORWARD: could this atom's intent be subdivided into smaller \
   pieces, each retrievable independently? Walk evaluative_intent, \
-  not just surface_text.
+  not just surface_text. When the atom describes the shape of a \
+  plot, say so here: its pieces are the characters, relationships, \
+  and events the story mentions, and subdividing would search for \
+  those pieces instead of the plot itself. Leave it as evidence; \
+  the commit phase decides.
 - INVERSE: for each modifying_signal recorded on this atom, does \
   its content phrase (stripped of connective language) pass the \
   population test? If yes, that signal is carrying a peer-atom \
@@ -534,6 +581,19 @@ doesn't reshape what the qualifier means, the atoms stay separate \
 INDEPENDENT relationship roles. The fuse rule fires only when \
 removing either piece collapses both pieces' meaning into something \
 the user wasn't asking for.
+
+ACT ON PLOT-SHAPE SPLITS. Beyond the identity-shaping fuse, watch \
+for sibling atoms the atom phase emitted separately that together \
+describe one plot shape — the characters, relationships, and \
+events a single story binds. When they do, merge them into ONE \
+trait spanning their phrases, with a single evaluative_intent \
+restating the plot as one thing. This is not gated on \
+bidirectional signals: a plot whose pieces relate in one \
+direction — one role acting on another, or a single subject \
+changing over the story — is still one description. This does not \
+disturb the qualifier-on-population case, where one population is \
+scored on an added property rather than described as a plot — \
+there nothing is merged.
 
 The fuse decision happens BEFORE polarity / commitment / \
 relationship-role commits, so the merged trait commits its \
