@@ -10,7 +10,7 @@ process itself does not touch Postgres / Redis / Qdrant.
 SSE event grammar (from search_v2/streaming_orchestrator.py):
   fetches_ready  → { fetches: [{id, type, label, ...}] }
   branch_stage   → { fetch_id, stage, label }  (fine-grained progress)
-  branch_traits  → { fetch_id, traits: [{surface_text, polarity, commitment}] }
+  branch_traits  → { fetch_id, intent_exploration, traits: [{surface_text, polarity, commitment, evaluative_intent}] }
   branch_results → { fetch_id, results: [MovieCard], branch_error: str|None }
   done           → { total_elapsed: float }
   error          → { stage, message }    (fatal Step 0 failure only)
@@ -310,6 +310,8 @@ def _fresh_state() -> dict[str, Any]:
     return {
         "fetches": [],
         "traits": {},
+        # Per-branch Step 2 reasoning prose. Maps fetch_id → str.
+        "intent_exploration": {},
         "results": {},
         # Per-branch current stage. Maps fetch_id → {"stage": str, "label": str}.
         # Cleared (per branch) when `branch_results` arrives for that fetch.
@@ -335,7 +337,9 @@ def _apply_event(
             "label": payload.get("label", ""),
         }
     elif event == "branch_traits":
-        state["traits"][payload["fetch_id"]] = payload.get("traits", [])
+        fid = payload["fetch_id"]
+        state["traits"][fid] = payload.get("traits", [])
+        state["intent_exploration"][fid] = payload.get("intent_exploration")
     elif event == "branch_results":
         fid = payload["fetch_id"]
         state["results"][fid] = {
@@ -396,6 +400,13 @@ def _header_md(fetch: dict[str, Any]) -> str:
         )
         return f"### `{fid}`\n_references:_ **{refs_fmt or '(none)'}**"
     return f"### `{fid}` _{ftype}_"
+
+
+def _intent_exploration_md(prose: str | None) -> str | None:
+    """Branch-level Step 2 reasoning block, or None if absent."""
+    if not prose:
+        return None
+    return f"_intent:_ {prose}"
 
 
 def _traits_md(traits: list[dict[str, Any]] | None) -> str | None:
@@ -756,6 +767,11 @@ def build_app() -> gr.Blocks:
                 fid = fetch["id"]
                 with gr.Group():
                     gr.Markdown(_header_md(fetch))
+                    intent_line = _intent_exploration_md(
+                        s["intent_exploration"].get(fid)
+                    )
+                    if intent_line:
+                        gr.Markdown(intent_line)
                     traits_line = _traits_md(s["traits"].get(fid))
                     if traits_line:
                         gr.Markdown(traits_line)

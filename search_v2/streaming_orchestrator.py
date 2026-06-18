@@ -20,9 +20,15 @@
 #                          per branch; no global ordering guarantees
 #                          across branches (they run in parallel).
 #   3. `branch_traits`  — fires per standard-flow branch when Step 2
-#                          returns, before Step 3 fan-out. Skipped for
-#                          exact-title / similarity (they have no
-#                          traits stage).
+#                          returns, before Step 3 fan-out. Payload:
+#                            { fetch_id, intent_exploration, traits:
+#                              [{ surface_text, polarity, commitment,
+#                                 evaluative_intent }] }
+#                          `intent_exploration` is the branch-level Step 2
+#                          reasoning prose (always present here);
+#                          `evaluative_intent` is the per-trait evaluative
+#                          substance. Skipped for exact-title / similarity
+#                          (they have no traits stage).
 #   4. `branch_categories` — fires per standard-flow branch when Step 3
 #                          finishes (after `branch_traits`, before
 #                          `branch_results`). Payload:
@@ -931,6 +937,10 @@ async def _handle_step2_done(
         "branch_traits",
         {
             "fetch_id": info.fetch_id,
+            # Branch-level Step 2 reasoning ("here's how we read your
+            # request"). A required field on QueryAnalysis, so it is
+            # always present and non-empty whenever this event fires.
+            "intent_exploration": qa.intent_exploration,
             "traits": [_trait_to_dict(t) for t in qa.traits],
         },
     )
@@ -1245,9 +1255,10 @@ def _trait_to_dict(trait: Trait) -> dict[str, Any]:
         "surface_text": trait.surface_text,
         "polarity": trait.polarity.value,
         "commitment": trait.commitment,
-        # Folded user-intent restatement from Step 2 — frontend reveals
-        # this when the user expands a trait node.
-        "contextualized_phrase": trait.contextualized_phrase,
+        # The trait's evaluative substance from Step 2 — what the user
+        # wants this trait to deliver, carried from the source atom(s).
+        # Replaces the degenerate contextualized_phrase on the wire.
+        "evaluative_intent": trait.evaluative_intent,
     }
 
 

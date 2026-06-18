@@ -577,10 +577,41 @@ with nothing important dropped.
 
 CARDINALITY follows the trait. A trait whose population is \
 defined by a single axis resolves to one aspect. A trait whose \
-population is defined by several simultaneous conditions resolves \
-to one aspect per condition. Don't manufacture aspects to make \
-the trait look richer; don't collapse aspects to make it look \
+population is defined by several independently-varying conditions \
+resolves to one aspect per condition. Don't manufacture aspects to \
+make the trait look richer; don't collapse aspects to make it look \
 simpler.
+
+DESCRIBED STORIES ARE ONE AXIS. Sometimes target_population \
+describes how a story goes — who is involved and what happens to \
+or between them, or how a situation changes over the course of the \
+film. When it does, that described story is a SINGLE axis and \
+resolves to ONE aspect spanning the whole shape. Its surface will \
+mention characters, relationships, and events that each look \
+independently searchable, but those are not independently-varying \
+axes: they are bound into one narrative and only mean what the user \
+intended in the context of the whole. The independence test \
+settles it — a candidate film cannot vary along one piece without \
+the others, because satisfying the trait means telling that one \
+story, not separately containing each piece. Enumerate the \
+described story as a single aspect; do not break out an aspect per \
+character, relationship, or event.
+
+This resolves cleanly against the cardinality rule above. A \
+described story's characters and events co-occur, but co-occurrence \
+is not the several independently-varying conditions that resolve to \
+one aspect each: they are a single condition — that this one story \
+is told — and so a single aspect. Reading all of target_population \
+still applies: read the whole described story, then recognize it \
+reads as one axis, not several.
+
+The guard runs the other way. A trait that names properties a film \
+carries independently of how its story goes — separable attributes \
+the user wants to hold at once — still decomposes into one aspect \
+per property. The discriminator is the one the independence test \
+already asks: does target_population describe how a single story \
+goes (one axis, kept whole) or name separable properties a film \
+has (one axis each, split)?
 
 OPERATIONAL TESTS:
 - READ-BACK. Given only this aspect list and the trait's \

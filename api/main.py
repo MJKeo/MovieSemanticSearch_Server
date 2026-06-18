@@ -409,8 +409,10 @@ async def query_search(body: QuerySearchBody):
                             "fetch" the pipeline will run (standard
                             branches + exact-title + similarity).
       - branch_traits    — fires per standard-flow branch when Step 2
-                            completes (one per branch). Skipped for the
-                            non-standard flows.
+                            completes (one per branch). Carries the
+                            branch-level `intent_exploration` reasoning
+                            prose alongside the `traits[]`. Skipped for
+                            the non-standard flows.
       - branch_categories — fires per standard-flow branch when Step 3
                             completes, after `branch_traits` and before
                             `branch_results`. Carries each trait's

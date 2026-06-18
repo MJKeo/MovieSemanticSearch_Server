@@ -468,6 +468,14 @@ Hard guardrails (these still apply with inference allowed):
   surface_text. evaluative_intent stays inside the user's actual \
   words; light inference consolidates signals, it does not \
   elaborate beyond them.
+- No inferred spoken language. Audio/spoken language is a retrieval \
+  criterion ONLY when the user explicitly and specifically asks for \
+  a film in a particular spoken language. It is never inferred. The \
+  language a film's dialogue is in is a different thing from where \
+  the film is set, where it originates, or the culture it depicts — \
+  expressions of those carry no spoken-language preference. Absent \
+  an explicit request naming the spoken language, no audio-language \
+  clause enters evaluative_intent (or a trait).
 - A near-paraphrase of surface_text is the CORRECT shape when the \
   criterion is concrete and modifying_signals is empty. Read this \
   guardrail in that direction — do NOT treat a near-paraphrase as a \
