@@ -1,7 +1,9 @@
 # [090] — Step 3 loose5: coordinated schema floor + framing + model changes
 
 ## Status
-Active
+Active — model selection (Decision item 3) superseded by ADR-100:
+Step 3 now uses OpenAI gpt-5.4-mini, not gemini-3.5-flash. The schema
+floor (item 1) and prune-ruthlessly framing (item 2) remain active.
 
 ## Context
 Step 3 was producing shallow category_candidates lists — the model
@@ -22,6 +24,8 @@ Ship all three changes together as `loose5`:
    the floor will produce fillers and the routing step must prune ruthlessly.
 3. Model swap to `gemini-3.5-flash` with `thinking_level="low"` (distinct from
    `thinking_budget=0` which disables thinking entirely).
+   **(Superseded by ADR-100 — Step 3 now uses OpenAI gpt-5.4-mini at
+   reasoning low / verbosity low.)**
 
 The framing change is the key enabler: without it, the floor produces committed
 hedges. With it, the model surfaces 5+ options and then drops the weak ones in

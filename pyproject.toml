@@ -43,6 +43,7 @@ dependencies = [
     # structured-output boundaries; msgspec covers the wire-format hot
     # path where Pydantic's validation overhead is unearned.
     "msgspec>=0.18",
+    "pyjwt>=2.13.0",
 ]
 
 [dependency-groups]

@@ -105,7 +105,7 @@ Fetch display metadata → return JSON
 | `schemas/` | Top-level shared Pydantic models, enums, V2 search-side translation schemas, category taxonomy |
 | `search_v2/` | V2 search pipeline: front-end Steps 0/1/2 (Gemini) + back-end Stage 3 (7 endpoints) and Stage 4 (assembly). Includes Jupyter notebooks for exploration. |
 | `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data), `metadata_generation/` (Stage 6 LLM generation), `final_ingestion/` (Postgres + Qdrant upserts) |
-| `unit_tests/` | pytest test suite (76 files); `conftest.py` provides `base_movie_factory` fixture |
+| `unit_tests/` | pytest test suite (77 files); `conftest.py` provides `base_movie_factory` fixture |
 | `docs/` | Project context, decision records, module summaries, conventions |
 
 ### Vector Search Design
@@ -137,7 +137,7 @@ Each vector space has LLM-generated metadata covering 7 types: plot events, plot
 The ingestion pipeline processes ~1M TMDB movies down to ~100K high-quality movies through a multi-stage funnel. All stages are crash-safe and idempotent — restarting picks up where it left off.
 
 **Tracker system:** `movie_ingestion/tracker.py` is the shared backbone. It manages a SQLite database at `./ingestion_data/tracker.db` with two core tables:
-- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_calculated` → `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_calculated` → `imdb_quality_passed` → `metadata_generated` → `ingested`; terminal: `filtered_out`; retryable: `ingestion_failed`)
+- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_calculated` → `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_calculated` → `imdb_quality_passed` → `metadata_generated` → `embedded` → `ingested`; terminal: `filtered_out`; retryable: `ingestion_failed`. Note: `embedded` is defined in the `MovieStatus` enum's canonical chain but is currently unused — ingestion advances `metadata_generated` → `ingested` directly because embedding is integrated into Stage 8)
 - `filter_log` — append-only audit trail of every filtered movie with stage, reason, and optional details JSON
 - `tmdb_data` — stores extracted TMDB fields needed by the quality scorer (vote counts, popularity, provider keys, boolean completeness flags)
 

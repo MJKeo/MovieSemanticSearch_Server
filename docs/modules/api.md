@@ -12,7 +12,7 @@ and API endpoints for search and movie detail retrieval.
 
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI app setup, lifespan context manager, health check endpoint, `/query_search`, `/rerun_query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `/movie_credits/{tmdb_id}`, `MetadataFiltersInput` request model, the rerun request models + `_to_rerun_plan` translator, the `_build_movie_details` / `_build_movie_credits` translators, and the `_encode_and_cache_credits` shared cache writer. |
+| `main.py` | FastAPI app setup, CORS middleware, lifespan context manager, health check endpoint, `/query_search` (with optional `clarification` field), `/rerun_query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `/movie_credits/{tmdb_id}`, `MetadataFiltersInput` request model, the rerun request models + `_to_rerun_plan` translator, the `_build_movie_details` / `_build_movie_credits` translators, and the `_encode_and_cache_credits` shared cache writer. |
 | `cli_search.py` | CLI tool to run the full search pipeline from the terminal. Supports genre, maturity, runtime, and release date filters. Run via `python -m api.cli_search "query"`. |
 
 ## Boundaries
@@ -26,8 +26,13 @@ and API endpoints for search and movie detail retrieval.
 ## Endpoints
 
 ### `POST /query_search`
-- **Request**: `QuerySearchBody` — `query` (string), optional `filters`
-  (`MetadataFiltersInput`), optional `shown_movie_counts`.
+- **Request**: `QuerySearchBody` — `query` (string), optional `clarification`
+  (string — a follow-up correction, e.g. "less violent", "more 80s"),
+  optional `filters` (`MetadataFiltersInput`), optional `shown_movie_counts`.
+  When `clarification` is present, Step 0 and Step 1 see both the original
+  query and the correction; Steps 2+ receive a single merged natural-language
+  query per branch (slot 1 carries `main_rewrite`, spins operate on the
+  corrected intent). Whitespace-only clarification is normalized to `None`.
 - **Filters**: `MetadataFiltersInput` exposes six hard filters:
   - `release_date` — start/end Unix timestamps
   - `runtime` — min/max in minutes
@@ -152,15 +157,22 @@ and API endpoints for search and movie detail retrieval.
   on no matches (never 404). `Cache-Control: public, max-age=300`.
 - **Matching**: NFC + diacritic-folded + lowercased (via the shared
   `normalize_string` used for ingest-time `title_normalized`). Two
-  priority tiers — Tier 1 (token-prefix: query is a prefix of any
-  whitespace-delimited token in the title) and Tier 2 (substring at
+  exact-match priority tiers — Tier 1 (token-prefix: query is a prefix of
+  any whitespace-delimited token in the title) and Tier 2 (substring at
   any position). Tier 1 always ranks above Tier 2. Within each tier,
   the shorter normalized title wins ("John Wick" outranks "John Wick:
   Chapter 2" for query "john wi"); length ties fall through to the
   same 80/20 popularity/reception blend used by `/attribute_search`,
-  with `movie_id DESC` as a final tie-break. Tier 3 fuzzy
-  (edit-distance ≤ 2) is deliberately omitted for v1 — the spec marked
-  it optional and it doesn't fit the p50<20ms target.
+  with `movie_id DESC` as a final tie-break.
+- **Fuzzy fallback tier**: when the exact tiers return ≤ 3 results
+  AND the normalized query is ≥ 3 chars AND remaining capacity > 0,
+  a second `word_similarity` Postgres query runs (`pg_trgm` `<%` gate,
+  threshold 0.45, ORDER BY `word_similarity DESC`). Results are appended
+  below the exact tiers. The GUC `pg_trgm.word_similarity_threshold` is
+  set to 0.45 inside an explicit transaction with `is_local=true` to
+  prevent it from leaking onto the pooled connection. 0.45 captures
+  one typo (~0.72 score) and dropped middle words (~0.87) while
+  filtering most noise; threshold is the primary tuning knob.
 - **Errors**:
   - 422 `{ "detail": "q must be non-empty" }` when `q` is missing or
     whitespace-only after trim.
@@ -221,6 +233,12 @@ and API endpoints for search and movie detail retrieval.
 
 ### `GET /health`
 - Validates connectivity to Postgres, Redis, and Qdrant.
+- Logs the `CF-Connecting-IP` request header at INFO (the real client IP
+  when the API is fronted by Cloudflare; `None` on direct/local calls).
+  Visible on the api container's stderr via `docker compose logs -f api`.
+  Note: `main.py` calls `logging.basicConfig(level=logging.INFO)` at import
+  so app-module INFO logs emit at all — uvicorn alone only configures its
+  own `uvicorn.*` loggers and leaves root at WARNING.
 
 ## Lifecycle
 
@@ -233,6 +251,16 @@ The lifespan context manager handles:
 2. **Shutdown**: Closes the TMDB httpx client and all connection pools
    gracefully.
 
+## CORS
+
+`CORSMiddleware` is configured on the app with an explicit allow-list of
+origins: `["https://www.cinemind.dev", "http://localhost:3000"]`,
+`allow_credentials=True`, `methods=["GET", "POST"]`, and
+`headers=["Authorization", "Content-Type"]`. Explicit enumeration (not
+`"*"`) is required when `allow_credentials=True`. CORS is browser-enforced
+only — not a defense against curl/scripted callers. Add the apex domain
+explicitly if the non-www `cinemind.dev` is ever served.
+
 Note: Qdrant connectivity is verified via the `/health` endpoint,
 not at startup.
 
@@ -241,10 +269,11 @@ not at startup.
 - All database pools must be opened before the first request.
   The lifespan manager ensures this.
 - TMDB detail responses are cached in Redis for 1 day under
-  `tmdb:movie:{id}`. The cached payload is the *curated* MovieDetails
-  wire format (not raw TMDB JSON), so warm hits skip both the upstream
-  call and the build/encode step. The server acts as a caching layer —
-  clients never call TMDB directly.
+  `tmdb:movie:v2:{id}` (namespace `v2` isolates the single-`crew`-list
+  payload from older stale buckets-era bytes). The cached payload is the
+  *curated* MovieDetails wire format (not raw TMDB JSON), so warm hits
+  skip both the upstream call and the build/encode step. The server acts
+  as a caching layer — clients never call TMDB directly.
 - The shared TMDB httpx client and rate limiter on `app.state` are
   reused across all `/movie_details` requests. Do not construct
   per-request clients (TLS handshake cost dominates).

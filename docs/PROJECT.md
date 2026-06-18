@@ -40,7 +40,9 @@ increase).
   Compose (2 vCPU, 8 GB RAM)
 - LLM providers: Moonshot/Kimi API for V1 search-time query
   understanding (structured output); Gemini for V2 search-time query
-  understanding (Steps 0/1/2); OpenAI gpt-5-mini and gpt-5.4-mini for
+  understanding Steps 0/1/2, with OpenAI gpt-5.4-mini for V2 Step 3
+  (trait decomposition — swapped from Gemini after the consolidation
+  experiments); OpenAI gpt-5-mini and gpt-5.4-mini for
   ingestion-time metadata generation (model selected per generator —
   see ADR-039, ADR-043); OpenAI text-embedding-3-large (3072 dims)
   for all embeddings (per ADR-066)

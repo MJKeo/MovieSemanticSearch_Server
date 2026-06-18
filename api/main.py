@@ -1,12 +1,21 @@
 import logging
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal, NamedTuple, Optional, Union
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 import msgspec
+
+# Configure application logging once at import time. Uvicorn only configures
+# its own `uvicorn.*` loggers, leaving the root logger at WARNING with no
+# handler — so without this, INFO-level logs from our app modules (e.g. the
+# /health CF-Connecting-IP line below) would be silently dropped. basicConfig
+# attaches a stderr StreamHandler to root at INFO; uvicorn's own loggers keep
+# their handlers (propagate=False), so there is no duplication. Output lands on
+# the container's stderr, visible via `docker compose logs -f api`.
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +180,7 @@ app.add_middleware(
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
     """
     Health check endpoint that validates connectivity to all external services.
 
@@ -180,6 +189,13 @@ async def health_check():
     - redis: 'ok' or error message
     - qdrant: 'ok' or error message
     """
+    # Cloudflare puts the real client IP in CF-Connecting-IP; the socket peer
+    # is Cloudflare's edge, so this header is the only way to see the true
+    # caller. Header names are case-insensitive in Starlette's Headers map.
+    # Falls back to None when the request did not transit Cloudflare (e.g. a
+    # direct/local call), so this stays safe in non-proxied environments.
+    logger.info("/health request from CF-Connecting-IP=%s", request.headers.get("CF-Connecting-IP"))
+
     results = {}
     results["postgres"] = await check_postgres()
     results["redis"] = await check_redis()

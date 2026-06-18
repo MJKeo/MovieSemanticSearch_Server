@@ -248,7 +248,10 @@ These rules apply everywhere and are not negotiable:
   `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_calculated` →
   `imdb_quality_passed` → `metadata_generated` → `embedded` → `ingested`.
   Terminal: `filtered_out`. Retryable: `ingestion_failed`
-  (failure details in `ingestion_failures` table).
+  (failure details in `ingestion_failures` table). Note: `embedded` is
+  defined in the `MovieStatus` enum and canonical chain but currently
+  unused — `ingest_movie.py` advances `metadata_generated` → `ingested`
+  directly because embedding is integrated into Stage 8.
 
 ## Scoring Conventions
 
@@ -268,32 +271,26 @@ to [0, 1] unless explicitly noted otherwise:
   (BUCKET_PRECISION=2), sort within buckets by normalized
   reception score. Reception normalization: [30.0, 90.0] → [0, 1],
   None → 0.5 (neutral).
-- **Dealbreaker-eligible floor ([0.5, 1.0] band)**: Every stage-3
-  endpoint (`search_v2/endpoint_fetching/`) that endorses a movie via
-  a dealbreaker must emit a score of at least 0.5. Non-matches are
-  either omitted entirely or score 0.0 — no endorsed match may land
-  between 0.0 and 0.5. Endpoints compute their natural [0, 1] score,
-  drop zeros where appropriate, then pass survivors through
-  `compress_to_dealbreaker_floor(raw) = 0.5 + 0.5 * raw` in
-  `search_v2/endpoint_fetching/result_helpers.py`. This invariant only
-  applies to the dealbreaker path (`restrict_to_movie_ids is None`);
-  preference-mode scoring keeps the raw [0, 1] gradient so ranking
-  retains full resolution across weak and strong matches. Binary
-  endpoints (keyword, studio, franchise brand-path) trivially satisfy
-  this by emitting 1.0 for matches; continuous endpoints (trending,
-  award THRESHOLD, semantic decay zone, and the metadata endpoint)
-  apply the explicit compression. The metadata endpoint compresses
-  the combined per-call score (after multi-column folding via
-  combine_mode), not each column independently — so all ten attribute
-  columns share one compression path rather than each applying it
-  separately. Country-of-origin uses a discrete position rule (pos 1
-  → raw 1.0, pos 2 → raw 0.33, else drop) before compression. Raw
-  0.33 is calibrated against `compress_to_dealbreaker_floor` so a
-  single-column country pos-2 dealbreaker lands at ~0.665 in the band
-  — clearly above the floor, distinctly below pos 1's 1.0. The
-  discrete rule (rather than the exponential decay used in preference
-  mode) keeps pos 3+ at raw 0.0 so they drop before compression,
-  preventing tail-position promotion into the dealbreaker pool.
+- **Dealbreaker scores are raw [0, 1] (legacy floor retired)**: Every
+  stage-3 endpoint (`search_v2/endpoint_fetching/`) emits its natural
+  [0, 1] score on the dealbreaker path (`restrict_to_movie_ids is None`)
+  — the same raw gradient as preference-mode scoring, so ranking keeps
+  full resolution across weak and strong matches. Non-matches are
+  omitted or score 0.0. The old "dealbreaker-eligible floor [0.5, 1.0]"
+  invariant — which compressed every endorsed match via
+  `compress_to_dealbreaker_floor(raw) = 0.5 + 0.5 * raw` — has been
+  retired. The helper survives in
+  `search_v2/endpoint_fetching/result_helpers.py`, but only
+  `trending_query_execution.py` still calls it; the semantic, metadata,
+  and award executors now emit raw [0, 1] (see the "Dealbreaker Score
+  Floor" section in docs/modules/search_v2.md). Binary endpoints
+  (keyword, studio, franchise brand-path) emit 1.0 for matches.
+  Country-of-origin uses a discrete-position dealbreaker rule (pos 1 →
+  1.0, pos 2 → 0.33, pos ≥ 3 or no match → 0.0), emitted raw: pos 2's
+  0.33 is a deliberate moderate signal ("listed but not primary"), and
+  pos 3+ scoring 0.0 keeps IMDB tail positions out of the candidate
+  pool. (Preference-mode country scoring uses exponential decay across
+  positions instead — see `_score_country_position_preference`.)
 
 ## Embedding Conventions
 

@@ -39,18 +39,26 @@ Step 0 (step_0.py): Flow routing
   → Observations-first schema. Runs parallel with Step 1.
 
 Step 1 (step_1.py): Spin generation (standard flow only)
-  → Step1Response: an `exploration` scratchpad (2-3 telegraphic
-    sentences) followed by exactly two spins, each with `query` +
-    `ui_label`
+  → Standard path: `Step1Response` — `exploration` scratchpad (2-3
+    telegraphic sentences) + exactly two `Spin(query, ui_label)` objects
+  → Clarification path: `Step1ClarificationResponse` — `exploration` +
+    `main_rewrite: Spin` (faithful translation of the merged intent) +
+    `spins: list[Spin]` (creative angles on the rewritten intent). Schema
+    reuses the same `Spin` class so downstream branch-plan unpacking is
+    identical for both paths.
   → Runs in parallel with Step 0 on the raw query
   → Freeform: no structured decomposition fields — the model
-    reasons visibly in the `exploration` field and commits to two
-    spins; hidden thinking is disabled (Gemini 3.5 Flash with
+    reasons visibly in the `exploration` field and commits to spins;
+    hidden thinking is disabled (Gemini 3.5 Flash with
     `thinking_level="minimal"`)
   → Goal: each spin must produce a visibly different result set
     from both the original query and the sibling spin; the model is
     free to drop or replace original-query anchors when keeping them
     would make every spin collapse onto the same result set
+  → When a clarification is present, slot 1 in the branch plan carries
+    `main_rewrite.query` + `main_rewrite.ui_label` (faithful rewrite,
+    not the raw original query). Slot 1 always uses the user's own
+    words verbatim — no static "Original Query" placeholder.
 
 Step 2 (step_2.py): Query analysis (combined holistic read + atomization)
   → QueryAnalysis.intent_exploration — faithful intent read (replaces
@@ -74,11 +82,26 @@ Step 3 (step_3.py): Trait → category-call decomposition (per-trait LLM call)
     contextualized_phrase + evaluative_intent — first field, auto-regressive
     anchor) + target_population + trait_role_analysis + aspects + dimensions
     (expression = verbatim copy of one aspect string; routing only, no
-    translation) + category_calls + combine_mode + combine_mode_exploration
+    translation) + category_calls + combine_mode + consolidation_analysis
+  → aspects now enumerate distinct, non-overlapping, comprehensive PARTS
+    of the trait (not the whole restated alongside its parts). Described
+    plot/story shapes are kept whole as one aspect — splitting a story's
+    character archetypes, events, and relations into peer aspects is the
+    primary over-fragmentation failure mode Step 3 guards against.
+  → Each CategoryCandidate now carries a `fit: CandidateFit` enum:
+    CLEAN_OWNERSHIP (category squarely claims this aspect) /
+    COULD_CONSOLIDATE (usable but better folded into a broader call) /
+    LIKELY_DISREGARD (category can only describe this via an absence —
+    inclusion-ineligible). Fit is decided at candidate enumeration time,
+    not at the call layer.
+  → `consolidation_analysis` (was `routing_exploration`): the model
+    explores options, places the trait on the breadth↔single-shape spectrum
+    (continuous), then selects the minimum-viable call set — folding finer
+    aspects into broader calls rather than spawning fragile separate facets.
   → combine_mode: SOLO (one category cleanly covers all dims; orchestrator
     keeps first call, drops extras) / FRAMINGS (alternative homes for one
     signal; Stage-4 MAX) / FACETS (compound concept; Stage-4 geometric-mean
-    with floor=0.1)
+    with floor=0.1). combine_mode reads off the spectrum placement.
   → relationship_role (INDEPENDENT / POSITIONING_REFERENCE /
     POSITIONING_QUALIFIER) is the PRIMARY structural signal; sibling
     structural fields (no interpretive prose) surface so positioning
@@ -86,9 +109,10 @@ Step 3 (step_3.py): Trait → category-call decomposition (per-trait LLM call)
   → Step 3 is polarity-agnostic; every call describes presence of the attribute
   → Siblings list passed to _build_user_prompt so POSITIONING_REFERENCE traits
     can honor cross-trait scope replacement
-  → Model: `gemini-3.5-flash` with `thinking_level="minimal"`, temperature 0.15.
-    `category_candidates` has a schema floor of `min_length=5`; the prompt
-    explicitly asks the model to prune fillers during `routing_exploration`.
+  → Model: OpenAI `gpt-5.4-mini` with `reasoning_effort="low"`, `verbosity="low"`
+    (caller cannot override — see step_3.py executor comment; chosen over
+    Gemini 3.5 Flash after the consolidation experiments).
+    `category_candidates` has a schema floor of `min_length=5`.
 
 Full pipeline orchestrator (full_pipeline_orchestrator.py):
   → run_full_pipeline(query, *, skip_bypass_steps_0_1=False)
@@ -118,11 +142,16 @@ Full pipeline orchestrator (full_pipeline_orchestrator.py):
 ## Entity-Flow Executors (Step 0 fast paths)
 
 ### Exact-title search (`exact_title_search.py`)
-Six-tier scoring scheme: 1.0 seed (title+year match), 0.75 lineage
-sibling, 0.625 seed-lineage→candidate-universe, 0.5 title-only
-year-mismatch, 0.25 seed-universe→candidate-universe, 0.125
+Seven-tier scoring scheme: 1.0 seed (title+year match), 0.75 lineage
+sibling, 0.625 seed-lineage→candidate-universe, tier 6.5 close-title-match
+(query tokens ⊆ doc tokens, score 0.80–0.95 based on length ratio;
+year-mismatch variant 0.40–0.475), 0.5 title-only year-mismatch,
+0.25 seed-universe→candidate-universe, 0.125
 seed-universe→candidate-lineage. No LLM call. Year from
 `flow_data.release_year` only — never inferred.
+Close-match candidates do NOT seed franchise fan-out — only 1.0 seeds
+anchor fan-out. The close-match tier uses `fetch_close_title_candidates`
+(pg_trgm `<%` operator) with a strict Python token-subset gate.
 
 ### Similarity search (`similar_movies.py`)
 Standalone "movies like X" flow. Supports single-anchor and
@@ -470,9 +499,11 @@ it terminates the loop. Tiers and their category memberships live in
 `CategoryScore` has `category_name`, `combine_type`, `score`,
 `expressions`, `retrieval_intent`, and `endpoint_scores: list[EndpointScore]`.
 
-`run_orchestrator.py` renders a four-level tree: result header →
+`run_orchestrator.py` (at the **repo root**, not under `search_v2/`)
+renders a four-level tree: result header →
 trait → category (expressions + retrieval_intent + cat_score) →
-endpoint (route + score).
+endpoint (route + score). It runs `run_full_pipeline` with
+`skip_bypass_steps_0_1=True`.
 
 ## Back-End Stages (Stage 3 / Stage 4)
 
@@ -516,16 +547,18 @@ concurrently via `asyncio.gather`.
 | `step_0.py` | Flow routing. `run_step_0()` returns `Step0Response`. Routes to one of seven entity flows plus optional standard co-fire. SimilarityFlowData now carries `list[SimilarityReference]`. |
 | `step_1.py` | Spin generation. `run_step_1()` returns `Step1Response` (an `exploration` scratchpad + `spins`: exactly two `Spin(query, ui_label)`). Gemini 3.5 Flash with `thinking_level="minimal"`. |
 | `step_2.py` | Query analysis. `run_step_2()` returns `QueryAnalysis` (intent_exploration + atoms + traits). Model: `gemini-3.5-flash` with `thinking_level="minimal"`, temperature 0.35. |
-| `step_3.py` | Trait decomposition. `run_step_3(trait, siblings=None)` returns `TraitDecomposition` (includes trait_restatement + combine_mode). `gemini-3.5-flash` with `thinking_level="minimal"`, temperature 0.15. |
+| `step_3.py` | Trait decomposition. `run_step_3(trait, siblings=None)` returns `TraitDecomposition` (includes trait_restatement + combine_mode). OpenAI `gpt-5.4-mini` with `reasoning_effort="low"`, `verbosity="low"` (locked, no caller override). |
 | `run_step_0.py` | CLI runner for step_0. Conditionally invokes entity-flow executors and prints results. |
 | `run_step_1.py` | Smoke-test runner for Step 1. Default query exercises the dominant-anchor path. |
 | `run_step_0_batch.py` | Batch runner; writes per-query files to `step_0_results/`. |
 | `run_test_queries.py` | Batch runner for Step 2+3 over test_queries.md queries with asyncio.Semaphore concurrency. |
 | `run_specs.py` | Diagnostic runner: Step 2→3→handler-LLM end-to-end, outputs combine_mode / combine_type / fired endpoints / keyword commits. |
+| `run_query_generation.py` | CLI wrapper: raw query → Step 2 → Step 3 fan-out → per-handler query-generation stage, printing each stage's payload. |
+| `run_handler_call.py` | Focused per-handler tester. Skips Steps 2/3 and injects a `CategoryCall` directly — for iterating on the body-authoring side of the semantic/keyword/metadata handlers without Step 2/3 variability. |
 | `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline()` runs Steps 0+1→Step 2→Step 3→handler-LLM→Stage 4. |
 | `streaming_orchestrator.py` | **Production HTTP API entry point.** `stream_full_pipeline()` runs Steps 0/1, derives the branch plan + entity flow-data, then delegates to the shared `_stream_from_branch_plan()` (build fetches → launch tasks → merge loop), emitting Server-Sent Events to `/query_search`. `stream_rerun_pipeline()` is the second public entry: it accepts a pre-built `RerunPlan` (branch plan + entity flow-data) + filters and replays `_stream_from_branch_plan()` directly, **bypassing Steps 0/1** — backs `/rerun_query_search`. `BranchKind` is identity/label-only (not load-bearing in scoring). |
 | `stage_4_execution.py` | Stage 4 execution + ranking. 5-phase pipeline. |
-| `exact_title_search.py` | Exact-title entity-flow executor. 6-tier scoring. |
+| `exact_title_search.py` | Exact-title entity-flow executor. 7-tier scoring (includes close-title-match tier 6.5). |
 | `similar_movies.py` | Similarity entity-flow executor. V3.4+ lane architecture. |
 | `character_franchise_search.py` | CHARACTER_FRANCHISE entity-flow executor. 7-tier reranking. |
 | `non_character_franchise_search.py` | NON_CHARACTER_FRANCHISE executor. Primary+secondary franchise buckets. |
@@ -580,6 +613,17 @@ Step 3's key discipline rules:
 - **`Dimension.expression` = verbatim copy of one aspect string.**
   The dimension layer routes; it does not re-author. Character-for-
   character diff equality against the aspects list is the test.
+- **Aspects enumerate non-overlapping, comprehensive PARTS.** The
+  whole trait restated alongside its parts is not a valid aspect list
+  — the parts alone are. Described plot/story shapes are kept whole:
+  a story's character archetypes, events, and relations are co-varying
+  parts of one concept, not independently-varying aspects.
+- **Minimum-viable call set.** `consolidation_analysis` places the
+  trait on the breadth↔single-shape spectrum and selects the fewest
+  calls: fold finer parts into a broader call rather than spawning
+  brittle separate facets. `CandidateFit.LIKELY_DISREGARD` marks
+  candidates that can only describe the trait by describing an
+  absence — inclusion-ineligible regardless of how many calls there are.
 - **Aspect width preservation.** Aspects must preserve the user's
   stated constraint at the same granularity — no implicit broadening
   (widening "winning" to "won or nominated"), narrowing, or invented
@@ -607,7 +651,13 @@ Notable taxonomy changes since ADR-078:
   so a single endpoint score suffices rather than requiring KW × META × SEM product.
 - `SENSITIVE_CONTENT` switched to `CategoryCombineType.CONSENSUS` (geometric
   mean over committed endpoints) to require multi-endpoint agreement and prevent
-  a single SEMANTIC spike from over-promoting content-flagged movies.
+  a single SEMANTIC spike from over-promoting content-flagged movies. Description
+  reframed to presence/intensity of mature content only — the category never
+  indexes absence. "Safe for kids" / avoidance asks route to `TARGET_AUDIENCE`.
+- `MATURITY_RATING` description loosened to allow sparing proxy use (e.g.
+  "safe for kids" → G/PG ceiling) when it is the best available inclusion
+  signal; fires on an explicit rating OR a clear suitability proxy, never
+  as a default routing target.
 - `EMOTIONAL_EXPERIENTIAL`, `SEASONAL_HOLIDAY`, `SPECIFIC_PRAISE_CRITICISM`
   re-bucketed to `SINGLE_NON_METADATA_ENDPOINT` with semantic-only endpoint
   (was SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT + KEYWORD).
@@ -617,6 +667,18 @@ Notable taxonomy changes since ADR-078:
   member cleanly covers the subject — no ANY-union stitching.
 - `CHRONOLOGICAL` moved to `SINGLE_NON_METADATA_ENDPOINT` with a
   bespoke `ChronologicalQuerySpec` (direction + is_top_n_active + top_n).
+- Category definition audit (A1–A4, B1/B3/B6): `STORY_THEMATIC_ARCHETYPE`
+  owns the whole-film elevator-pitch shape; `PLOT_EVENTS` owns a beat
+  within a larger story; `CHARACTER_ARCHETYPE` is a static type (no arc);
+  `ELEMENT_PRESENCE` is explicit fallback only. `COUNTRY_OF_ORIGIN` /
+  `CULTURAL_TRADITION` / `FILMING_LOCATION` / `NARRATIVE_SETTING` each have
+  a "how to tell" discriminator test. `TARGET_AUDIENCE` = explicitly named
+  audience (people); `VIEWING_OCCASION` = occasion not defined by named people.
+  Reception categories (NUMERIC / GENERAL_APPEAL / CULTURAL_STATUS /
+  SPECIFIC_PRAISE_CRITICISM / AWARDS) have crisp generalized splits.
+- Step-3 fit criterion added: candidates are ranked against their own
+  taxonomy entry's definition; `CLEAN_OWNERSHIP` requires the category's
+  definition to squarely claim the aspect.
 
 ## Endpoint Contract
 

@@ -32,7 +32,6 @@ database ingestion) live in `final_ingestion/` within this module.
 | `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies. Bulk-queries `imdb_data` table. |
 | `imdb_scraping/reconcile_cached.py` | Advances `tmdb_quality_passed` movies to `imdb_scraped` when their IMDB data already exists in the `imdb_data` table — recovers from runs that wrote data but crashed before committing the status update. |
 | `imdb_scraping/migrate_json_to_sqlite.py` | One-off migration script: reads per-movie JSON files from `ingestion_data/imdb/` and inserts rows into the `imdb_data` table via `serialize_imdb_movie()`. |
-| `imdb_scraping/backfill_awards_boxoffice.py` | Backfill script for ~100K already-ingested movies missing `awards` and `box_office_worldwide`. Queries `status='ingested'`, re-fetches IMDB GraphQL for awards + box office, updates the `imdb_data` table. Does not update pipeline status or filter_log. Run: `python -m movie_ingestion.imdb_scraping.backfill_awards_boxoffice`. |
 | `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5 scorer: two hard gates (title-type, missing-text) + 8-signal combined TMDB+IMDB quality scorer (v4). See ADR-037. Advances `imdb_scraped` → `imdb_quality_calculated`. |
 | `imdb_quality_scoring/imdb_filter.py` | Stage 5 filter: applies per-group quality-score thresholds from `scoring_utils.IMDB_QUALITY_THRESHOLDS`. Advances `imdb_quality_calculated` → `imdb_quality_passed` (or `filtered_out`). |
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data, split into 3 groups matching the Stage 5 threshold groups (has_providers, recent_no_providers, old_no_providers). Produces `imdb_data_analysis_{group}.json` output files. |
@@ -59,6 +58,11 @@ database ingestion) live in `final_ingestion/` within this module.
 | `final_ingestion/rebuild_production_brand_postings.py` | Backfill script: TRUNCATE `lex.inv_production_brand_postings`, SELECT `(tmdb_id, production_companies, release_date)` from tracker for `status=INGESTED`, rerun `resolve_brands_for_movie` and `batch_insert_brand_postings`. Commit every 500 movies. Use after brand registry retuning to refresh postings without full re-ingestion. |
 | `metadata_generation/concept_tags_merge.py` | Shared module for concept_tags post-processing: `majority_merge()`, `LIST_CATEGORIES`, `_ASSESSMENT_BY_FIELD`. Extracted from `run_concept_tags_generation.py` so the eval script and `backfill_concept_tag_ids.py` share one implementation. |
 | `backfill/backfill_concept_tag_ids.py` | Backfill script: reads all three concept_tags JSON columns from tracker.db, runs `majority_merge`, flattens via `all_concept_tag_ids()`, bulk-writes to `movie_card.concept_tag_ids` via COPY-into-temp + UPDATE FROM. Streaming pipeline (fetchmany chunks) to bound peak memory. Flags: `--limit N`, `--dry-run`, `--chunk-size`. |
+| `final_ingestion/rebuild_actor_postings.py` | One-shot surgical backfill: DROP + CREATE `lex.inv_actor_postings` (same DDL as the init SQL), then batch-rebuild from tracker `imdb_scraped` movies using the same `_normalize_name_list`/`_expand_positioned_names`/`_term_ids_and_positions` helpers as `ingest_movie.py`. Uses `batch_upsert_lexical_dictionary` + `unnest()`-based INSERT for ~218 batches instead of ~109K per-row inserts. Advances `imdb_scraped` → `ingested` status per batch. Use after a re-scrape that changes actor lists (e.g. the `self`-credit category addition). |
+| `final_ingestion/rebuild_character_postings.py` | One-shot backfill: DROP + CREATE `lex.inv_character_postings` with the new `(term_id, movie_id, billing_position, character_cast_size)` schema (was binary `(term_id, movie_id)`), recomputing every row from the tracker's `imdb_data.characters` JSON so Stage 3 can score character matches with a billing-prominence curve parallel to actor scoring. |
+| `backfill/backfill_release_format.py` | One-shot backfill: idempotent `ALTER TABLE` adds `movie_card.release_format`, then populates it for every existing row by reading `(tmdb_id, imdb_title_type)` from the tracker's `imdb_data` table. |
+| `backfill/backfill_keyword_ids_to_qdrant.py` | One-shot backfill: writes the `keyword_ids` payload key onto every existing Qdrant point from the authoritative `movie_card.keyword_ids` column, so the vector channel can honor keyword hard filters via `build_qdrant_filter`. |
+| `backfill/backfill_maturity_rank.py` | Backfill script: re-resolves `maturity_rank` for all ingested movies in both Postgres (`movie_card.maturity_rank`) and Qdrant (payload). Resolution mirrors ingestion exactly — tracker `imdb_data.maturity_rating` preferred, `tmdb_data.maturity_rating` fallback, through `MaturityRating.from_string_with_default`. Diffs resolved target vs current Postgres value and writes only changed rows (idempotent). Qdrant writes Postgres-second so interrupted runs are self-healing on re-run. Supports `--dry-run`, `--batch-size`, `--export PATH` (dump local ranks to JSON), `--from-file PATH` (apply from exported JSON — enables tracker-less propagation to EC2). |
 
 ## Boundaries
 
@@ -366,7 +370,7 @@ See ADR-026, ADR-039, ADR-042, ADR-043, ADR-048, ADR-049, ADR-053, ADR-054.
 **Per-call LLM timeout override**: `generate_llm_response_async` accepts an
 optional `timeout: float | None` kwarg that overrides the module-default
 `LLM_PER_ATTEMPT_TIMEOUT_SECONDS=25.0` for generators that exceed it
-(concept_tags at medium reasoning effort typically completes in 25-40s).
+(concept_tags at minimal reasoning effort typically completes in 25-40s).
 Callers pass `timeout=` explicitly; the global default is unchanged.
 
 **Locking finalized generators**: When a generator's evaluation is
