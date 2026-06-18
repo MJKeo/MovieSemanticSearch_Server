@@ -16,4 +16,4 @@ evaluation_data/
 
 # Personal / transient
 .claude/settings.local.json
-docs/personal_preferences.md
+docs/personal_preferences.mdcerts/
