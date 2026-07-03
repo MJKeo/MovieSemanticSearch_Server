@@ -58,6 +58,7 @@ from implementation.classes.watch_providers import (
 )
 from implementation.misc.event_loop import install_uvloop
 from implementation.misc.helpers import create_watch_provider_offering_key
+from observability.tracing import setup_tracing
 from schemas.api_responses import (
     CastMember,
     CrewGroup,
@@ -149,6 +150,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Initialize OpenTelemetry tracing + auto-instrumentation for this app.
+# Must run after the app exists (instrument_app wraps THIS instance) and
+# before it serves traffic, so every request becomes a root span. Safe at
+# import time: the httpx/psycopg/redis instrument() calls patch those
+# libraries at the class level, so clients created later (e.g. the lifespan
+# TMDB client) are still traced. Idempotent — guarded inside setup_tracing.
+setup_tracing(app)
 
 
 # ---------------------------------------------------------------------------
