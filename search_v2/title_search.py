@@ -42,12 +42,30 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from db.postgres import (
     fetch_title_search_fuzzy_movie_ids,
     fetch_title_search_movie_ids,
 )
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
+
+
+class TitleSearchResult(NamedTuple):
+    """Ranked title-search result plus the telemetry the caller reports.
+
+    `movie_ids` is the ordered result the endpoint hydrates and returns.
+    `fuzzy_count` is how many of those ids came from the fuzzy fallback
+    tier (0 whenever the fuzzy pass didn't fire) — surfaced so the API
+    layer can record it as a span attribute without re-deriving which
+    tier each id came from (the tier classification is otherwise
+    discarded after ranking). Kept as a plain NamedTuple so the search
+    module stays free of any observability dependency.
+    """
+
+    movie_ids: list[int]
+    fuzzy_count: int
 
 
 # Hard cap on results. The endpoint exposes a per-request `limit` query
@@ -92,7 +110,7 @@ TITLE_SEARCH_FUZZY_THRESHOLD = 0.45
 TITLE_SEARCH_FUZZY_MIN_QUERY_CHARS = 3
 
 
-async def run_title_search(query: str, *, limit: int) -> list[int]:
+async def run_title_search(query: str, *, limit: int) -> TitleSearchResult:
     """Resolve a typeahead title query → ranked movie_ids.
 
     Args:
@@ -104,14 +122,16 @@ async def run_title_search(query: str, *, limit: int) -> list[int]:
         for clamping into [1, TITLE_SEARCH_MAX_LIMIT].
 
     Returns:
-      Ordered list of `movie_id`s, tier 1 (token-prefix matches) first
-      and tier 2 (substring-only matches) second, with the 80/20
-      popularity-reception prior ordering within each tier. When the exact
-      tiers underfill the dropdown (≤ TITLE_SEARCH_EXACT_UNDERFILL_TRIGGER
-      hits) and the query is long enough, a fuzzy word_similarity tier is
-      appended below the exact results to absorb typos and dropped words;
-      the total stays capped at `limit`. Empty list when nothing matches OR
-      when normalization collapses the query to an empty string (e.g.
+      A `TitleSearchResult` whose `movie_ids` are ordered tier 1
+      (token-prefix matches) first and tier 2 (substring-only matches)
+      second, with the 80/20 popularity-reception prior ordering within
+      each tier. When the exact tiers underfill the dropdown
+      (≤ TITLE_SEARCH_EXACT_UNDERFILL_TRIGGER hits) and the query is long
+      enough, a fuzzy word_similarity tier is appended below the exact
+      results to absorb typos and dropped words; the total stays capped at
+      `limit` and `fuzzy_count` reports how many of the ids came from that
+      tier. `movie_ids` is empty (and `fuzzy_count` 0) when nothing matches
+      OR when normalization collapses the query to an empty string (e.g.
       punctuation-only input like "!!!").
     """
     # Truncate first so an oversized input doesn't blow up
@@ -127,7 +147,7 @@ async def run_title_search(query: str, *, limit: int) -> list[int]:
         # All-punctuation or all-whitespace-after-normalization input.
         # Treat as "no matches" rather than an error — the typeahead
         # caller should just render an empty dropdown.
-        return []
+        return TitleSearchResult(movie_ids=[], fuzzy_count=0)
 
     # Escape LIKE metacharacters (%, _, \) so a user typing one of
     # them matches it literally, not as a wildcard. `normalize_string`
@@ -179,7 +199,10 @@ async def run_title_search(query: str, *, limit: int) -> list[int]:
         )
         # The fuzzy SQL already excludes the exact ids, so plain
         # concatenation is duplicate-free and keeps fuzzy strictly below
-        # the exact tiers.
-        return exact_ids + fuzzy_ids
+        # the exact tiers. fuzzy_count is the tail length so the API layer
+        # can report how much of the dropdown came from the fuzzy tier.
+        return TitleSearchResult(
+            movie_ids=exact_ids + fuzzy_ids, fuzzy_count=len(fuzzy_ids)
+        )
 
-    return exact_ids
+    return TitleSearchResult(movie_ids=exact_ids, fuzzy_count=0)

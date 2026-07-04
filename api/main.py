@@ -7,6 +7,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 import msgspec
+from opentelemetry import trace
 
 # Configure application logging once at import time. Uvicorn only configures
 # its own `uvicorn.*` loggers, leaving the root logger at WARNING with no
@@ -1083,8 +1084,24 @@ async def title_search(
     # MovieCard via the same single-query summary fetch all sibling
     # endpoints use. Order is preserved by `fetch_movie_card_summaries`
     # so the tier-then-popularity ordering survives intact.
-    ranked_ids = await run_title_search(trimmed, limit=limit)
-    cards = await fetch_movie_card_summaries(ranked_ids)
+    result = await run_title_search(trimmed, limit=limit)
+    cards = await fetch_movie_card_summaries(result.movie_ids)
+
+    # Record the request-scoped facts on the FastAPI request (server) span,
+    # not the auto psycopg child spans: these describe THIS request and the
+    # server span is the queryable root the two DB spans already hang off.
+    # `get_current_span()` returns that active server span here (no manual
+    # child span is warranted — title_search is a single unit of work).
+    # `result_count` uses the hydrated cards (what the client actually got);
+    # `fuzzy_result_count` > 0 means the fuzzy fallback fired, the signal for
+    # likely typos or catalog gaps. NOTE: `query` is high-cardinality — fine
+    # as a span attribute (per-trace) but must never become a metric label.
+    span = trace.get_current_span()
+    span.set_attribute("title_search.query", trimmed)
+    span.set_attribute("title_search.limit", limit)
+    span.set_attribute("title_search.result_count", len(cards))
+    span.set_attribute("title_search.fuzzy_result_count", result.fuzzy_count)
+
     return Response(
         content=_json_encoder.encode(cards),
         media_type="application/json",

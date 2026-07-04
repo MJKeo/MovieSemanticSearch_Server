@@ -83,9 +83,24 @@ in `../DIFF_CONTEXT.md`.
 - [x] Set OTLP endpoint via env var (`OTEL_EXPORTER_OTLP_ENDPOINT`) so
       local vs EC2 is a config change, not a code change. *(Set in `.env`.)*
 
-### 1c. Manual spans around pipeline stages
+### 1c. Manual spans around pipeline stages — per endpoint
 Add explicit spans (child of the FastAPI request span) around each meaningful
 internal stage. Reference the pipeline in CLAUDE.md / `db/` search orchestration.
+
+**Work the endpoints one at a time, in this order** — each later endpoint
+reuses spans introduced by an earlier one, so this minimizes rework. All 7 are
+in `api/main.py`. `/health` is intentionally excluded — it's three connectivity
+checks already fully covered by auto-instrumentation, with no meaningful
+internal stages to span.
+
+Instrumentation weight per endpoint (see the plan for detail): #1 large, #2–#4
+medium, #5–#7 tiny (mostly already auto-traced; a manual wrapper span only where
+it names a real unit of work or covers Qdrant's gRPC gap).
+
+#### 1c-1. `POST /query_search` — the full NLP pipeline (do first) [~]
+The marquee endpoint (`api/main.py:427`): Steps 0/1/2/3 → Stage 4, streamed as
+SSE, with the parallel LLM fan-out the latency goal targets. Everything below
+reuses these spans. This is the highest-value item in Phase 1.
 - [ ] Query Understanding parent span, with a child span per parallel LLM call
       (so per-provider tail latency is visible — the expected first finding).
 - [ ] On each LLM call span, add `gen_ai.*` semantic-convention attributes:
@@ -105,6 +120,143 @@ internal stage. Reference the pipeline in CLAUDE.md / `db/` search orchestration
 - [ ] Display-metadata fetch.
 - [ ] Confirm parallel stages actually render as overlapping spans in the
       Tempo waterfall (validates that asyncio fan-out is truly concurrent).
+
+#### 1c-2. `POST /rerun_query_search` — replay with new filters [ ]
+Re-runs prior branches with a new filter set (`api/main.py:826`), bypassing
+Steps 0/1 and re-entering at Step 2 (entity flows re-enter at their executor).
+Same SSE shape as /query_search. Mostly reuses the Step 2 → Stage 4 spans from
+1c-1.
+- [ ] Span around the rerun-plan / filter translation boundary
+      (`_to_rerun_plan`, `_to_metadata_filters`).
+- [ ] Confirm the shared Step 2 → Stage 4 spans attach under this endpoint's
+      request span (not orphaned), and that entity-flow re-entry is spanned.
+
+#### 1c-3. `POST /similarity_search` — anchor-set vector flow, no LLM [ ]
+Ranked "similar to" from a caller-supplied TMDB-ID anchor set
+(`api/main.py:870`). No NLP/LLM. Introduces the Qdrant span that
+auto-instrumentation can't provide (its client is gRPC).
+- [ ] Vector search span(s) over the anchor set (Qdrant — the gRPC gap).
+- [ ] Candidate-generation lane(s) + scoring / merge span.
+- [ ] Hard-filter application + MovieCard hydration span.
+
+#### 1c-4. `POST /attribute_search` — hard-attribute browse + person ranking [ ]
+Filters + person-prominence ranking, no LLM/vector (`api/main.py:959`). Mostly
+Postgres (auto-traced) + in-memory ranking.
+- [ ] Person resolution span (reuses the Step 0 person model / resolver).
+- [ ] Attribute query + prominence ranking span.
+- [ ] MovieCard hydration span (`fetch_movie_card_summaries`).
+
+#### 1c-5. `GET /title_search` — trigram typeahead [x] (verify-errors [ ])
+Single trigram Postgres query (`api/main.py:1029`), already auto-traced. Both
+psycopg queries (`run_title_search`, `fetch_movie_card_summaries`) get auto
+spans, so timing is free — the work here is semantic attributes only.
+- [x] Four attributes on the **FastAPI request (server) span** (via
+      `trace.get_current_span()`), NOT on the auto psycopg child spans and NOT
+      in a new wrapper span (title_search is one unit of work): `title_search.query`
+      (raw text — attribute-only, never a metric label, unbounded cardinality),
+      `.limit`, `.result_count` (hydrated card count = what the client got),
+      `.fuzzy_result_count`. Implemented `api/main.py:1086`.
+- [x] Surface the fuzzy count WITHOUT the discarded tier data: `run_title_search`
+      now returns a `TitleSearchResult` NamedTuple (movie_ids, fuzzy_count)
+      instead of `list[int]` (`search_v2/title_search.py`), keeping all
+      attribute-setting in the endpoint and the search module OTel-free.
+      `fuzzy_result_count` > 0 = fuzzy fallback fired = likely typo / catalog gap.
+- [ ] (DEFERRED, optional) Per-result tier-1 vs tier-2 match mode: MODERATE
+      change — the tier is computed in the SQL `CASE` but discarded (`SELECT
+      movie_id` only, `db/postgres.py:3652`). Would require adding `CASE … AS
+      tier` to the SELECT and threading it through. Skip unless per-result
+      tiering is wanted; the fuzzy-fired signal covers the product question.
+- [ ] **Verify errors are recorded** — 422 rejections (empty `q`, out-of-range
+      `limit`) should surface on the request span as HTTP 4xx *without* marking
+      the span ERROR (client-side, expected). Confirm the FastAPI instrumentor
+      does this and nothing raises an unrecorded 500.
+
+#### Shared: `MoviePayloadSource` enum (1c-6 + 1c-7)
+- [ ] Define `class MoviePayloadSource(str, Enum): CACHE="cache"; TMDB="tmdb"`
+      in `api/main.py` (both consumers live there — no new module, per YAGNI;
+      promote to `observability/` only if a third cached endpoint adopts it,
+      e.g. /similarity_search). Set on spans via `.value`. Referenced by both
+      `movie_details.source` and `movie_credits.source` for consistency.
+
+#### 1c-6. `GET /movie_details/{tmdb_id}` — detail payload [ ]
+Redis cache → TMDB fetch → build (`api/main.py:1733`). Redis + httpx both
+auto-traced. Cold-path stages: (1) redis GET, (2) `fetch_movie_card_row`
+Postgres existence-gate + source of local `reception_score`, (3) TMDB fetch
+(httpx, append_to_response), (4) `_build_movie_details` CPU recombine
+(reception_score folded into TMDB payload — **no auto span**), (5) encode +
+cache SET, (6) cross-populate credits cache. Warm path = stage 1 only.
+Span tree (cold path): request span → `movie_details.payload_creation`
+(card fetch + TMDB fetch + `_build_movie_details` + encode; auto psycopg/httpx
+nest inside) + `movie_details.cache_write` (the SET) + `credits.build_and_cache`
+(cross-populate, lives in the shared helper — nests free). Warm path = request
+span + one auto redis GET.
+- [ ] Request-span attributes: `movie.tmdb_id` (int — the id is buried in the
+      URL path, not cleanly queryable; add a real attribute. High-card →
+      attribute only), `movie_details.source` (`MoviePayloadSource` value —
+      the where-from / hit-miss signal, metric-label-safe).
+- [ ] Subspan `movie_details.payload_creation` — wraps card fetch + TMDB fetch
+      + build + encode. The build lives inside it (no standalone build span —
+      only add one later if the recombine itself gets slow). Handle the
+      not-indexed 404 so an expected miss does NOT mark this span ERROR.
+- [ ] Subspan `movie_details.cache_write` — wraps `cache_movie_details` SET;
+      attr `cache.write_ok` (bool) → False + event on the swallowed write
+      failure (`api/main.py:1801`), making the silent degradation queryable.
+      Thin wrapper, but earns its place via the named boundary + write_ok.
+- [ ] `movie_details.not_found_reason` attr on 404: index-miss
+      (`api/main.py:1769`) vs TMDB-removed (`api/main.py:1789`). Does NOT mark
+      the span ERROR (expected outcome).
+- [ ] Cross-populate credits (`_encode_and_cache_credits`, `api/main.py:1812`):
+      **NOT an HTTP call to /movie_credits** — the shared build+cache helper.
+      Instrument the helper ONCE (see 1c-7); its `credits.build_and_cache` span
+      nests automatically under this request span (same in-process trace).
+      Nothing extra here.
+- [ ] DROPPED (folded above): the `movie_details.resolved` success event
+      (`source` attr is the queryable where-from signal, an event would be
+      redundant) and the standalone `_build_movie_details` span (build is timed
+      inside payload_creation).
+- [ ] **Verify errors are recorded** — 502 (TMDB fetch failed after retries)
+      should mark the span ERROR **and** `record_exception` the `TMDBFetchError`;
+      404s should NOT mark ERROR (expected outcome). Confirm both in Tempo;
+      confirm swallowed redis failures appear as events, not span errors.
+
+#### 1c-7. `GET /movie_credits/{tmdb_id}` — full cast & crew [ ]
+Same shape as 1c-6 (`api/main.py:1817`), one fewer stage. Cold-path stages:
+(1) redis GET, (2) `fetch_movie_card_row` existence-gate ONLY (reception_score
+unused), (3) lean credits-only TMDB fetch (httpx), (4) `_encode_and_cache_credits`
+build (crew grouped by dept) + encode + redis SET. No reception fold-in, no
+cross-populate. Warm path = stage 1 only.
+Span tree (cold path): request span → `movie_credits.payload_creation` (index
++ lean TMDB fetch) + `credits.build_and_cache` (the shared helper: build +
+encode + SET). No cross-populate, no reception fold-in. Warm path = request
+span + one auto redis GET. Note the asymmetry vs 1c-6: credits fuses build +
+cache into the helper, so it's ONE `build_and_cache` span (vs details' separate
+build-in-payload_creation + cache_write) — and that same span is the
+cross-populate bar in 1c-6.
+- [ ] Request-span attributes: `movie.tmdb_id`, `movie_credits.source`
+      (`MoviePayloadSource` value). **`source` is the distinctive one:** this
+      cache is normally pre-warmed by /movie_details' cross-populate, so
+      `source` here is a direct end-to-end test of whether that strategy works
+      — "is every 'See all' click landing warm, or silently paying a TMDB round
+      trip?" The cross-populate is best-effort and swallows failures
+      (`api/main.py:1546`), so a silently-broken warm-up would ONLY show up as a
+      high `source=tmdb` rate here. Expect near-100% cache on the details→credits
+      flow; anything less is actionable (broken cross-populate, direct deep-link
+      hits, or >24h TTL expiry).
+- [ ] Index check gets **NO dedicated span or event** — it's the single
+      `fetch_movie_card_row` call, already the only auto psycopg span on this
+      path (unambiguous). A manual span = duplicate bar; an event = redundant
+      with that span + request status. Capture only the failure outcome via
+      `movie_credits.not_found_reason` (404 only; not ERROR).
+- [ ] Subspan `movie_credits.payload_creation` — index + lean credits-only TMDB
+      fetch (auto psycopg/httpx nest inside).
+- [ ] Instrument the shared `_encode_and_cache_credits` helper (`credits.build_and_cache`
+      span: build + encode + SET; attr `cache.write_ok`). Doing it in the helper
+      — not the handler — is what makes the 1c-6 cross-populate traced for free.
+- [ ] (Optional) `movie_credits.cast_count` / `crew_count` on the request span —
+      uncapped-payload size, a real "See all" product question; cheap to derive
+      from the built `MovieCredits`.
+- [ ] **Verify errors are recorded** — same contract as 1c-6: 502 → span ERROR
+      + `record_exception`; 404 → not ERROR. Confirm in Tempo.
 
 ### 1d. Validation
 - [x] Run a representative search locally; open the trace in Grafana/Tempo.
