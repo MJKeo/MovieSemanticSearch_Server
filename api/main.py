@@ -1,5 +1,7 @@
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from enum import Enum
 from typing import Annotated, Literal, NamedTuple, Optional, Union
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +10,7 @@ from pydantic import BaseModel, Field
 
 import msgspec
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 # Configure application logging once at import time. Uvicorn only configures
 # its own `uvicorn.*` loggers, leaving the root logger at WARNING with no
@@ -20,6 +23,7 @@ logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
+from api.outcome import EndpointFailure, FailureReason, record_outcome
 from db.postgres import (
     check_postgres,
     fetch_movie_card_row,
@@ -59,6 +63,21 @@ from implementation.classes.watch_providers import (
 )
 from implementation.misc.event_loop import install_uvloop
 from implementation.misc.helpers import create_watch_provider_offering_key
+from observability.names import (
+    CACHE_WRITE_OK,
+    MOVIE_CREDITS_BUILD_AND_CACHE,
+    MOVIE_CREDITS_CAST_COUNT,
+    MOVIE_CREDITS_CREW_COUNT,
+    MOVIE_CREDITS_PAYLOAD_CREATION,
+    MOVIE_DETAILS_CACHE_WRITE,
+    MOVIE_DETAILS_PAYLOAD_CREATION,
+    MOVIE_PAYLOAD_SOURCE,
+    MOVIE_TMDB_ID,
+    TITLE_SEARCH_FUZZY_RESULT_COUNT,
+    TITLE_SEARCH_LIMIT,
+    TITLE_SEARCH_QUERY,
+    TITLE_SEARCH_RESULT_COUNT,
+)
 from observability.tracing import setup_tracing
 from schemas.api_responses import (
     CastMember,
@@ -107,6 +126,43 @@ from search_v2.title_search import (
 # encode natively without Pydantic's model_dump round-trip; ~10-50×
 # faster than stdlib json + Pydantic on the wire-format hot path.
 _json_encoder = msgspec.json.Encoder()
+
+# Module-level tracer for the manual pipeline/cache spans this file creates
+# (observability Phase 1c). Auto-instrumentation gives us the request/DB/
+# cache/HTTP spans for free; this tracer is for the semantic child spans and
+# request-scoped attributes that only the application layer can populate.
+tracer = trace.get_tracer(__name__)
+
+
+class MoviePayloadSource(str, Enum):
+    """Where a served movie payload originated, recorded as the
+    `movie.payload_source` span attribute on /movie_details and /movie_credits.
+
+    The KEY names the dimension (origin of the payload); these members name the
+    values. Role-based, not tech-based — `CACHE` (not "redis") survives a
+    cache-technology swap; `TMDB` is the specific upstream, so a future upstream
+    just adds a member rather than forcing a rename.
+
+    Set ONLY at a success point (never optimistically), so a 404/502 response
+    carries no source — absence means "no payload was served". Cache-hit rate is
+    then `count(source=cache) / count(source in {cache, tmdb})` over successful
+    requests. str-valued so the member serializes directly via `.value`.
+    """
+
+    CACHE = "cache"
+    TMDB = "tmdb"
+
+
+# The per-request outcome vocabulary (`FailureReason`) and its recording
+# mechanism (`EndpointFailure`, `record_outcome`) live in `api/outcome.py`; the
+# two 404 reasons that used to sit here as `NotFoundReason` are now
+# `FailureReason.NOT_INDEXED` / `.TMDB_REMOVED` among the broader failure set.
+
+
+# Manual span names and attribute keys are defined once in observability/names.py
+# (imported above) and referenced as constants — never inline literals — so the
+# namespace root is written once and a typo can't silently split a metric. See
+# that module's docstring for the naming rules.
 
 # All StreamingAccessType method ids (SUBSCRIPTION/BUY/RENT). The UI filter
 # carries no access-type preference, so we expand every selected provider
@@ -1028,6 +1084,7 @@ _TITLE_SEARCH_CACHE_CONTROL = "public, max-age=300"
 
 
 @app.get("/title_search")
+@record_outcome
 async def title_search(
     q: str = Query(..., description="Title query (trimmed server-side)"),
     limit: int = Query(
@@ -1072,13 +1129,21 @@ async def title_search(
     # missing values both collapse to the same "empty" condition.
     trimmed = q.strip()
     if not trimmed:
-        raise HTTPException(status_code=422, detail="q must be non-empty")
+        raise EndpointFailure(
+            status_code=422,
+            failure_reason=FailureReason.INVALID_PARAMETERS,
+            detail="q must be non-empty",
+        )
 
     # `limit` is validated as a closed range matching the spec. The
     # orchestrator trusts its caller for clamping, so we have to do it
     # here.
     if limit < 1 or limit > TITLE_SEARCH_MAX_LIMIT:
-        raise HTTPException(status_code=422, detail="limit out of range")
+        raise EndpointFailure(
+            status_code=422,
+            failure_reason=FailureReason.INVALID_PARAMETERS,
+            detail="limit out of range",
+        )
 
     # Resolve to ranked movie_ids; then hydrate to the wire-format
     # MovieCard via the same single-query summary fetch all sibling
@@ -1097,10 +1162,10 @@ async def title_search(
     # likely typos or catalog gaps. NOTE: `query` is high-cardinality — fine
     # as a span attribute (per-trace) but must never become a metric label.
     span = trace.get_current_span()
-    span.set_attribute("title_search.query", trimmed)
-    span.set_attribute("title_search.limit", limit)
-    span.set_attribute("title_search.result_count", len(cards))
-    span.set_attribute("title_search.fuzzy_result_count", result.fuzzy_count)
+    span.set_attribute(TITLE_SEARCH_QUERY, trimmed)
+    span.set_attribute(TITLE_SEARCH_LIMIT, limit)
+    span.set_attribute(TITLE_SEARCH_RESULT_COUNT, len(cards))
+    span.set_attribute(TITLE_SEARCH_FUZZY_RESULT_COUNT, result.fuzzy_count)
 
     return Response(
         content=_json_encoder.encode(cards),
@@ -1558,15 +1623,43 @@ async def _encode_and_cache_credits(tmdb_id: int, tmdb_payload: dict) -> bytes:
     cache-write failure is logged but never fatal — per the
     graceful-degradation convention, Redis is an optimization, not a
     dependency.
+
+    Observability: wrapped in a `movie_credits.build_and_cache` span so BOTH
+    callers are covered by one instrumentation point — it appears as the main
+    build path under /movie_credits and as the cross-populate step nested under
+    /movie_details (in-process context nesting; no details-side code needed).
+    The prefix names the payload (movie-credits), which is accurate under both
+    parents; the root span identifies which endpoint actually ran.
     """
-    encoded = _json_encoder.encode(_build_movie_credits(tmdb_id, tmdb_payload))
-    try:
-        await cache_movie_credits(tmdb_id, encoded)
-    except Exception:
-        logger.warning(
-            "movie_credits cache write failed for tmdb_id=%s", tmdb_id, exc_info=True
+    with tracer.start_as_current_span(MOVIE_CREDITS_BUILD_AND_CACHE) as span:
+        # Capture the built struct (rather than encoding inline) so we can read
+        # its size for the count attributes below before serializing.
+        credits = _build_movie_credits(tmdb_id, tmdb_payload)
+        # `.crew` is grouped by department (list[CrewGroup]), so the true
+        # crew-member total is the sum across groups, not len(crew) — that
+        # would be the department count. Useful for the "See all" view: how
+        # large do the uncapped cast/crew lists actually get?
+        span.set_attribute(MOVIE_CREDITS_CAST_COUNT, len(credits.cast))
+        span.set_attribute(
+            MOVIE_CREDITS_CREW_COUNT,
+            sum(len(group.members) for group in credits.crew),
         )
-    return encoded
+        encoded = _json_encoder.encode(credits)
+        # Best-effort cache write. `cache.write_ok` makes the swallowed-failure
+        # degradation queryable; the span is NOT marked ERROR — a failed cache
+        # write is a degradation, not a request failure.
+        try:
+            await cache_movie_credits(tmdb_id, encoded)
+            span.set_attribute(CACHE_WRITE_OK, True)
+        except Exception:
+            span.set_attribute(CACHE_WRITE_OK, False)
+            span.add_event("credits cache write failed")
+            logger.warning(
+                "movie_credits cache write failed for tmdb_id=%s",
+                tmdb_id,
+                exc_info=True,
+            )
+        return encoded
 
 
 def _extract_additional_images(
@@ -1747,7 +1840,89 @@ def _build_movie_details(
     )
 
 
+async def _fetch_movie_payload(
+    tmdb_id: int,
+    *,
+    span_name: str,
+    tmdb_fetch: Callable[..., Awaitable[dict | None]],
+) -> tuple[object, dict]:
+    """Existence-gate a movie, then fetch its TMDB payload, under one span.
+
+    Shared by /movie_details and /movie_credits so the cold-path fetch and its
+    404/502 error contract live in exactly one place. Opens `span_name` (the
+    endpoint's `*.payload_creation` span — the two network-bound calls the auto
+    psycopg/httpx spans nest under) and:
+
+      - returns `(card_row, tmdb_payload)` on success (both non-None);
+      - raises `EndpointFailure` 404 (`NOT_INDEXED` — absent from our index — or
+        `TMDB_REMOVED` — gone upstream), NOT marked as span errors (expected
+        outcomes);
+      - raises `EndpointFailure` 502 (`TMDB_FETCH_FAILED`) on `TMDBFetchError` —
+        the span is marked ERROR + the exception recorded (a genuine upstream
+        failure).
+
+    In every case the failure carries a `FailureReason` that bubbles up to the
+    `record_outcome` decorator, which sets `outcome.success`/`outcome.failure_reason`
+    on the server span once — this helper never touches the server span itself.
+
+    The span disables auto status/record so expected 404s stay UNSET, but an
+    UNEXPECTED exception (DB error, malformed payload) is explicitly marked
+    ERROR + recorded, so the span containing the failing op never reads green.
+    """
+    with tracer.start_as_current_span(
+        span_name, record_exception=False, set_status_on_exception=False
+    ) as span:
+        try:
+            # Reject unknown movies before hitting TMDB. One Postgres query, so
+            # its auto psycopg span (nested here) already IS the index check —
+            # no dedicated span needed.
+            card_row = await fetch_movie_card_row(tmdb_id)
+            if card_row is None:
+                raise EndpointFailure(
+                    status_code=404,
+                    failure_reason=FailureReason.NOT_INDEXED,
+                    detail="movie not found",
+                )
+
+            # Shared TMDB client + rate limiter live on app.state (lifespan).
+            try:
+                tmdb_payload = await tmdb_fetch(
+                    app.state.tmdb_client, app.state.tmdb_rate_limiter, tmdb_id
+                )
+            except TMDBFetchError as exc:
+                # Surface as 502 (bad gateway) so the frontend can tell "TMDB is
+                # unhappy" from "our server is broken". A genuine failure of this
+                # span's work → mark ERROR + record the root cause.
+                span.set_status(Status(StatusCode.ERROR))
+                span.record_exception(exc)
+                raise EndpointFailure(
+                    status_code=502,
+                    failure_reason=FailureReason.TMDB_FETCH_FAILED,
+                    detail=f"TMDB fetch failed: {exc}",
+                ) from exc
+            if tmdb_payload is None:
+                raise EndpointFailure(
+                    status_code=404,
+                    failure_reason=FailureReason.TMDB_REMOVED,
+                    detail="movie not found on TMDB",
+                )
+
+            return card_row, tmdb_payload
+        except HTTPException:
+            # Expected client/gateway outcomes (404s stay UNSET; the 502 already
+            # marked ERROR above) — propagate without further span mutation.
+            raise
+        except Exception as exc:
+            # Unexpected failure inside payload creation — mark + record so the
+            # span reflects where it actually broke (the flags above suppress
+            # this by default).
+            span.set_status(Status(StatusCode.ERROR))
+            span.record_exception(exc)
+            raise
+
+
 @app.get("/movie_details/{tmdb_id}")
+@record_outcome
 async def movie_details(tmdb_id: int) -> Response:
     """Return the full detail payload for a single movie.
 
@@ -1764,6 +1939,15 @@ async def movie_details(tmdb_id: int) -> Response:
         no longer serves the movie.
       - 502 if the TMDB fetch fails after retries (network / 5xx).
     """
+    # Capture the FastAPI request (server) span once. Inside the manual
+    # child-span blocks below, trace.get_current_span() would return the child,
+    # so request-scoped attributes (source, movie id, 404 reason) must be set on
+    # this captured reference. movie.tmdb_id is set unconditionally so every
+    # trace — success or error — is queryable by id (the path carries it, but
+    # only buried inside the URL string, not as a clean attribute).
+    request_span = trace.get_current_span()
+    request_span.set_attribute(MOVIE_TMDB_ID, tmdb_id)
+
     # 1. Redis warm path. Return cached bytes verbatim — they're already
     # the encoded MovieDetails the frontend expects. Per the
     # graceful-degradation convention (docs/conventions.md), a Redis
@@ -1772,66 +1956,77 @@ async def movie_details(tmdb_id: int) -> Response:
     try:
         cached = await get_cached_movie_details(tmdb_id)
     except Exception:
+        # A read failure (Redis down) is distinct from a miss — both fall
+        # through to the cold path, but the event surfaces the outage in the
+        # trace, not just the log.
+        request_span.add_event("cache read failed")
         logger.warning(
             "movie_details cache read failed for tmdb_id=%s", tmdb_id, exc_info=True
         )
         cached = None
     if cached is not None:
+        # Success point: served from cache.
+        request_span.set_attribute(
+            MOVIE_PAYLOAD_SOURCE, MoviePayloadSource.CACHE.value
+        )
         return Response(content=cached, media_type="application/json")
 
-    # 2. Reject unknown movies before hitting TMDB. This is also the
-    # source of our locally-computed reception_score.
-    card_row = await fetch_movie_card_row(tmdb_id)
-    if card_row is None:
-        raise HTTPException(status_code=404, detail="movie not found")
+    # 2-3. Cold path: existence-gate + TMDB fetch under the shared
+    # payload_creation span, which owns the 404/502 + unexpected-error contract.
+    card_row, tmdb_payload = await _fetch_movie_payload(
+        tmdb_id,
+        span_name=MOVIE_DETAILS_PAYLOAD_CREATION,
+        tmdb_fetch=fetch_movie_details_for_endpoint,
+    )
 
-    # 3. Fetch from TMDB. The shared client + rate limiter live on
-    # app.state (initialized in the lifespan handler).
-    try:
-        tmdb_payload = await fetch_movie_details_for_endpoint(
-            app.state.tmdb_client,
-            app.state.tmdb_rate_limiter,
-            tmdb_id,
-        )
-    except TMDBFetchError as exc:
-        # Surface upstream failures as 502 (bad gateway) rather than 500
-        # so the frontend can distinguish "TMDB is unhappy" from "our
-        # server is broken" — different retry/UX semantics.
-        raise HTTPException(
-            status_code=502, detail=f"TMDB fetch failed: {exc}"
-        ) from exc
-    if tmdb_payload is None:
-        # 404 from TMDB: the movie was removed upstream. Treat the same
-        # as "not in our index" from the client's perspective.
-        raise HTTPException(status_code=404, detail="movie not found on TMDB")
-
-    # 4. Translate to the curated wire format.
+    # 4. Build + encode the curated payload. Fast CPU, intentionally untimed
+    # (no standalone span) — the meaningful latency is the network fetch above;
+    # add a span only if the recombine itself ever gets slow. Encode once so the
+    # cached and returned bytes are byte-identical.
     details = _build_movie_details(tmdb_id, tmdb_payload, card_row)
-
-    # 5. Encode once, cache + return the same bytes so the warm-path
-    # response is byte-identical to the cold-path response. Cache-write
-    # failures must NOT lose the response we already built — log and
-    # continue.
     encoded = _json_encoder.encode(details)
+
+    # 5. Cache the encoded payload. Cache-write failures must NOT lose the
+    # response we already built — record write_ok + an event and continue. This
+    # is the ONLY write_ok movie_details sets; the credits cross-populate's
+    # write_ok below is owned by the shared helper's span.
+    with tracer.start_as_current_span(MOVIE_DETAILS_CACHE_WRITE) as cache_span:
+        try:
+            await cache_movie_details(tmdb_id, encoded)
+            cache_span.set_attribute(CACHE_WRITE_OK, True)
+        except Exception:
+            cache_span.set_attribute(CACHE_WRITE_OK, False)
+            cache_span.add_event("details cache write failed")
+            logger.warning(
+                "movie_details cache write failed for tmdb_id=%s",
+                tmdb_id,
+                exc_info=True,
+            )
+
+    # Cross-populate the /movie_credits cache from the same payload — the "See
+    # all" follow-up always trails a details view, so warming it here turns that
+    # into a cache hit for one extra build + Redis write, no extra TMDB trip.
+    # Strictly best-effort: a build/encode failure here must NOT sink the details
+    # response we already have (the helper only swallows cache-WRITE errors, not
+    # build errors), so guard the whole call. Its own
+    # `movie_credits.build_and_cache` span nests under this trace.
     try:
-        await cache_movie_details(tmdb_id, encoded)
+        await _encode_and_cache_credits(tmdb_id, tmdb_payload)
     except Exception:
+        request_span.add_event("credits cross-populate failed")
         logger.warning(
-            "movie_details cache write failed for tmdb_id=%s", tmdb_id, exc_info=True
+            "movie_details credits cross-populate failed for tmdb_id=%s",
+            tmdb_id,
+            exc_info=True,
         )
 
-    # Cross-populate the /movie_credits cache from the same payload we just
-    # fetched. The "See all" affordance always follows a details view, so
-    # warming the credits cache here turns that follow-up into a cache hit at
-    # the cost of one extra build + Redis write — no extra TMDB round trip.
-    # Best-effort (failures logged inside the helper); never blocks the
-    # details response.
-    await _encode_and_cache_credits(tmdb_id, tmdb_payload)
-
+    # Success point: served from a live TMDB fetch.
+    request_span.set_attribute(MOVIE_PAYLOAD_SOURCE, MoviePayloadSource.TMDB.value)
     return Response(content=encoded, media_type="application/json")
 
 
 @app.get("/movie_credits/{tmdb_id}")
+@record_outcome
 async def movie_credits(tmdb_id: int) -> Response:
     """Return the complete, uncapped cast & crew for a single movie.
 
@@ -1856,47 +2051,47 @@ async def movie_credits(tmdb_id: int) -> Response:
         no longer serves the movie.
       - 502 if the TMDB fetch fails after retries (network / 5xx).
     """
+    # Capture the request (server) span once — same rationale as
+    # /movie_details: child-span blocks below shadow get_current_span(), and
+    # movie.tmdb_id must be queryable on every path.
+    request_span = trace.get_current_span()
+    request_span.set_attribute(MOVIE_TMDB_ID, tmdb_id)
+
     # 1. Redis warm path. Return cached bytes verbatim. Per the
     # graceful-degradation convention (docs/conventions.md), a Redis
     # failure here must NOT fail the request — fall through to the cold path.
     try:
         cached = await get_cached_movie_credits(tmdb_id)
     except Exception:
+        request_span.add_event("cache read failed")
         logger.warning(
             "movie_credits cache read failed for tmdb_id=%s", tmdb_id, exc_info=True
         )
         cached = None
     if cached is not None:
+        # Success point: served from cache. This is the headline signal — the
+        # credits cache is normally pre-warmed by /movie_details' cross-populate,
+        # so a low cache rate here is how a silently-broken cross-populate shows.
+        request_span.set_attribute(
+            MOVIE_PAYLOAD_SOURCE, MoviePayloadSource.CACHE.value
+        )
         return Response(content=cached, media_type="application/json")
 
-    # 2. Reject unknown movies before hitting TMDB. We only need to know the
-    # movie is in our index — the card row's reception_score is unused here.
-    card_row = await fetch_movie_card_row(tmdb_id)
-    if card_row is None:
-        raise HTTPException(status_code=404, detail="movie not found")
-
-    # 3. Lean credits-only fetch (vs the heavier /movie_details fetch) — this
-    # path only fires when the cache wasn't pre-warmed, and we discard
-    # everything but credits anyway. Shared client + rate limiter on app.state.
-    try:
-        tmdb_payload = await fetch_movie_credits_for_endpoint(
-            app.state.tmdb_client,
-            app.state.tmdb_rate_limiter,
-            tmdb_id,
-        )
-    except TMDBFetchError as exc:
-        # Surface upstream failures as 502 so the frontend can distinguish
-        # "TMDB is unhappy" from "our server is broken" — matches
-        # /movie_details so the client reuses its retry/UX semantics.
-        raise HTTPException(
-            status_code=502, detail=f"TMDB fetch failed: {exc}"
-        ) from exc
-    if tmdb_payload is None:
-        # 404 from TMDB: removed upstream. Same client-facing meaning as
-        # "not in our index".
-        raise HTTPException(status_code=404, detail="movie not found on TMDB")
+    # 2-3. Cold path: existence-gate + lean credits-only TMDB fetch under the
+    # shared payload_creation span (same 404/502 + unexpected-error contract as
+    # /movie_details). card_row is unused beyond the existence gate here — no
+    # reception fold-in — so it's discarded.
+    _card_row, tmdb_payload = await _fetch_movie_payload(
+        tmdb_id,
+        span_name=MOVIE_CREDITS_PAYLOAD_CREATION,
+        tmdb_fetch=fetch_movie_credits_for_endpoint,
+    )
 
     # 4. Build, cache, and return — same bytes written and returned so the
-    # warm-path response is byte-identical to this cold-path response.
+    # warm-path response is byte-identical to this cold-path response. The
+    # helper's `movie_credits.build_and_cache` span nests under this trace.
     encoded = await _encode_and_cache_credits(tmdb_id, tmdb_payload)
+
+    # Success point: served from a live TMDB fetch.
+    request_span.set_attribute(MOVIE_PAYLOAD_SOURCE, MoviePayloadSource.TMDB.value)
     return Response(content=encoded, media_type="application/json")

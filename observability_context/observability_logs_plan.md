@@ -6,9 +6,12 @@ Planning context for adding observability to the movie search backend
 **Status (updated 2026-07-03):** the **initial approach and tooling are now
 finalized** (marked ✅ below). Downstream layers (LLM-native viewer, log
 destination, frontend) remain proposals. Companion docs:
-`initial_implementation_context.md` (locked decisions + standing guidelines)
-and `observability_todos.md` (the ordered build checklist). Nothing is
-implemented yet.
+`initial_implementation_context.md` (locked decisions + standing guidelines),
+`observability_todos.md` (the ordered build checklist + per-item status), and
+`observability_architecture.md` (what has actually shipped). **Phase 1 is
+partially built:** OTel bootstrap + auto-instrumentation and manual spans for
+`/title_search`, `/movie_details`, `/movie_credits` are done; the NLP-pipeline
+endpoints (`/query_search` et al.) and everything after Phase 1 are not.
 
 ## Goals
 
@@ -58,7 +61,7 @@ swap backends freely without touching application code.
   Postgres + Redis + Qdrant + API, memory saturation is the most
   likely silent killer.
 - **Traces** with spans on:
-  - Every network hop (FastAPI request, asyncpg, redis, httpx — all
+  - Every network hop (FastAPI request, psycopg v3, redis, httpx — all
     covered by OTel auto-instrumentation)
   - Every meaningful internal pipeline stage (manual spans): query
     understanding, each parallel LLM call, lexical search, vector
@@ -87,7 +90,7 @@ trace waterfall will expose per-provider tail latency immediately.
 
 ### ✅ Instrumentation: OpenTelemetry SDK — FINALIZED
 The one-time, transferable, resume-grade investment. Auto-instrumentation
-for FastAPI / httpx / asyncpg / redis, plus manual spans around pipeline
+for FastAPI / httpx / psycopg v3 / redis, plus manual spans around pipeline
 stages, plus `gen_ai.*` attributes on LLM spans. All downstream backend
 choices become cheap to reverse because everything speaks OTLP.
 
