@@ -294,23 +294,30 @@ So downstream docs don't overclaim coverage:
 
 ---
 
-## 9. Permanent docs that should be updated
+## 9. Permanent docs reconciliation — DONE (2026-07-04)
 
 This file is transient context in `observability_context/`. The permanent project
-docs currently say **nothing** about observability; when this work is stable they
-should be reconciled (via the normal doc-maintenance flow — not autonomously):
+docs originally said nothing about observability; the reconciliation below has now
+been applied (docs-maintainer pass + follow-up), so it should **not** be redone —
+only kept current as the tracing surface grows:
 
-- **`CLAUDE.md`** — the Architecture Overview has no observability section; add a
-  short "Observability" subsection (OTel bootstrap, backends, what's traced).
-- **`docs/modules/api.md`** — document the per-endpoint telemetry (spans +
-  attributes) alongside each endpoint's behavior.
-- **`docs/conventions.md`** — promote the §5 conventions (the naming rules,
-  request-span vs child span, cardinality rule, the 404/502/unexpected error
-  contract) into cross-codebase invariants. The naming rules themselves live in
-  `observability/names.py`'s docstring (the source of truth); the promotion
-  should reference that module rather than restate it.
-- **Consider** a dedicated `docs/modules/observability.md` for the bootstrap
-  module + backend topology, if the tracing surface keeps growing.
+- ✅ **`CLAUDE.md`** — Architecture Overview now has an "Observability" subsection
+  (OTel bootstrap, Grafana backends, what's traced, partial coverage), pointing
+  here and to the two docs below.
+- ✅ **`docs/modules/api.md`** — per-endpoint telemetry (spans + attributes)
+  documented inline per endpoint, plus a summary "Observability" section.
+- ✅ **`docs/conventions.md`** — the §5 conventions (naming registry, request-span
+  vs child span, cardinality rule, per-request outcome, 404/502/unexpected error
+  contract) are promoted into a codebase-wide "Observability Conventions" section,
+  worded to generalize beyond `api/` as instrumentation spreads. It references
+  `observability/names.py`'s docstring as the naming source of truth rather than
+  restating it. (This subsumed the former ADR-102 draft, which was promoted to a
+  convention rather than kept as a standalone decision record.)
+- ✅ **`docs/modules/observability.md`** — created for the `observability/` package
+  (bootstrap module + name registry + backend topology).
+- ✅ **`docs/decisions/ADR-101`** — the OTel/Grafana stack-selection decision record
+  is finalized (`Status: Active`).
 
-Until then, **this document is the reference** for what the observability system
-actually does.
+**This document remains the reference** (source of truth) for what the
+observability system actually does; the permanent docs above summarize and point
+back here.

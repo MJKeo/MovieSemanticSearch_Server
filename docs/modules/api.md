@@ -12,7 +12,8 @@ and API endpoints for search and movie detail retrieval.
 
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI app setup, CORS middleware, lifespan context manager, health check endpoint, `/query_search` (with optional `clarification` field), `/rerun_query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `/movie_credits/{tmdb_id}`, `MetadataFiltersInput` request model, the rerun request models + `_to_rerun_plan` translator, the `_build_movie_details` / `_build_movie_credits` translators, and the `_encode_and_cache_credits` shared cache writer. |
+| `main.py` | FastAPI app setup, CORS middleware, lifespan context manager, health check endpoint, `/query_search` (with optional `clarification` field), `/rerun_query_search`, `/similarity_search`, `/attribute_search`, `/title_search`, `/movie_details/{tmdb_id}`, `/movie_credits/{tmdb_id}`, `MetadataFiltersInput` request model, the rerun request models + `_to_rerun_plan` translator, the `_build_movie_details` / `_build_movie_credits` translators, and the `_encode_and_cache_credits` shared cache writer. Calls `setup_tracing(app)` (from `observability/`) at import time, right after the app is constructed. |
+| `outcome.py` | Per-request telemetry outcome mechanism: `FailureReason` enum, `EndpointFailure(HTTPException)`, and the `@record_outcome` decorator, which writes `outcome.success` / `outcome.failure_reason` exactly once on the request span. See the Observability section below. |
 | `cli_search.py` | CLI tool to run the full search pipeline from the terminal. Supports genre, maturity, runtime, and release date filters. Run via `python -m api.cli_search "query"`. |
 
 ## Boundaries
@@ -21,7 +22,9 @@ and API endpoints for search and movie detail retrieval.
   endpoint definitions, request/response serialization.
 - **Out of scope**: Search logic (delegated to `db/search.py`),
   query understanding (delegated to `implementation/llms/`),
-  data models (in `implementation/classes/`).
+  data models (in `implementation/classes/`), OTel bootstrap and the
+  telemetry name registry (delegated to `observability/` — see
+  `docs/modules/observability.md`).
 
 ## Endpoints
 
@@ -48,6 +51,10 @@ and API endpoints for search and movie detail retrieval.
   primitive (Postgres + Qdrant), not post-hoc — ensures filter-
   respecting candidates are retrieved rather than filtered out
   after the fact.
+- **Telemetry**: auto-traced only today (FastAPI/httpx/psycopg/redis spans);
+  not wrapped in `@record_outcome` and no manual pipeline-stage spans yet.
+  Highest-priority target for manual instrumentation — see Observability
+  section below.
 
 ### `POST /rerun_query_search`
 - **Purpose**: Re-run a prior search with a new filter set while **bypassing
@@ -83,6 +90,7 @@ and API endpoints for search and movie detail retrieval.
 - **Errors**: 400 on a blank/over-length standard `query`; 422 on a duplicate
   entity flow, a blank/over-length entity name, more than 3 standard branches,
   empty `branches`, an unknown branch `type`, or an unknown filter enum value.
+- **Telemetry**: auto-traced only today; not yet manually instrumented.
 
 ### `POST /similarity_search`
 - **Request**: `SimilaritySearchBody` — `tmdb_ids` (non-empty list of
@@ -104,6 +112,9 @@ and API endpoints for search and movie detail retrieval.
   entries stay valid. 24h TTL on every variant.
 - Errors: empty `tmdb_ids` → 422 (pydantic), unknown IDs → 422,
   invalid anchor → 400, unknown filter enum value → 422.
+- **Telemetry**: auto-traced only today; introducing the manual Qdrant
+  span (auto-instrumentation can't cover its gRPC client) is planned here
+  — see Observability section below.
 
 ### `POST /attribute_search`
 - **Request**: `AttributeSearchBody` — both fields optional:
@@ -146,6 +157,7 @@ and API endpoints for search and movie detail retrieval.
 - **No NLP / no LLM / no vector search** — pure deterministic browse
   path. Hard `MetadataFilters` push down to the SQL layer inside every
   posting-table lookup, so the scored pool is already filter-respecting.
+- **Telemetry**: auto-traced only today; not yet manually instrumented.
 
 ### `GET /title_search`
 - **Request**: query params
@@ -182,6 +194,13 @@ and API endpoints for search and movie detail retrieval.
   query against `movie_card.title_normalized` (trigram GIN +
   text_pattern_ops indexes). Backs the frontend's typeahead picker
   in "pick similar-to" mode, called on every debounced keystroke.
+- **Telemetry**: wrapped in `@record_outcome` (`outcome.success` /
+  `outcome.failure_reason=invalid_parameters` on the two 422s). No child
+  span (single unit of work) — instead four attributes directly on the
+  request span: `title_search.query` (raw text, high-cardinality —
+  attribute only, never a metric label), `.limit`, `.result_count`
+  (hydrated card count), `.fuzzy_result_count` (>0 = fuzzy fallback fired,
+  a typo/catalog-gap signal). See Observability section below.
 
 ### `GET /movie_details/{tmdb_id}`
 - **Response**: Curated `MovieDetails` msgspec struct (see
@@ -209,6 +228,17 @@ and API endpoints for search and movie detail retrieval.
   502 if the TMDB fetch fails after retries.
 - **Graceful degradation**: Redis read/write failures are logged but
   do not fail the request — the cold path still serves the response.
+- **Telemetry**: wrapped in `@record_outcome`. Request-span attributes
+  `movie.tmdb_id` (unconditional) and `movie.payload_source`
+  (`cache`|`tmdb`, set only at a success point — absent on 404/502).
+  Cold-path child spans: `movie_details.payload_creation` (card check +
+  TMDB fetch; wraps the auto psycopg/httpx spans), `movie_details.cache_write`
+  (the details cache SET, carries `cache.write_ok`), and
+  `movie_credits.build_and_cache` (the cross-populate step, nests for free
+  via the shared helper — see `/movie_credits` below). Warm path = request
+  span + one auto redis GET, no child spans. Expected 404s leave spans
+  UNSET; a 502 or unexpected error marks the relevant span ERROR +
+  records the exception. See Observability section below.
 
 ### `GET /movie_credits/{tmdb_id}`
 - **Response**: `MovieCredits` msgspec struct (`schemas/api_responses.py`)
@@ -230,6 +260,17 @@ and API endpoints for search and movie detail retrieval.
   fallback and is credits-only to avoid pulling sub-resources it discards.
   Both writers funnel through `_encode_and_cache_credits` — one write codepath
   for the key.
+- **Telemetry**: wrapped in `@record_outcome`. Same `movie.tmdb_id` /
+  `movie.payload_source` request-span attributes as `/movie_details`. Cold-path
+  child spans: `movie_credits.payload_creation` (index check + lean TMDB
+  fetch) and `movie_credits.build_and_cache` (build + encode + cache SET,
+  carries `cache.write_ok` plus `movie_credits.cast_count` / `.crew_count` —
+  `crew_count` sums members across `CrewGroup` departments, not `len(crew)`).
+  `build_and_cache` is the same span that runs as the `/movie_details`
+  cross-populate step — one instrumented helper, two call sites. Warm path =
+  request span + one auto redis GET. `source=tmdb` on this endpoint at any
+  real rate is the signal that the details→credits cache warm-up is broken
+  (see Observability section below).
 
 ### `GET /health`
 - Validates connectivity to Postgres, Redis, and Qdrant.
@@ -239,6 +280,54 @@ and API endpoints for search and movie detail retrieval.
   Note: `main.py` calls `logging.basicConfig(level=logging.INFO)` at import
   so app-module INFO logs emit at all — uvicorn alone only configures its
   own `uvicorn.*` loggers and leaves root at WARNING.
+- **Telemetry**: no manual OTel spans/attributes and not wrapped in
+  `@record_outcome` — deliberately excluded (three connectivity checks
+  already fully covered by the auto-instrumented FastAPI/psycopg/redis/
+  Qdrant-client spans, with no meaningful internal stage to name). The
+  CF-Connecting-IP line above is plain logging, unrelated to tracing.
+
+## Observability
+
+OTel tracing bootstraps in `observability/tracing.py` (`setup_tracing(app)`,
+called at import time right after `app = FastAPI(...)` is constructed) and
+auto-instruments FastAPI, httpx, psycopg v3, and redis — every request on
+every endpoint already gets a full network-hop trace for free. Manual spans
+and attributes on top of that exist only for the three endpoints noted
+inline above (`/title_search`, `/movie_details`, `/movie_credits`); see
+`docs/modules/observability.md` for the bootstrap module itself and
+`observability_context/observability_architecture.md` for the full as-built
+catalog (source of truth — this section is a summary, not a replacement).
+
+- **Per-request outcome verdict** — `outcome.success` (bool) /
+  `outcome.failure_reason` (`FailureReason`: `invalid_parameters` |
+  `not_indexed` | `tmdb_removed` | `tmdb_fetch_failed` | `internal_error`) —
+  is written on the request span by the `@record_outcome` decorator
+  (`api/outcome.py`), currently applied only to `/title_search`,
+  `/movie_details`, and `/movie_credits`. Endpoint code never sets this
+  directly; it raises `EndpointFailure(failure_reason=...)` at each known
+  failure site and the reason bubbles up to the one recording point. The
+  four endpoints without this decorator (`/query_search`,
+  `/rerun_query_search`, `/similarity_search`, `/attribute_search`) carry
+  no `outcome.*` attribute yet.
+- **`movie.tmdb_id` / `movie.payload_source`** — shared request-span
+  attributes on `/movie_details` and `/movie_credits`. `payload_source`
+  (`cache`|`tmdb`) is set only at a success point, never optimistically, so
+  a 404/502 carries no source and cache-hit-rate stays honest.
+- **Error contract on manual spans**: an expected 404 leaves the span
+  UNSET (not an error); a 502 (TMDB fetch failure) or an unexpected
+  exception marks the span ERROR + records the exception. Swallowed
+  best-effort failures (cache read/write, credits cross-populate) surface
+  as span *events*, never span errors, and don't affect `outcome.success`.
+- **Not yet instrumented**: `/query_search`, `/rerun_query_search`,
+  `/similarity_search`, `/attribute_search` get only the auto-traced
+  network spans — no outcome attribute, no pipeline-stage spans, no
+  `gen_ai.*` LLM attributes yet (planned:
+  `observability_context/observability_todos.md` Phase 1c-1..1c-4;
+  `/query_search` is the highest-priority target, carrying the LLM
+  fan-out the latency goal cares most about).
+- **Naming**: every manual span name / attribute key referenced above is a
+  `Name` constant from `observability/names.py` — never an inline string
+  literal. See that module's docstring for the naming ruleset.
 
 ## Lifecycle
 
@@ -284,3 +373,9 @@ not at startup.
   fan-out over `StreamingAccessType` IDs, the same pattern as
   `_precompute_streaming_keys` in
   `search_v2/endpoint_fetching/metadata_query_execution.py`.
+- **The docker-compose `api` service is not tracing-ready yet**:
+  `observability/` isn't volume-mounted and the OTel packages aren't in
+  `api/requirements.txt`, so importing it in the container currently
+  crashes (`ModuleNotFoundError: observability`). The instrumented path
+  today is host-run (`uv run uvicorn api.main:app --reload`) only — see
+  `docs/modules/observability.md`.

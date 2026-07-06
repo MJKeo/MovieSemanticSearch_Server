@@ -391,6 +391,74 @@ to [0, 1] unless explicitly noted otherwise:
   with exponential backoff, since the same server will eventually
   recover.
 
+## Observability Conventions
+
+Telemetry (traces today; metrics and structured logs as later phases
+land) follows a small, stable set of rules so instrumentation stays
+consistent as it spreads from `api/` into `search_v2/`, `db/`, and
+beyond. The full naming ruleset is codified in
+`observability/names.py`'s module docstring — that module is the
+source of truth; the rules below are the load-bearing invariants, not
+a restatement of it.
+
+- **Never inline a telemetry name.** Every manual span name and
+  attribute key is declared once as a `Name` constant in
+  `observability/names.py` and derived from its namespace root via
+  `.child()` — never written as a raw string at the call site. A root
+  token is spelled exactly once, so a typo cannot silently split one
+  metric into two (this is precisely how an early
+  `credits.*` / `movie_credits.*` prefix drift slipped in before the
+  registry existed). `Name` subclasses `str`, so a constant passes
+  straight to `start_as_current_span(...)` / `set_attribute(...)` with
+  no unwrapping. New names — in any module, for any signal type — are
+  added there, following the docstring's structure / root /
+  dot-vs-underscore / leaf / cardinality rules.
+- **Closed value sets are enums, not names.** A finite set of attribute
+  *values* (a payload source, a failure reason) is a `str`-Enum in its
+  owning module, set via `.value`. `Name` constants name the
+  *dimension*; enums enumerate its *values*. Adding a value never
+  touches the name registry.
+- **High-cardinality values are span attributes only, never metric
+  labels.** Ids, raw query text, and other unbounded values are fine on
+  a span (`movie.tmdb_id`, `title_search.query`) but must never become
+  metric label keys — only low-cardinality dimensions
+  (`outcome.success`, `movie.payload_source`) are label-eligible. This
+  keeps future metric cardinality bounded by construction.
+- **Request-scoped facts go on the server span; child spans are for
+  genuine sub-units of work.** Capture the server span once at the top
+  of a handler (`trace.get_current_span()`) and record request-level
+  facts there — inside a `start_as_current_span(...)` block
+  `get_current_span()` returns the *child*, not the request. Open a
+  child span only for a sub-unit that takes meaningful time or can fail
+  independently; a single-unit-of-work handler gets attributes only, no
+  child span. Never mutate an auto-instrumentation span
+  (FastAPI/httpx/psycopg/redis own theirs).
+- **One per-request outcome, recorded once, via bubble-up.** A boundary
+  handler reports a single uniform verdict — `outcome.success` (every
+  path) plus `outcome.failure_reason` (only on failure) — written in
+  exactly one place (the `@record_outcome` decorator in
+  `api/outcome.py`), never at each exit site. A known failure site
+  raises a typed, reason-carrying exception
+  (`EndpointFailure(failure_reason=…)`) and the reason bubbles up to
+  that single write point. "Failure" is broader than "error" — an
+  un-indexed id is a failure but not a span error. Keep the reason
+  vocabulary coarse (one member per actionable class); specifics belong
+  on other attributes and the recorded exception, not in an
+  ever-growing enum.
+- **Span status and request verdict are separate axes.** The span
+  *status* records whether an operation errored; the `outcome.*`
+  attributes record whether the *request* succeeded. Contract for
+  manual spans: an expected not-found leaves the span **UNSET** (the
+  verdict, not the span, carries the failure); a genuine upstream or
+  unexpected failure marks the span **ERROR** + `record_exception`; a
+  swallowed best-effort degradation (cache read/write, cross-populate)
+  is a span **event**, never a span error, and does not flip the
+  request verdict to failure.
+- **Provenance attributes are set only at a success point** — never
+  optimistically — so a failed request carries no misleading source
+  attribute (absent = nothing was served), keeping derived rates (e.g.
+  cache-hit-rate) honest.
+
 ## Evaluation Conventions
 
 - **Storage structure**: Evaluation results are stored as per-movie

@@ -242,6 +242,29 @@ Structured output handling varies by provider:
 OpenAI is also used for embeddings (`text-embedding-3-large`, 3072
 dims, per ADR-066).
 
+### Observability
+
+Tracing is instrumented with **OpenTelemetry** (traces today; metrics
+and structured logs are later phases). `observability/tracing.py`'s
+`setup_tracing(app)` — called from `api/main.py` at import time — builds
+the OTel SDK, exports spans via OTLP gRPC to a **Grafana stack** (local
+`grafana/otel-lgtm` in dev; Grafana Cloud in prod, not yet wired), and
+auto-instruments FastAPI, httpx, psycopg v3, and redis, so every request
+already produces a trace with network-level spans. Qdrant (gRPC) is a
+deliberate auto-instrumentation gap, to be covered later by a manual
+span.
+
+Hand-written spans and attributes add the semantic facts no client
+library sees (cache hit vs. miss, 404 reason, result counts). Their
+names come from a central registry (`observability/names.py`, the single
+source of truth for the naming ruleset) and instrumented endpoints
+record a uniform per-request verdict (`outcome.*`). Coverage is partial
+today — three of eight endpoints carry manual spans, and telemetry is
+local-only. See the Observability Conventions in docs/conventions.md for
+the rules, docs/modules/observability.md for the bootstrap module, and
+observability_context/observability_architecture.md for the as-built
+span/attribute catalog.
+
 ### Cross-Codebase Invariants
 
 See docs/conventions.md for the full list. Key invariants:
