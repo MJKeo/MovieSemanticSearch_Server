@@ -51,10 +51,28 @@ and API endpoints for search and movie detail retrieval.
   primitive (Postgres + Qdrant), not post-hoc — ensures filter-
   respecting candidates are retrieved rather than filtered out
   after the fact.
-- **Telemetry**: auto-traced only today (FastAPI/httpx/psycopg/redis spans);
-  not wrapped in `@record_outcome` and no manual pipeline-stage spans yet.
-  Highest-priority target for manual instrumentation — see Observability
-  section below.
+- **Telemetry**: **Stage 0 (request boundary) instrumented; pipeline not yet.**
+  Wrapped in `@record_outcome(success_on_return=False)` — failure-only mode,
+  because the handler returns the `StreamingResponse` before the pipeline runs,
+  so a clean return can't yet mean "succeeded" (the success verdict + stream-end
+  rollups are deferred to a stream-aware mechanism). Request-span attributes,
+  captured at handler entry from the raw wire body *before* validation
+  (`_record_query_search_inputs`): `query_search.query` (truncated) +
+  `query_search.query_chars`, `query_search.clarification` (+ `_chars`) when
+  sent, one `filters.*` attr per sent field (`filters.genres`,
+  `filters.min_runtime`, …; raw wire values, pre-translation), and
+  `filters.active_count` (always) — the count of distinct filter *groups* the
+  user engaged, where each min/max range (release date, runtime, maturity)
+  counts once, not per bound. A `request rejected` span event (with `detail`)
+  fires on the 400 (empty/over-length query), 422 unknown-filter-enum, and 422
+  unknown-body-field paths; the verdicts are `invalid_parameters`,
+  `invalid_filters`, and `invalid_parameters` respectively. Unknown body fields
+  422 because `QuerySearchBody`/`MetadataFiltersInput` set `extra="forbid"`, and
+  the framework 422 is recorded by the app-level `RequestValidationError`
+  handler (`_on_request_validation_error`). No manual pipeline-stage spans yet —
+  the rest of the pipeline (Steps 0–3, query generation, Stage 4, Qdrant,
+  scoring) is Bites 1–9 in
+  `observability_context/query_search_planning.md`.
 
 ### `POST /rerun_query_search`
 - **Purpose**: Re-run a prior search with a new filter set while **bypassing
@@ -292,23 +310,27 @@ OTel tracing bootstraps in `observability/tracing.py` (`setup_tracing(app)`,
 called at import time right after `app = FastAPI(...)` is constructed) and
 auto-instruments FastAPI, httpx, psycopg v3, and redis — every request on
 every endpoint already gets a full network-hop trace for free. Manual spans
-and attributes on top of that exist only for the three endpoints noted
-inline above (`/title_search`, `/movie_details`, `/movie_credits`); see
+and attributes on top of that exist for `/title_search`, `/movie_details`,
+`/movie_credits` (fully), and `/query_search` (Stage 0 request boundary only)
+as noted inline above; see
 `docs/modules/observability.md` for the bootstrap module itself and
 `observability_context/observability_architecture.md` for the full as-built
 catalog (source of truth — this section is a summary, not a replacement).
 
 - **Per-request outcome verdict** — `outcome.success` (bool) /
   `outcome.failure_reason` (`FailureReason`: `invalid_parameters` |
-  `not_indexed` | `tmdb_removed` | `tmdb_fetch_failed` | `internal_error`) —
-  is written on the request span by the `@record_outcome` decorator
-  (`api/outcome.py`), currently applied only to `/title_search`,
-  `/movie_details`, and `/movie_credits`. Endpoint code never sets this
+  `invalid_filters` | `not_indexed` | `tmdb_removed` | `tmdb_fetch_failed` |
+  `internal_error`) — is written on the request span by the `@record_outcome`
+  decorator (`api/outcome.py`), applied to `/title_search`, `/movie_details`,
+  `/movie_credits`, and `/query_search`. Endpoint code never sets this
   directly; it raises `EndpointFailure(failure_reason=...)` at each known
-  failure site and the reason bubbles up to the one recording point. The
-  four endpoints without this decorator (`/query_search`,
-  `/rerun_query_search`, `/similarity_search`, `/attribute_search`) carry
-  no `outcome.*` attribute yet.
+  failure site and the reason bubbles up to the one recording point.
+  `/query_search` uses the decorator's **failure-only** form
+  (`success_on_return=False`) — it records rejections/crashes but not
+  `success=true`, because its handler returns a streaming response before the
+  work runs (the success verdict awaits a stream-aware mechanism). The three
+  remaining endpoints (`/rerun_query_search`, `/similarity_search`,
+  `/attribute_search`) carry no `outcome.*` attribute yet.
 - **`movie.tmdb_id` / `movie.payload_source`** — shared request-span
   attributes on `/movie_details` and `/movie_credits`. `payload_source`
   (`cache`|`tmdb`) is set only at a success point, never optimistically, so
@@ -318,13 +340,15 @@ catalog (source of truth — this section is a summary, not a replacement).
   exception marks the span ERROR + records the exception. Swallowed
   best-effort failures (cache read/write, credits cross-populate) surface
   as span *events*, never span errors, and don't affect `outcome.success`.
-- **Not yet instrumented**: `/query_search`, `/rerun_query_search`,
-  `/similarity_search`, `/attribute_search` get only the auto-traced
-  network spans — no outcome attribute, no pipeline-stage spans, no
-  `gen_ai.*` LLM attributes yet (planned:
-  `observability_context/observability_todos.md` Phase 1c-1..1c-4;
-  `/query_search` is the highest-priority target, carrying the LLM
-  fan-out the latency goal cares most about).
+- **Partially / not yet instrumented**: `/query_search` has its Stage 0
+  request boundary instrumented (outcome + input attributes above) but **no
+  pipeline-stage spans** yet; `/rerun_query_search`, `/similarity_search`,
+  `/attribute_search` get only the auto-traced network spans — no outcome
+  attribute, no pipeline-stage spans, no `gen_ai.*` LLM attributes yet
+  (planned: `observability_context/observability_todos.md` Phase 1c-1..1c-4;
+  the `/query_search` pipeline is the highest-priority remaining target,
+  carrying the LLM fan-out the latency goal cares most about — see the
+  9-bite plan in `observability_context/query_search_planning.md`).
 - **Naming**: every manual span name / attribute key referenced above is a
   `Name` constant from `observability/names.py` — never an inline string
   literal. See that module's docstring for the naming ruleset.

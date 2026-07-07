@@ -143,6 +143,13 @@ QUERY_SEARCH_QUERY = QUERY_SEARCH.child("query")
 QUERY_SEARCH_QUERY_CHARS = QUERY_SEARCH.child("query_chars")
 QUERY_SEARCH_CLARIFICATION = QUERY_SEARCH.child("clarification")
 QUERY_SEARCH_CLARIFICATION_CHARS = QUERY_SEARCH.child("clarification_chars")
+# Request-level cost rollup, written on the server span at stream end: the sum
+# of every LLM + embedding call's USD cost incurred by the request (all billed
+# attempts, including retried/failed ones — see observability/cost_tracking.py).
+# Stays flat (rule C): there is no second `cost.*` sibling on the roadmap, so a
+# leaf with the established `_usd` unit suffix (mirroring `llm.cost_usd`) is
+# correct. A continuous measure — span-attr-only, never a metric label (rule F).
+QUERY_SEARCH_COST_USD = QUERY_SEARCH.child("cost_usd")
 
 # --- filters: cross-endpoint hard-filter input attributes (raw wire values) ---
 # `filters` earns a root (rule C): eleven emitted siblings, and the same wire
@@ -167,3 +174,37 @@ FILTERS_AUDIO_LANGUAGES = FILTERS.child("audio_languages")
 FILTERS_KEYWORDS = FILTERS.child("keywords")
 FILTERS_STREAMING_SERVICES = FILTERS.child("streaming_services")
 FILTERS_ACTIVE_COUNT = FILTERS.child("active_count")
+
+# --- llm: the shared LLM-router span + the facts OTel has no standard key for ---
+# `generate_llm_response_async` is the single codepath every LLM call passes
+# through, so one `llm.generate` span (wrapping its whole retry loop) covers
+# every step's call; step identity comes from the parent span nesting, never
+# duplicated here. This root earns a dot (rule C): it groups >= 2 emitted
+# attributes (attempt_count, cost_usd, prompt_version) beyond the span name.
+#
+# Standard facts — provider, model, token usage (input/output AND cached reads)
+# — are OTel GenAI semantic-convention keys (`gen_ai.system`,
+# `gen_ai.request.model`, `gen_ai.usage.*`, including
+# `gen_ai.usage.cache_read.input_tokens`) and the standard `error.type`; those
+# are emitted at the call site as the spec's own strings and are deliberately
+# NOT authored here (a standard root is never re-spelled in this registry).
+# This root owns only what the GenAI conventions have no key for:
+#   - cost_usd:        computed dollar cost (rule D unit suffix; low-card? no —
+#                      a continuous measure, span-attr-only, never a metric label)
+#   - prompt_version:  short content hash of the SYSTEM prompt — changes iff the
+#                      prompt text changes; lets evals slice by prompt revision
+#   - attempt_count:   attempts made (1 = clean first try; > 1 = retried). With
+#                      the span status this separates clean / recovered /
+#                      exhausted (see query_search_planning.md §2.8). Low-card,
+#                      metric-label-eligible.
+# Cached input tokens are NOT here: the GenAI semconv now has a stable key,
+# `gen_ai.usage.cache_read.input_tokens` (tokens served from the provider's
+# prompt cache — a subset of gen_ai.usage.input_tokens, billed at a discount),
+# so the call site emits that standard string instead.
+# The `llm.retry` / `llm.payload` span-event *messages* are human-readable
+# strings (per this module's scope note), defined at the call site, not Names.
+LLM = Name("llm")
+LLM_GENERATE = LLM.child("generate")            # span name (the router span)
+LLM_COST_USD = LLM.child("cost_usd")            # attr: computed dollar cost
+LLM_PROMPT_VERSION = LLM.child("prompt_version")  # attr: system-prompt content hash
+LLM_ATTEMPT_COUNT = LLM.child("attempt_count")  # attr: attempts made (>=1)

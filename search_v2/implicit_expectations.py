@@ -289,7 +289,7 @@ def _serialize_trait(trait: Trait) -> str:
 
 
 _PROVIDER = LLMProvider.GEMINI
-_MODEL = "gemini-3-flash-preview"
+_MODEL = "gemini-3.5-flash"
 _MODEL_KWARGS: dict = {
     "thinking_config": {"thinking_budget": 0},
     "temperature": 0.35,

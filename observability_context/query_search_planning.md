@@ -180,6 +180,37 @@ the FastAPI server span stays open for the full stream duration.
    query (+ clarification + active-filters summary) lives on the **request
    span**; each standard branch's *expanded* sub-query lives on that
    **branch's span**.
+8. **LLM failure marking: span status is the terminal verdict; the retry
+   story is an attribute + per-attempt events (decided 2026-07-06).** The
+   router (`generate_llm_response_async`) wraps its whole retry loop in one
+   `llm.generate` span, so three states must be separable without conflating a
+   *recovered* call with a *failed* one — a retry that eventually succeeds is a
+   **successful** call and must NOT mark the span ERROR (doing so poisons
+   error-rate metrics/alerts with calls that worked). The scheme, off two
+   signals — an always-on `llm.attempt_count` attribute and the native span
+   status:
+   - **Clean success:** status UNSET, `attempt_count = 1`, no retry events.
+   - **Failed but recovered** (fails then succeeds within the retry limit):
+     status stays UNSET (it succeeded), `attempt_count > 1`, and **one
+     `llm.retry` span event per failed attempt** carrying the attempt index,
+     transient `error.type`, a `timeout` bool, and the backoff slept. Events
+     (not attributes) because there can be N and they're timestamped; this is
+     also what makes the recovered retry visible in the waterfall behind an
+     otherwise-green span.
+   - **Failed all retries** (exhausts the limit): status **ERROR** +
+     `record_exception(last_exc)` + a span-level `error.type` (the standard
+     OTel key, **normalized** — `timeout` for the `asyncio.wait_for` ceiling
+     vs. the provider/validation class), `attempt_count = LLM_MAX_ATTEMPTS`.
+   Query separation: recovered = `attempt_count > 1 && status != error`;
+   exhausted = `status = error`; either sliceable by `error.type`. This layers
+   cleanly under decision §2.5: an ERROR `llm.generate` span does **not** flip
+   the request verdict — the branch records `branch_error`, the request span
+   stays `success=true`; each status is true at its own level. Retry/exception
+   events are **always-on** (class names + counts are tiny and
+   cardinality-bounded) — kept separate from the config-gated payload events of
+   §2.4. No explicit `retry_outcome` enum: it's derivable from
+   `(attempt_count, status)`, and a third key would drift out of sync with the
+   two it summarizes.
 
 ---
 
@@ -197,9 +228,15 @@ the FastAPI server span stays open for the full stream duration.
 > (the `success=true` verdict + stream-end rollups remain Bite 2). Verified in
 > Tempo: valid / 400 / 422 traces all carry the expected attrs + events, and
 > `/title_search` still records `success=true` (bare-decorator form intact).
-> A TEMP `_STAGE0_TEST_SHORT_CIRCUIT` in the handler returns an empty SSE
-> stream right after Stage 0 for cost-free testing — **remove before Bite 1.**
-> As-built catalog now in `observability_architecture.md` §6.
+> User confirmed full end-to-end testing on 2026-07-06; the TEMP
+> `_STAGE0_TEST_SHORT_CIRCUIT` scaffold has been removed and the handler now
+> runs the real downstream pipeline. `filters.active_count` counts distinct
+> filter *groups* (min/max ranges count once). Also added: `extra="forbid"` on
+> `QuerySearchBody`/`MetadataFiltersInput` + an app-level
+> `RequestValidationError` handler so unknown body fields 422 with an
+> `invalid_parameters` verdict + `request rejected` event (previously silently
+> dropped / uninstrumented). As-built catalog now in
+> `observability_architecture.md` §6.
 
 **No child spans** — validation + filter translation are microsecond-scale;
 Phase 0 contributes attributes on the request span only. **Capture timing
@@ -377,9 +414,18 @@ phase gets designed until then.
    understood — walk through the merge-loop shutdown, `done` emission, and
    client-disconnect cancellation, and verify the FastAPI server span stays
    open for the whole stream, before wiring rollups. (Owner: do this
-   together at the start of Bite 2.)
-6. **Payload-capture flag mechanics.** Env var vs. settings; name; and how
-   the "rate" is expressed (float 0.0–1.0?). Small, decide in Bite 1.
+   together at the start of Bite 2.) **PARTIALLY EXERCISED (2026-07-06):** the
+   `query_search.cost_usd` request-cost rollup already writes on the server span
+   from `event_stream()`'s `finally` on the assumption that the ASGI server span
+   ends only after the generator fully drains. That assumption is *designed-for
+   but not yet Tempo-verified* — the end-to-end check (does `query_search.cost_usd`
+   actually appear on the server span?) is the concrete test that resolves this OQ.
+6. ~~**Payload-capture flag mechanics.**~~ **RESOLVED (2026-07-06, Bite 1)** —
+   env var `LLM_PAYLOAD_CAPTURE_SAMPLE_RATE`, a float 0.0–1.0 read once at
+   module import in `generic_methods.py`. `>= 1.0` captures every call
+   (default), `0` disables, else Bernoulli(rate) per successful call; when the
+   rate is > 0, a terminal failure captures the prompt unconditionally
+   (always-on-error). Payloads ride `llm.payload` span events, not attributes.
 7. **Deterministic category calls and spans.** Current lean (recorded in
    §3): no span for NO_LLM_PURE_CODE / EXPLICIT_NO_OP calls; they're
    counted in the branch-level categories array. Revisit only if their
@@ -394,12 +440,26 @@ Check off as landed; after each bite update `observability_architecture.md`
 §6 (the span/attribute catalog) and, when it changes endpoint behavior,
 `docs/modules/api.md`.
 
-- [ ] **Bite 1 — LLM router telemetry (the multiplier).**
-      `gen_ai.*` span in `generate_llm_response_async` (provider, model,
-      tokens, cost), prompt-hash attribute, payload capture as span events
-      behind the config flag (resolve OQ #6). Verify: run one
-      `/query_search` and confirm every LLM call in the trace carries
-      tokens/cost/hash, payload events present, flag-off removes them.
+- [x] **Bite 1 — LLM router telemetry (the multiplier).** *(code landed
+      2026-07-06; awaiting the user's manual Tempo verification.)*
+      `llm.generate` span in `generate_llm_response_async` wrapping the whole
+      retry loop, carrying standard `gen_ai.*` (system, request.model,
+      usage.input_tokens, usage.output_tokens, usage.cache_read.input_tokens) +
+      our cache-adjusted `llm.cost_usd`, `llm.prompt_version` (system-prompt
+      content hash, `@lru_cache`d), and `llm.attempt_count`. Failure marking per decision §2.8: `llm.retry`
+      events per recovered attempt (status stays UNSET); ERROR + `error.type`
+      + `record_exception` on exhaustion. Payload capture as `llm.payload` span
+      events (system + user prompt + response JSON) gated by
+      `LLM_PAYLOAD_CAPTURE_SAMPLE_RATE` (float, default `1.0` = capture all;
+      `0` disables; else Bernoulli per call) — **resolves OQ #6**: env var,
+      float rate, read once at module import, with always-on-error prompt
+      capture when the rate is > 0. Cost via a new canonical
+      `implementation/llms/pricing.py` (`compute_llm_cost_usd`); unpriced
+      models emit no `llm.cost_usd` and log a warning (no fabricated cost).
+      Verify: run one `/query_search` and confirm every LLM call in the trace
+      carries tokens/cost/hash/attempt_count; force a transient failure and
+      confirm `llm.retry` + green span; exhaust retries and confirm ERROR +
+      `error.type`; set the rate to `0` and confirm payload events vanish.
 - [~] **Bite 2 — Terminal mechanics + request boundary.**
       **Request-boundary input capture is DONE (2026-07-06)** — see the ✅
       note in §3 Phase 0: pre-validation query/clarification text + lengths,
@@ -412,8 +472,14 @@ Check off as landed; after each bite update `observability_architecture.md`
       (OQ #3) that writes `outcome.success=true` + the stream-end rollups
       (total result count, fetch/failed-branch counts) at generator
       completion, plus the Step-0-fatal failure verdict (OQ #2 — new
-      `FailureReason` member). Also **remove the TEMP
-      `_STAGE0_TEST_SHORT_CIRCUIT`** once real downstream work resumes.
+      `FailureReason` member). **One stream-end rollup landed early
+      (2026-07-06): `query_search.cost_usd`** — the summed LLM + embedding cost
+      (all billed attempts) written on the server span from `event_stream()`'s
+      `finally` via `observability/cost_tracking.py`. It rides the same
+      server-span-stays-open assumption OQ #5 must confirm; the remaining
+      rollups can reuse the same write point once that's verified. (The TEMP `_STAGE0_TEST_SHORT_CIRCUIT` scaffold
+      was removed 2026-07-06 after the boundary was fully tested; the handler
+      runs the real pipeline again.)
       Verify: success case, forced Step-0 failure case, and a forced
       single-branch failure (success stays true, count increments). (400/422
       already verified.)

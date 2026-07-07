@@ -4,6 +4,25 @@ Tracks actionable items discovered during development sessions.
 Items here are things to address when the relevant work begins,
 not urgent fixes.
 
+## De-duplicate LLM model pricing tables
+**Context:** Bite 1 of the observability work added a canonical pricing module,
+`implementation/llms/pricing.py` (`compute_llm_cost_usd`), used by the LLM
+router to emit the `llm.cost_usd` span attribute. A parallel `MODEL_PRICING`
+table already exists in
+`movie_ingestion/metadata_generation/helper_scripts/estimate_generation_cost.py`.
+The two now duplicate the same per-model `(input, output)`-per-million prices.
+The router intentionally did NOT import the helper's table (wrong dependency
+direction — the low-level router must not depend on a metadata-gen helper
+script), so `pricing.py` is the intended canonical home.
+**Task:** Repoint `estimate_generation_cost.py` to import the table from
+`implementation/llms/pricing.py` (expose the raw dict if the estimator needs
+batch-vs-standard variants), deleting its local copy. Verify the estimator
+still handles models absent from the canonical table (it has its own fallback).
+**When:** Next time the cost estimator or the router pricing is touched, or in a
+cleanup pass — not urgent (the duplication is small and both tables are correct
+today).
+**See:** implementation/llms/pricing.py, movie_ingestion/metadata_generation/helper_scripts/estimate_generation_cost.py (MODEL_PRICING)
+
 ## Update plot_analysis unit tests for V2 structured-label embedding format
 **Context:** `PlotAnalysisOutput.embedding_text()` and
 `create_plot_analysis_vector_text()` were rewritten to the V2 structured-label

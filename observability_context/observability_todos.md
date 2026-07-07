@@ -140,14 +140,18 @@ reuses these spans. This is the highest-value item in Phase 1.
 > fully landed.
 - [ ] Query Understanding parent span, with a child span per parallel LLM call
       (so per-provider tail latency is visible — the expected first finding).
-- [ ] On each LLM call span, add `gen_ai.*` semantic-convention attributes:
+- [x] On each LLM call span, add `gen_ai.*` semantic-convention attributes:
       `gen_ai.system` (provider), `gen_ai.request.model`, input/output token
-      counts, and computed dollar cost. (Full moved-up detail in Phase 2's
-      attribute list — do the attributes here; skip the standalone LLM tool.)
+      counts, and computed dollar cost. **DONE — `query_search_planning.md` §5
+      Bite 1** (the `llm.generate` router span; also adds `llm.prompt_version`,
+      `llm.attempt_count`, and the three-state failure marking). Awaiting the
+      user's manual Tempo verification.
       Skip TTFT — we don't stream; use output_tokens vs. span duration instead.
-- [ ] Gate prompt/response payload capture behind a config flag; capture 100%
+- [x] Gate prompt/response payload capture behind a config flag; capture 100%
       now but make it a dial-able sample rate, not an on/off boolean. Put large
-      payloads on span **events**, not attributes.
+      payloads on span **events**, not attributes. **DONE — Bite 1**:
+      `LLM_PAYLOAD_CAPTURE_SAMPLE_RATE` (float; default 1.0) → `llm.payload`
+      span events; always-on-error prompt capture when rate > 0.
 - [ ] Lexical search (Postgres entity matching).
 - [ ] Vector search (Qdrant, across the 8 vector spaces) — consider a span per
       vector space or at least the 5-stage scoring pipeline boundaries.

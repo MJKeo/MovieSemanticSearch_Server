@@ -4,9 +4,11 @@ from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Annotated, Literal, NamedTuple, NoReturn, Optional, Union
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import msgspec
 from opentelemetry import trace
@@ -84,8 +86,11 @@ from observability.names import (
     MOVIE_DETAILS_PAYLOAD_CREATION,
     MOVIE_PAYLOAD_SOURCE,
     MOVIE_TMDB_ID,
+    OUTCOME_FAILURE_REASON,
+    OUTCOME_SUCCESS,
     QUERY_SEARCH_CLARIFICATION,
     QUERY_SEARCH_CLARIFICATION_CHARS,
+    QUERY_SEARCH_COST_USD,
     QUERY_SEARCH_QUERY,
     QUERY_SEARCH_QUERY_CHARS,
     TITLE_SEARCH_FUZZY_RESULT_COUNT,
@@ -93,6 +98,7 @@ from observability.names import (
     TITLE_SEARCH_QUERY,
     TITLE_SEARCH_RESULT_COUNT,
 )
+from observability.cost_tracking import track_request_cost
 from observability.tracing import setup_tracing
 from schemas.api_responses import (
     CastMember,
@@ -249,6 +255,7 @@ setup_tracing(app)
 ALLOWED_ORIGINS = [
     "https://www.cinemind.dev",   # production frontend (all sub-paths)
     "http://localhost:3000",      # local dev frontend
+    "http://localhost:3001",
 ]
 
 app.add_middleware(
@@ -258,6 +265,65 @@ app.add_middleware(
     allow_methods=["GET", "POST"],     # the verbs this API actually serves
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Request-validation observability
+# ---------------------------------------------------------------------------
+# Cap on how many individual field errors we fold into the rejection event's
+# detail. Bounds the attribute length on pathological requests (a body with
+# dozens of bad fields); the HTTP response still lists every error unchanged.
+_VALIDATION_DETAIL_MAX_ERRORS = 5
+
+
+def _summarize_validation_errors(exc: RequestValidationError) -> str:
+    """Build a compact, PII-safe summary of a body-validation failure.
+
+    Uses only each error's location path, message, and type — never the
+    offending *input value*, which could carry user content. For a forbidden
+    extra field this yields e.g. ``filters.genrez: Extra inputs are not
+    permitted (extra_forbidden)``, naming the exact bad parameter, which is the
+    fact worth having on the trace.
+    """
+    parts: list[str] = []
+    errors = exc.errors()
+    for err in errors[:_VALIDATION_DETAIL_MAX_ERRORS]:
+        # `loc` is a tuple like ("body", "filters", "genrez"); drop the leading
+        # "body" so the path reads in the caller's own field terms.
+        loc = [str(p) for p in err.get("loc", ()) if p != "body"]
+        location = ".".join(loc) or "(body)"
+        parts.append(f"{location}: {err.get('msg', '')} ({err.get('type', '')})")
+    if len(errors) > _VALIDATION_DETAIL_MAX_ERRORS:
+        parts.append(f"(+{len(errors) - _VALIDATION_DETAIL_MAX_ERRORS} more)")
+    return "; ".join(parts)
+
+
+@app.exception_handler(RequestValidationError)
+async def _on_request_validation_error(
+    request: Request, exc: RequestValidationError
+) -> Response:
+    """Record framework-level body-validation failures on the server span.
+
+    Pydantic validates the request body (types, required fields, and — now that
+    the request models set ``extra="forbid"`` — unknown field names) BEFORE the
+    handler runs, so these 422s never pass through `record_outcome` and would
+    otherwise be a blind spot: an unknown parameter would 422 with no
+    `outcome.*` verdict on the trace. Here we stamp the same INVALID_PARAMETERS
+    verdict the in-handler validation paths use and attach a "request rejected"
+    event naming the offending field(s), then delegate to FastAPI's default
+    handler so the HTTP response body is byte-for-byte unchanged. This is
+    app-wide (every endpoint), so any endpoint's malformed-body 422 now carries
+    a verdict, not just the instrumented ones.
+    """
+    span = trace.get_current_span()
+    span.set_attribute(OUTCOME_SUCCESS, False)
+    span.set_attribute(
+        OUTCOME_FAILURE_REASON, FailureReason.INVALID_PARAMETERS.value
+    )
+    span.add_event(
+        "request rejected", {"detail": _summarize_validation_errors(exc)}
+    )
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.get("/health")
@@ -310,7 +376,18 @@ class MetadataFiltersInput(BaseModel):
     Invalid enum values raise HTTPException 422 in _to_metadata_filters
     rather than silently dropping — wire input must be validated at
     the boundary per coding-standards.md.
+
+    ``extra="forbid"``: an unknown *field name* (e.g. a typo'd filter key
+    like ``genrez``) is rejected with a 422 instead of being silently
+    dropped by Pydantic's default "ignore extra". A dropped key would read
+    downstream as "no filter on that axis" — a silent, hard-to-notice
+    client/server drift — so we fail loud at the boundary. This model is
+    shared by /query_search and /similarity_search, so the guard applies to
+    both. The resulting framework 422 is caught by the app-level
+    RequestValidationError handler, which records the outcome verdict.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     min_release_ts:     Optional[int] = None
     max_release_ts:     Optional[int] = None
@@ -429,7 +506,17 @@ def _to_metadata_filters(
 
 
 class QuerySearchBody(BaseModel):
-    """Request body for POST /query_search."""
+    """Request body for POST /query_search.
+
+    ``extra="forbid"``: an unknown top-level field is rejected with a 422
+    rather than silently ignored, so a client sending a misspelled or
+    unsupported parameter fails loud at the boundary instead of having it
+    quietly dropped. The framework 422 is caught by the app-level
+    RequestValidationError handler, which stamps the outcome verdict + a
+    "request rejected" event onto the server span.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1)
     # Optional follow-up correction the user supplied after receiving
@@ -547,32 +634,37 @@ def _record_query_search_inputs(body: QuerySearchBody, span) -> None:
             QUERY_SEARCH_CLARIFICATION_CHARS, len(body.clarification)
         )
 
-    # (name constant, raw wire value) pairs — an unset field is None; an empty
-    # list is also "not sent" (downstream treats it as no-filter, so it doesn't
-    # count as active). Enum lists are captured as their raw string values,
-    # before enum translation.
+    # (group, name constant, raw wire value) triples — an unset field is None;
+    # an empty list is also "not sent" (downstream treats it as no-filter, so it
+    # doesn't count as active). Enum lists are captured as their raw string
+    # values, before enum translation. `group` is the user-facing filter a field
+    # belongs to: the three min/max ranges each pair two wire fields into one
+    # group, so setting both bounds of the release-date range is one active
+    # filter, not two.
     filters = body.filters
     filter_fields = [] if filters is None else [
-        (FILTERS_MIN_RELEASE_TS, filters.min_release_ts),
-        (FILTERS_MAX_RELEASE_TS, filters.max_release_ts),
-        (FILTERS_MIN_RUNTIME, filters.min_runtime),
-        (FILTERS_MAX_RUNTIME, filters.max_runtime),
-        (FILTERS_MIN_MATURITY_RANK, filters.min_maturity_rank),
-        (FILTERS_MAX_MATURITY_RANK, filters.max_maturity_rank),
-        (FILTERS_GENRES, filters.genres),
-        (FILTERS_AUDIO_LANGUAGES, filters.audio_languages),
-        (FILTERS_KEYWORDS, filters.keywords),
-        (FILTERS_STREAMING_SERVICES, filters.streaming_services),
+        ("release_date", FILTERS_MIN_RELEASE_TS, filters.min_release_ts),
+        ("release_date", FILTERS_MAX_RELEASE_TS, filters.max_release_ts),
+        ("runtime", FILTERS_MIN_RUNTIME, filters.min_runtime),
+        ("runtime", FILTERS_MAX_RUNTIME, filters.max_runtime),
+        ("maturity", FILTERS_MIN_MATURITY_RANK, filters.min_maturity_rank),
+        ("maturity", FILTERS_MAX_MATURITY_RANK, filters.max_maturity_rank),
+        ("genres", FILTERS_GENRES, filters.genres),
+        ("audio_languages", FILTERS_AUDIO_LANGUAGES, filters.audio_languages),
+        ("keywords", FILTERS_KEYWORDS, filters.keywords),
+        ("streaming_services", FILTERS_STREAMING_SERVICES, filters.streaming_services),
     ]
-    active_count = 0
-    for name, value in filter_fields:
+    active_groups: set[str] = set()
+    for group, name, value in filter_fields:
         # Skip unsent fields: None always; an empty list too (but NOT numeric
         # 0 — a bound of 0 is a sent value, so plain truthiness won't do).
         if value is None or (isinstance(value, list) and not value):
             continue
         span.set_attribute(name, value)
-        active_count += 1
-    span.set_attribute(FILTERS_ACTIVE_COUNT, active_count)
+        active_groups.add(group)
+    # active_count is the number of distinct filter groups the user engaged, not
+    # the number of wire fields set (a min+max range pair is one filter).
+    span.set_attribute(FILTERS_ACTIVE_COUNT, len(active_groups))
 
 
 @app.post("/query_search")
@@ -653,13 +745,28 @@ async def query_search(body: QuerySearchBody):
         # We let CancelledError propagate so Starlette can clean up
         # on client disconnect; the orchestrator's `finally` block
         # cancels any in-flight tasks before unwinding.
-        async for event_name, payload in stream_full_pipeline(
-            query,
-            clarification=clarification,
-            metadata_filters=metadata_filters,
-        ):
-            body = _json_encoder.encode(payload).decode("utf-8")
-            yield f"event: {event_name}\ndata: {body}\n\n"
+        #
+        # Enter the cost accumulator HERE — before the pipeline spawns any
+        # asyncio tasks — so every downstream LLM/embedding call (at any depth,
+        # in any branch) inherits it via the copied context and self-accounts
+        # into it. The rollup is written onto the server span in `finally`,
+        # which runs while the span is still open (the ASGI server span ends
+        # only after this generator is fully drained). `finally` also covers the
+        # partial-failure and client-disconnect paths, so a request that errors
+        # mid-stream still reports whatever cost it incurred.
+        with track_request_cost() as cost_acc:
+            try:
+                async for event_name, payload in stream_full_pipeline(
+                    query,
+                    clarification=clarification,
+                    metadata_filters=metadata_filters,
+                ):
+                    body = _json_encoder.encode(payload).decode("utf-8")
+                    yield f"event: {event_name}\ndata: {body}\n\n"
+            finally:
+                request_span.set_attribute(
+                    QUERY_SEARCH_COST_USD, cost_acc.total_usd
+                )
 
     return StreamingResponse(
         event_stream(),

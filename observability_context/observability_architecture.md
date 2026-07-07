@@ -28,17 +28,21 @@ changes.
 | Manual spans/attrs: `/title_search` | ✅ implemented (1c-5) |
 | Manual spans/attrs: `/movie_details`, `/movie_credits` | ✅ implemented (1c-6, 1c-7) |
 | Manual attrs: `/query_search` **Stage 0 only** (request-boundary input capture + failure-only outcome) | 🟡 partial (1c-1 Stage 0) |
-| Manual spans: `/query_search` pipeline, `/rerun_query_search`, `/similarity_search`, `/attribute_search` | ❌ not started (1c-1 Bites 1–9, 1c-2…1c-4) |
-| LLM `gen_ai.*` attributes | ❌ not started (folded into 1c-1) |
+| Manual spans: `/query_search` pipeline, `/rerun_query_search`, `/similarity_search`, `/attribute_search` | ❌ not started (1c-1 Bites 2–9, 1c-2…1c-4) |
+| LLM router span (`llm.generate`) + `gen_ai.*` + cost/prompt-hash/attempt-count + retry/payload events | ✅ implemented (1c-1 Bite 1; **awaiting user manual verification** 2026-07-06) |
 | Metrics (RED/USE) | ❌ not started (Phase 3) |
 | Structured logs + trace correlation | ❌ not started (Phase 4) |
 | Production export (Grafana Cloud on EC2) | ❌ not started (Phase 5) |
 
 **One-line summary:** every inbound request already produces a trace with
 auto-instrumented network spans; three of the eight endpoints additionally carry
-hand-written pipeline spans + semantic attributes, and `/query_search` carries
-request-boundary (Stage 0) input attributes but no pipeline spans yet. Nothing but
-traces exists yet (no metrics, no log correlation), and telemetry is local-only.
+hand-written pipeline spans + semantic attributes, `/query_search` carries
+request-boundary (Stage 0) input attributes, and **every routed LLM call now
+carries a manual `llm.generate` span** (tokens/cost/prompt-hash/attempt-count +
+retry/payload events) via the shared router — though `/query_search`'s pipeline
+spans that would *parent* those LLM spans are still pending (Bites 2–9). Nothing
+but traces exists yet (no metrics, no log correlation), and telemetry is
+local-only.
 
 ---
 
@@ -188,8 +192,10 @@ split a metric. `Name` subclasses `str`, so a constant hands straight to
   (`invalid_parameters` / `not_indexed` / `tmdb_removed` / `tmdb_fetch_failed` /
   `internal_error`) — one member per actionable class; the specifics (which
   param, which id, the stack) live on other span attributes and the recorded
-  exception. (Framework-level 422s — a missing/mis-typed query param rejected by
-  FastAPI *before* the handler runs — are not yet covered; see §8.)
+  exception. (Framework-level 422s — a missing/mis-typed param or an unknown
+  body field rejected by FastAPI *before* the handler runs — are covered by an
+  app-level `RequestValidationError` handler that stamps `invalid_parameters`;
+  see §8.)
 - **Error contract on manual spans** (distinct from the outcome above — this is
   the *span status*, that is the *request verdict*):
   - Expected **404** → span left **UNSET** (not an error); the request verdict is
@@ -264,6 +270,27 @@ timestamp, min>max) yields empty results on a *successful* trace — the case
 these attrs are most needed on never trips an error hook. Attribute existence =
 "this filter is active"; the typed value carries the debugging detail.
 
+**Stream-end rollup — request cost.** One rollup attribute is written on the
+server span at stream end (the first non-input `query_search.*` fact):
+
+| Attribute | Type | Meaning |
+|-----------|------|---------|
+| `query_search.cost_usd` | float | total USD cost of the request = every LLM call's cost + every embedding call's cost, summed across **all billed attempts** (a retried/failed-but-billed attempt still counts) |
+
+Mechanism: the handler's `event_stream()` generator enters
+`observability/cost_tracking.py::track_request_cost()` *before* the pipeline
+spawns any `asyncio` task, so a `ContextVar`-held mutable accumulator is shared
+by reference into every branch; each provider self-accounts its per-attempt cost
+(`_account_llm_call_cost`) and `generate_vector_embedding` accounts its cost, all
+no-ops outside a tracked request. The total is written on the server span in the
+generator's `finally` (which runs while the ASGI server span is still open —
+that span ends only after the generator fully drains), so partial-failure and
+client-disconnect paths still report the cost incurred. This is a superset of the
+per-call `llm.cost_usd` (which reflects only each call's successful attempt).
+Unpriced models contribute `0` (they emit no `llm.cost_usd` and log a warning),
+so the rollup under-reports rather than fabricates when a model is missing from
+the pricing table.
+
 **Span events:** `request rejected` (with a `detail` attribute) — emitted on the
 400 (empty/over-length query or clarification) and 422 (unknown filter enum
 value) paths. Expected 4xx rejections get no `record_exception` per the §5.2
@@ -282,15 +309,65 @@ to a stream-aware mechanism (`query_search_planning.md` Bite 2). Until then:
 | Path | `outcome.success` | `outcome.failure_reason` |
 |------|-------------------|--------------------------|
 | Empty/over-length query or clarification (400) | false | `invalid_parameters` |
+| Unknown body field, e.g. typo'd filter key (422, framework) | false | `invalid_parameters` |
 | Unknown filter enum value (422) | false | `invalid_filters` |
 | Pre-stream crash | false | `internal_error` |
 | Passed the boundary (200, stream begins) | *(absent — deferred to Bite 2)* | — |
 
-> **⚠ TEMP test scaffold (2026-07-06).** `query_search` currently short-circuits
-> with an empty SSE stream immediately after Stage 0
-> (`_STAGE0_TEST_SHORT_CIRCUIT` in `api/main.py`), to exercise the boundary
-> instrumentation without paying for the downstream LLM pipeline. **Remove before
-> Bite 1.**
+### LLM router span — `llm.generate` (1c-1 Bite 1) — cross-cutting
+Not an endpoint: one span emitted by
+`implementation/llms/generic_methods.py::generate_llm_response_async` — the
+single codepath every routed structured-generation call passes through — so
+one instrumentation point covers every step's LLM call on every endpoint. The
+span wraps the **whole retry loop** (not one span per attempt); step identity
+comes from the parent span nesting, never duplicated onto this span. It nests
+under whatever pipeline span is active (once those land in Bites 2–9); today,
+with no `/query_search` pipeline spans yet, it hangs directly off the auto httpx
+child under the request span.
+
+Uses `record_exception=False, set_status_on_exception=False` so a *recovered*
+retry never reads as an error and only an exhausted retry marks ERROR (§5.2
+error contract, applied to LLM calls).
+
+**Attributes:**
+
+| Attribute | Type | Meaning |
+|-----------|------|---------|
+| `gen_ai.system` | string | provider (`openai`/`kimi`/`gemini`/`groq`/`alibaba`/`anthropic`/`wham`). Standard OTel GenAI key — not authored in `names.py` |
+| `gen_ai.request.model` | string | requested model. Standard OTel GenAI key |
+| `gen_ai.usage.input_tokens` / `output_tokens` | int | token usage; set on the successful attempt only. Standard OTel GenAI keys |
+| `gen_ai.usage.cache_read.input_tokens` | int | input tokens served from the provider's prompt cache (a subset of `input_tokens`, billed at a discount); set on every span (even `0`) so cache-hit rate is queryable. Standard OTel GenAI key (Anthropic reports cache reads separately and is deliberately excluded → always `0`) |
+| `llm.cost_usd` | float | computed dollar cost via `implementation/llms/pricing.py::compute_llm_cost_usd` (cache-adjusted: cached input priced at the discounted rate); **omitted** (with a logged warning) when the model is unpriced — never a fabricated `$0`. Reflects the successful attempt; the request-level superset is `query_search.cost_usd` |
+| `llm.prompt_version` | string | 12-char sha256 of the SYSTEM prompt (`@lru_cache`d); changes iff the prompt text changes — lets evals slice by prompt revision |
+| `llm.attempt_count` | int | attempts made: `1` = clean first try, `>1` = retried, `LLM_MAX_ATTEMPTS` on exhaustion. With span status this separates clean / recovered / exhausted |
+| `error.type` | string | set **only on exhaustion** (span-level): normalized failure class — `timeout` for the `asyncio.wait_for` ceiling, else the exception class name. Standard OTel key |
+
+**Failure marking (three states — `query_search_planning.md` §2.8):**
+
+| State | Span status | `llm.attempt_count` | Events |
+|-------|-------------|---------------------|--------|
+| Clean success | UNSET | 1 | `llm.payload` (if sampled) |
+| Failed but recovered | UNSET (green) | > 1 | one `llm.retry` per failed attempt + `llm.payload` (if sampled) |
+| Failed all retries | ERROR + `record_exception` | `LLM_MAX_ATTEMPTS` | `llm.retry`(s) + `exception` + prompt-only `llm.payload` (always-on-error) |
+
+An ERROR `llm.generate` span does **not** flip the request verdict — per §2.5
+per-call failures are degradations (the branch will carry `branch_error`; the
+request span stays `success=true`). Recovered = `attempt_count > 1 && status !=
+error`; exhausted = `status = error`; either sliceable by `error.type`.
+
+**Span events:**
+
+| Event | When | Attributes |
+|-------|------|-----------|
+| `llm.retry` | each failed-but-retried attempt (always-on) | `attempt` (int), `error.type` (string), `timeout` (bool), `backoff_seconds` (float) |
+| `llm.payload` | successful call at the sampled rate; **failure** captures prompt-only whenever capture is enabled | `system_prompt`, `user_prompt`, `response` (JSON; absent on the failure path) |
+
+**Payload capture config.** `LLM_PAYLOAD_CAPTURE_SAMPLE_RATE` (env var, float,
+read once at module import; default `1.0`). `>=1.0` captures every successful
+call, `0` disables entirely, else Bernoulli(rate) per successful call; when the
+rate is `>0`, a terminal failure captures the prompt unconditionally
+(always-on-error). Full payloads ride span **events** (not attributes) so the
+sampling dial can drop them and attribute size limits don't apply.
 
 ### `/movie_details` (GET) — 1c-6 · `/movie_credits` (GET) — 1c-7
 Share one fetch helper and one credits build helper, so their spans/attributes
@@ -334,6 +411,10 @@ best-effort degradations without failing the request.
 | `Name` + constants | `observability/names.py` | name registry | span names + attribute keys, each derived once from a namespace root via `.child()`; imported by `api/main.py`. Replaces the former inline `_ATTR_*` / literal-string approach |
 | `_fetch_movie_payload(...)` | `api/main.py` | helper | opens the `*.payload_creation` span, existence-gate + TMDB fetch; raises `EndpointFailure` (404 `not_indexed`/`tmdb_removed`, 502 `tmdb_fetch_failed`) and owns the child-span error marking; returns `(card_row, tmdb_payload)` |
 | `_encode_and_cache_credits(...)` | `api/main.py` | helper | opens `movie_credits.build_and_cache`, builds/encodes/caches credits; shared by both endpoints |
+| `_tracer` | `implementation/llms/generic_methods.py` | module tracer | `trace.get_tracer(__name__)`; a no-op `ProxyTracer` when `setup_tracing` hasn't run (offline ingestion/eval imports), so the `llm.generate` span is a cheap no-op there |
+| `generate_llm_response_async` | `implementation/llms/generic_methods.py` | router + LLM instrumentation point | the single codepath every routed LLM call passes through; owns the `llm.generate` span, `gen_ai.*`/`llm.*` attrs, retry/payload events, and the three-state failure marking |
+| `compute_llm_cost_usd` | `implementation/llms/pricing.py` | cost util | canonical `(input, cached_input, output)`-per-million pricing table → cache-adjusted USD cost; returns `None` for unpriced models (caller omits `llm.cost_usd` + warns). A parallel table in `estimate_generation_cost.py` should later import from here (see `docs/TODO.md`) |
+| `track_request_cost` / `add_request_cost` | `observability/cost_tracking.py` | cost rollup | `ContextVar`-scoped per-request accumulator summing every LLM + embedding call's cost (all billed attempts) → written on the server span as `query_search.cost_usd`; no-op outside a tracked request |
 
 ---
 
@@ -344,17 +425,28 @@ So downstream docs don't overclaim coverage:
 - **Endpoints without manual pipeline spans:** `/query_search` (has Stage 0
   request-boundary *attributes* but no pipeline-stage spans yet),
   `/rerun_query_search`, `/similarity_search`, `/attribute_search`. They still
-  get the auto server/DB/cache/HTTP spans, but no pipeline-stage spans, no
-  `gen_ai.*` LLM attributes, no Qdrant span. (`/health` intentionally excluded
-  entirely.)
+  get the auto server/DB/cache/HTTP spans **and** the `llm.generate` span on any
+  LLM call they make (it rides the shared router), but no pipeline-stage spans
+  to parent those LLM spans, and no Qdrant span. (`/health` intentionally
+  excluded entirely.)
 - **No metrics** (RED per endpoint, USE for the box) — Phase 3.
 - **No structured/JSON logs and no trace↔log correlation** — Phase 4.
-- **No LLM token/cost/`gen_ai.*` attributes** — lands with 1c-1.
-- **Framework-level 422s carry no `outcome.*`.** A missing or mis-typed query/path
-  param (e.g. no `q`, a non-int `tmdb_id`) is rejected by FastAPI's validation
-  *before* the handler runs, so `@record_outcome` never sees it. Covering these
-  would need an app-level exception handler; deferred (in-handler validation
-  already reports `invalid_parameters`).
+- ✅ **LLM token/cost/`gen_ai.*` attributes now land** on the shared
+  `llm.generate` span (1c-1 Bite 1) — see §6. What's still missing is the
+  *pipeline* spans that would parent them (Bites 2–9).
+- **Framework-level 422s now carry `outcome.*`** (app-wide). A missing or
+  mis-typed query/path param (e.g. no `q`, a non-int `tmdb_id`) or an unknown
+  body field is rejected by FastAPI's validation *before* the handler runs, so
+  `@record_outcome` never sees it. An app-level `RequestValidationError` handler
+  (`_on_request_validation_error` in `api/main.py`) closes this gap: it stamps
+  `outcome.success=false` + `invalid_parameters` and adds a `request rejected`
+  event whose `detail` names the offending field(s) (location + message + type,
+  never the input value — PII-safe), then delegates to FastAPI's default handler
+  so the HTTP response is unchanged. Unknown body fields are only *reachable* now
+  that `QuerySearchBody` and `MetadataFiltersInput` set `extra="forbid"` (a typo'd
+  filter key like `genrez` used to be silently dropped; it now 422s and is
+  recorded). This handler is app-wide, so even the not-yet-instrumented endpoints
+  get a verdict on malformed-body requests.
 - **No production telemetry** — local otel-lgtm only.
 
 ---
