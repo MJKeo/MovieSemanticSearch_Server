@@ -2,7 +2,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from enum import Enum
-from typing import Annotated, Literal, NamedTuple, Optional, Union
+from typing import Annotated, Literal, NamedTuple, NoReturn, Optional, Union
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
@@ -65,6 +65,17 @@ from implementation.misc.event_loop import install_uvloop
 from implementation.misc.helpers import create_watch_provider_offering_key
 from observability.names import (
     CACHE_WRITE_OK,
+    FILTERS_ACTIVE_COUNT,
+    FILTERS_AUDIO_LANGUAGES,
+    FILTERS_GENRES,
+    FILTERS_KEYWORDS,
+    FILTERS_MAX_MATURITY_RANK,
+    FILTERS_MAX_RELEASE_TS,
+    FILTERS_MAX_RUNTIME,
+    FILTERS_MIN_MATURITY_RANK,
+    FILTERS_MIN_RELEASE_TS,
+    FILTERS_MIN_RUNTIME,
+    FILTERS_STREAMING_SERVICES,
     MOVIE_CREDITS_BUILD_AND_CACHE,
     MOVIE_CREDITS_CAST_COUNT,
     MOVIE_CREDITS_CREW_COUNT,
@@ -73,6 +84,10 @@ from observability.names import (
     MOVIE_DETAILS_PAYLOAD_CREATION,
     MOVIE_PAYLOAD_SOURCE,
     MOVIE_TMDB_ID,
+    QUERY_SEARCH_CLARIFICATION,
+    QUERY_SEARCH_CLARIFICATION_CHARS,
+    QUERY_SEARCH_QUERY,
+    QUERY_SEARCH_QUERY_CHARS,
     TITLE_SEARCH_FUZZY_RESULT_COUNT,
     TITLE_SEARCH_LIMIT,
     TITLE_SEARCH_QUERY,
@@ -309,14 +324,37 @@ class MetadataFiltersInput(BaseModel):
     streaming_services: Optional[list[str]] = None
 
 
+def _reject_invalid_filters(detail: str, exc: ValueError) -> NoReturn:
+    """Record and raise a 422 filter-translation rejection.
+
+    Single exit point for every unknown-enum failure in `_to_metadata_filters`:
+    marks the server span with a "request rejected" event carrying the detail
+    (expected 4xx rejections never get `record_exception`, so the event is the
+    only place the offending field/value lands on the trace), then raises
+    `EndpointFailure` with the dedicated INVALID_FILTERS reason — distinct from
+    INVALID_PARAMETERS because an unknown dropdown-sourced value means UI/server
+    taxonomy drift, not user input behavior. On endpoints not yet decorated
+    with `record_outcome` this behaves exactly like the HTTPException it
+    replaced (EndpointFailure subclasses it); no `outcome.*` attrs are written
+    there.
+    """
+    trace.get_current_span().add_event("request rejected", {"detail": detail})
+    raise EndpointFailure(
+        status_code=422,
+        failure_reason=FailureReason.INVALID_FILTERS,
+        detail=detail,
+    ) from exc
+
+
 def _to_metadata_filters(
     body_input: MetadataFiltersInput | None,
 ) -> MetadataFilters | None:
     """Translate the wire mirror into the internal MetadataFilters dataclass.
 
     Returns ``None`` when the input is None or every field is None
-    (no-filter signal). Raises HTTPException 422 on any unknown enum
-    value; this is the input-validation boundary for filters.
+    (no-filter signal). Raises `EndpointFailure` (422, `invalid_filters`)
+    on any unknown enum value; this is the input-validation boundary for
+    filters.
     """
     if body_input is None:
         return None
@@ -330,9 +368,7 @@ def _to_metadata_filters(
             if body_input.genres else None
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"unknown genre value: {exc}"
-        ) from exc
+        _reject_invalid_filters(f"unknown genre value: {exc}", exc)
 
     try:
         languages = (
@@ -340,9 +376,7 @@ def _to_metadata_filters(
             if body_input.audio_languages else None
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"unknown audio language value: {exc}"
-        ) from exc
+        _reject_invalid_filters(f"unknown audio language value: {exc}", exc)
 
     try:
         keywords = (
@@ -350,9 +384,7 @@ def _to_metadata_filters(
             if body_input.keywords else None
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"unknown keyword value: {exc}"
-        ) from exc
+        _reject_invalid_filters(f"unknown keyword value: {exc}", exc)
 
     # Expand StreamingService values into the encoded watch_offer_keys that
     # movie_card.watch_offer_keys is indexed against. Each key packs
@@ -367,10 +399,7 @@ def _to_metadata_filters(
         try:
             services = [StreamingService(s) for s in body_input.streaming_services]
         except ValueError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=f"unknown streaming_service value: {exc}",
-            ) from exc
+            _reject_invalid_filters(f"unknown streaming_service value: {exc}", exc)
         flat: list[int] = []
         seen: set[int] = set()
         for svc in services:
@@ -481,7 +510,73 @@ def _to_person_specs(
     return specs
 
 
+# Defensive truncation cap for the free-text request-span attributes
+# (query/clarification). These are captured from the RAW wire body BEFORE
+# validation runs — Pydantic enforces no max length on either field, so the
+# attribute needs its own bound. 300 sits above MAX_QUERY_CHARS /
+# MAX_CLARIFICATION_CHARS (both 200), so any input that *passes* validation
+# is never truncated; the companion `*_chars` attrs carry the true
+# pre-truncation length so an over-length rejection is self-explanatory.
+_INPUT_ATTR_MAX_CHARS = 300
+
+
+def _record_query_search_inputs(body: QuerySearchBody, span) -> None:
+    """Record the raw /query_search inputs on the request (server) span.
+
+    Called at handler entry, before either validator runs, so a rejected
+    (400/422) trace still carries the full input suite that caused it. Values
+    are the raw wire payload, pre-normalization and pre-translation — raw is
+    the ground truth when the boundary itself is what's being debugged.
+
+    Filters get one typed attribute per wire field, set only when the client
+    sent that field (attribute existence = "this filter is active"; the value
+    carries the debugging detail). This is deliberately always-on, not
+    error-path-only: the numeric filter fields have no validation, so their
+    failure mode is a valid-but-wrong filter (wrong-unit timestamp, min>max)
+    that yields empty results on a *successful* trace — an error hook never
+    fires for the cases these attrs are most needed on.
+    """
+    span.set_attribute(QUERY_SEARCH_QUERY, body.query[:_INPUT_ATTR_MAX_CHARS])
+    span.set_attribute(QUERY_SEARCH_QUERY_CHARS, len(body.query))
+    if body.clarification is not None:
+        span.set_attribute(
+            QUERY_SEARCH_CLARIFICATION,
+            body.clarification[:_INPUT_ATTR_MAX_CHARS],
+        )
+        span.set_attribute(
+            QUERY_SEARCH_CLARIFICATION_CHARS, len(body.clarification)
+        )
+
+    # (name constant, raw wire value) pairs — an unset field is None; an empty
+    # list is also "not sent" (downstream treats it as no-filter, so it doesn't
+    # count as active). Enum lists are captured as their raw string values,
+    # before enum translation.
+    filters = body.filters
+    filter_fields = [] if filters is None else [
+        (FILTERS_MIN_RELEASE_TS, filters.min_release_ts),
+        (FILTERS_MAX_RELEASE_TS, filters.max_release_ts),
+        (FILTERS_MIN_RUNTIME, filters.min_runtime),
+        (FILTERS_MAX_RUNTIME, filters.max_runtime),
+        (FILTERS_MIN_MATURITY_RANK, filters.min_maturity_rank),
+        (FILTERS_MAX_MATURITY_RANK, filters.max_maturity_rank),
+        (FILTERS_GENRES, filters.genres),
+        (FILTERS_AUDIO_LANGUAGES, filters.audio_languages),
+        (FILTERS_KEYWORDS, filters.keywords),
+        (FILTERS_STREAMING_SERVICES, filters.streaming_services),
+    ]
+    active_count = 0
+    for name, value in filter_fields:
+        # Skip unsent fields: None always; an empty list too (but NOT numeric
+        # 0 — a bound of 0 is a sent value, so plain truthiness won't do).
+        if value is None or (isinstance(value, list) and not value):
+            continue
+        span.set_attribute(name, value)
+        active_count += 1
+    span.set_attribute(FILTERS_ACTIVE_COUNT, active_count)
+
+
 @app.post("/query_search")
+@record_outcome(success_on_return=False)
 async def query_search(body: QuerySearchBody):
     """
     Stream the multi-channel search pipeline as Server-Sent Events.
@@ -511,8 +606,16 @@ async def query_search(body: QuerySearchBody):
 
     Returns:
       HTTP 200 with `text/event-stream` content. Empty or over-length
-      `query`/`clarification` → 400.
+      `query`/`clarification` → 400. Unknown enum value in `filters`
+      (genre / language / keyword / streaming service) → 422.
     """
+    # Record the raw input suite on the server span FIRST, before any
+    # validation, so rejected requests still carry what caused them.
+    # (Request-scoped facts go on the server span, per the observability
+    # conventions; get_current_span() here is the FastAPI server span.)
+    request_span = trace.get_current_span()
+    _record_query_search_inputs(body, request_span)
+
     # Validate/normalize the two free-text fields at the boundary via the
     # shared validator: strip, enforce non-empty + length cap, and treat
     # blank clarification as omitted (keeps the no-clarification fast path
@@ -521,12 +624,19 @@ async def query_search(body: QuerySearchBody):
     # (stream_full_pipeline, run_full_pipeline, run_step_0/1) re-validate
     # too; each is a separate public surface also reachable from CLI
     # runners, so each defends its own contract. A QueryInputError here
-    # (empty or over-length input) maps to a user-facing 400.
+    # (empty or over-length input) maps to a user-facing 400 with the
+    # invalid_parameters outcome; the rejection event carries the detail
+    # since expected 4xx rejections never get record_exception.
     try:
         query = clean_query(body.query)
         clarification: Optional[str] = clean_clarification(body.clarification)
     except QueryInputError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        request_span.add_event("request rejected", {"detail": str(exc)})
+        raise EndpointFailure(
+            status_code=400,
+            failure_reason=FailureReason.INVALID_PARAMETERS,
+            detail=str(exc),
+        ) from exc
 
     # Translate the wire mirror into the internal MetadataFilters
     # dataclass once, at the boundary. Raises 422 on any unknown enum

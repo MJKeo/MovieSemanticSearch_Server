@@ -12,7 +12,7 @@ This is a companion to the planning docs in this folder — `observability_logs_
 guidelines), and `observability_todos.md` (the ordered checklist + per-item
 status). Where those describe intent, **this describes what shipped**.
 
-**Last updated:** 2026-07-03 · **Phase:** 1 (traces) — partially complete.
+**Last updated:** 2026-07-06 · **Phase:** 1 (traces) — partially complete.
 Keep this doc in sync whenever manual instrumentation is added or the bootstrap
 changes.
 
@@ -27,7 +27,8 @@ changes.
 | Local trace backend (`grafana/otel-lgtm`) | ✅ running locally (dev only) |
 | Manual spans/attrs: `/title_search` | ✅ implemented (1c-5) |
 | Manual spans/attrs: `/movie_details`, `/movie_credits` | ✅ implemented (1c-6, 1c-7) |
-| Manual spans: `/query_search`, `/rerun_query_search`, `/similarity_search`, `/attribute_search` | ❌ not started (1c-1…1c-4) |
+| Manual attrs: `/query_search` **Stage 0 only** (request-boundary input capture + failure-only outcome) | 🟡 partial (1c-1 Stage 0) |
+| Manual spans: `/query_search` pipeline, `/rerun_query_search`, `/similarity_search`, `/attribute_search` | ❌ not started (1c-1 Bites 1–9, 1c-2…1c-4) |
 | LLM `gen_ai.*` attributes | ❌ not started (folded into 1c-1) |
 | Metrics (RED/USE) | ❌ not started (Phase 3) |
 | Structured logs + trace correlation | ❌ not started (Phase 4) |
@@ -35,8 +36,9 @@ changes.
 
 **One-line summary:** every inbound request already produces a trace with
 auto-instrumented network spans; three of the eight endpoints additionally carry
-hand-written pipeline spans + semantic attributes. Nothing but traces exists yet
-(no metrics, no log correlation), and telemetry is local-only.
+hand-written pipeline spans + semantic attributes, and `/query_search` carries
+request-boundary (Stage 0) input attributes but no pipeline spans yet. Nothing but
+traces exists yet (no metrics, no log correlation), and telemetry is local-only.
 
 ---
 
@@ -212,8 +214,8 @@ split a metric. `Name` subclasses `str`, so a constant hands straight to
 
 | Attribute | Type | Meaning |
 |-----------|------|---------|
-| `outcome.success` | bool | request verdict; set on every path |
-| `outcome.failure_reason` | `FailureReason` | set only when `success` is false: `invalid_parameters`\|`not_indexed`\|`tmdb_removed`\|`tmdb_fetch_failed`\|`internal_error` |
+| `outcome.success` | bool | request verdict; set on every path (**exception:** streaming endpoints under `record_outcome(success_on_return=False)` write it only on failure — see `/query_search` below) |
+| `outcome.failure_reason` | `FailureReason` | set only when `success` is false: `invalid_parameters`\|`invalid_filters`\|`not_indexed`\|`tmdb_removed`\|`tmdb_fetch_failed`\|`internal_error` |
 
 ### `/title_search` (GET) — 1c-5
 No child span (single unit of work). Attributes on the **request span**:
@@ -228,6 +230,67 @@ No child span (single unit of work). Attributes on the **request span**:
 Supporting change: `run_title_search` returns a `TitleSearchResult` NamedTuple
 `(movie_ids, fuzzy_count)` (was `list[int]`) so the endpoint can report the fuzzy
 count without re-deriving discarded tier data (`search_v2/title_search.py`).
+
+### `/query_search` (POST) — 1c-1 **Stage 0 only**
+Partial coverage: the **request boundary** (input validation + filter
+translation) is instrumented; the streaming pipeline below it (Steps 0–3,
+query generation, Stage 4 execution, Qdrant, scoring) is **not yet** — those
+are Bites 1–9 in `query_search_planning.md`. No manual child spans in Stage 0
+(validation + translation are microsecond-scale); everything hangs on the
+FastAPI **request span**.
+
+**Input attributes** — written at handler entry from the RAW wire body, *before*
+either validator runs (via `_record_query_search_inputs`), so a rejected 400/422
+trace still carries the input that caused it. Text attrs are defensively
+truncated at 300 chars (`_INPUT_ATTR_MAX_CHARS` — Pydantic enforces no max on
+these fields; 300 > the 200-char validation caps so valid input is never
+truncated); the `*_chars` attrs carry the true pre-truncation length.
+
+| Attribute | Type | Meaning |
+|-----------|------|---------|
+| `query_search.query` | string | raw query text (truncated); high-cardinality span attr, never a metric label |
+| `query_search.query_chars` | int | true length of raw query pre-truncation |
+| `query_search.clarification` | string | raw clarification text (truncated); set only when the field was sent |
+| `query_search.clarification_chars` | int | true length of raw clarification; set only when sent |
+| `filters.min_release_ts` / `max_release_ts` | int | raw wire bound; set only when sent |
+| `filters.min_runtime` / `max_runtime` | int | raw wire bound; set only when sent |
+| `filters.min_maturity_rank` / `max_maturity_rank` | int | raw wire bound; set only when sent |
+| `filters.genres` / `audio_languages` / `keywords` / `streaming_services` | string[] | raw wire enum values, PRE-translation; set only when the list is non-empty |
+| `filters.active_count` | int | number of active filter fields; **always set** (0 = none). The one low-cardinality, metric-label-eligible member of `filters.*` |
+
+Per-field `filters.*` attrs are always-on (not error-path-only) deliberately:
+the numeric fields have no validation, so a valid-but-wrong filter (wrong-unit
+timestamp, min>max) yields empty results on a *successful* trace — the case
+these attrs are most needed on never trips an error hook. Attribute existence =
+"this filter is active"; the typed value carries the debugging detail.
+
+**Span events:** `request rejected` (with a `detail` attribute) — emitted on the
+400 (empty/over-length query or clarification) and 422 (unknown filter enum
+value) paths. Expected 4xx rejections get no `record_exception` per the §5.2
+error contract, so this event is where the offending field/value lands on the
+trace.
+
+**Outcome semantics — failure-only (interim).** The endpoint uses
+`@record_outcome(success_on_return=False)` (see §7): failures are recorded, but a
+clean handler return writes **no** `outcome.success=true`. Rationale: the handler
+returns a `StreamingResponse` *before* the pipeline runs, so "returned cleanly"
+only means the request passed the boundary — stamping success there would read as
+true even if the stream later fails fatally. The success verdict (and the
+stream-end rollups: total result count, fetch/failed-branch counts) is deferred
+to a stream-aware mechanism (`query_search_planning.md` Bite 2). Until then:
+
+| Path | `outcome.success` | `outcome.failure_reason` |
+|------|-------------------|--------------------------|
+| Empty/over-length query or clarification (400) | false | `invalid_parameters` |
+| Unknown filter enum value (422) | false | `invalid_filters` |
+| Pre-stream crash | false | `internal_error` |
+| Passed the boundary (200, stream begins) | *(absent — deferred to Bite 2)* | — |
+
+> **⚠ TEMP test scaffold (2026-07-06).** `query_search` currently short-circuits
+> with an empty SSE stream immediately after Stage 0
+> (`_STAGE0_TEST_SHORT_CIRCUIT` in `api/main.py`), to exercise the boundary
+> instrumentation without paying for the downstream LLM pipeline. **Remove before
+> Bite 1.**
 
 ### `/movie_details` (GET) — 1c-6 · `/movie_credits` (GET) — 1c-7
 Share one fetch helper and one credits build helper, so their spans/attributes
@@ -265,9 +328,9 @@ best-effort degradations without failing the request.
 |--------|-------|------|------|
 | `tracer` | `api/main.py` | module tracer | `trace.get_tracer(__name__)` |
 | `MoviePayloadSource(str, Enum)` | `api/main.py` | enum | `CACHE`/`TMDB` values for `movie.payload_source` |
-| `FailureReason(str, Enum)` | `api/outcome.py` | enum | the coarse `outcome.failure_reason` vocabulary (replaces the old `NotFoundReason`, folding its two 404 reasons into the broader set) |
+| `FailureReason(str, Enum)` | `api/outcome.py` | enum | the coarse `outcome.failure_reason` vocabulary (replaces the old `NotFoundReason`, folding its two 404 reasons into the broader set). Members: `invalid_parameters`, `invalid_filters` (unknown hard-filter enum value — UI/server taxonomy drift, distinct from `invalid_parameters`), `not_indexed`, `tmdb_removed`, `tmdb_fetch_failed`, `internal_error` |
 | `EndpointFailure(HTTPException)` | `api/outcome.py` | exception | request-terminating failure that carries its `FailureReason`; raised at each known failure site so the reason bubbles up |
-| `record_outcome` | `api/outcome.py` | decorator | wraps each endpoint; writes `outcome.success`/`outcome.failure_reason` on the server span exactly once (the single write point) |
+| `record_outcome` | `api/outcome.py` | decorator | wraps each endpoint; writes `outcome.success`/`outcome.failure_reason` on the server span exactly once (the single write point). Dual-form: bare `@record_outcome` (default, `success_on_return=True`) stamps `success=true` on clean return; `@record_outcome(success_on_return=False)` records failures only and leaves success absent on clean return — for streaming (SSE) endpoints whose handler returns before the pipeline runs (`/query_search`) |
 | `Name` + constants | `observability/names.py` | name registry | span names + attribute keys, each derived once from a namespace root via `.child()`; imported by `api/main.py`. Replaces the former inline `_ATTR_*` / literal-string approach |
 | `_fetch_movie_payload(...)` | `api/main.py` | helper | opens the `*.payload_creation` span, existence-gate + TMDB fetch; raises `EndpointFailure` (404 `not_indexed`/`tmdb_removed`, 502 `tmdb_fetch_failed`) and owns the child-span error marking; returns `(card_row, tmdb_payload)` |
 | `_encode_and_cache_credits(...)` | `api/main.py` | helper | opens `movie_credits.build_and_cache`, builds/encodes/caches credits; shared by both endpoints |
@@ -278,10 +341,12 @@ best-effort degradations without failing the request.
 
 So downstream docs don't overclaim coverage:
 
-- **Endpoints without manual spans:** `/query_search`, `/rerun_query_search`,
-  `/similarity_search`, `/attribute_search`. They still get the auto server/DB/
-  cache/HTTP spans, but no pipeline-stage spans, no `gen_ai.*` LLM attributes,
-  no Qdrant span. (`/health` intentionally excluded entirely.)
+- **Endpoints without manual pipeline spans:** `/query_search` (has Stage 0
+  request-boundary *attributes* but no pipeline-stage spans yet),
+  `/rerun_query_search`, `/similarity_search`, `/attribute_search`. They still
+  get the auto server/DB/cache/HTTP spans, but no pipeline-stage spans, no
+  `gen_ai.*` LLM attributes, no Qdrant span. (`/health` intentionally excluded
+  entirely.)
 - **No metrics** (RED per endpoint, USE for the box) — Phase 3.
 - **No structured/JSON logs and no trace↔log correlation** — Phase 4.
 - **No LLM token/cost/`gen_ai.*` attributes** — lands with 1c-1.

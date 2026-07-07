@@ -38,7 +38,12 @@ class FailureReason(str, Enum):
     str-valued so a member serializes directly via `.value`.
     """
 
-    INVALID_PARAMETERS = "invalid_parameters"  # 422 — bad/missing request params
+    INVALID_PARAMETERS = "invalid_parameters"  # 400/422 — bad/missing request params
+    # 422 — unknown enum value in the hard-filters block. Deliberately distinct
+    # from INVALID_PARAMETERS: filter values come from UI dropdowns backed by the
+    # client's copy of the enum lists, so an unknown value means client/server
+    # taxonomy drift (our bug — alertable), not user input behavior.
+    INVALID_FILTERS = "invalid_filters"
     NOT_INDEXED = "not_indexed"                # 404 — absent from our movie_card index
     TMDB_REMOVED = "tmdb_removed"              # 404 — in our index, gone upstream at TMDB
     TMDB_FETCH_FAILED = "tmdb_fetch_failed"    # 502 — TMDB fetch failed after retries
@@ -63,7 +68,7 @@ class EndpointFailure(HTTPException):
         self.failure_reason = failure_reason
 
 
-def record_outcome(handler):
+def record_outcome(handler=None, *, success_on_return: bool = True):
     """Decorate an async endpoint so its `outcome.*` verdict is recorded exactly once.
 
     Reads the active FastAPI server span (the current span when the handler runs)
@@ -77,34 +82,56 @@ def record_outcome(handler):
     auto-instrumentation server-span ERROR status are untouched — this only adds the
     semantic `outcome.*` attributes.
 
+    `success_on_return=False` switches to **failure-only** recording: the failure
+    branches behave identically, but a clean return writes nothing. This exists for
+    streaming (SSE) endpoints, where the handler returns a `StreamingResponse`
+    *before* the pipeline runs — at that moment "returned cleanly" only means the
+    request passed the boundary, not that the work succeeded, so stamping
+    `success=true` there would be premature (a mid-stream fatal failure would read
+    as a success). Those endpoints leave the verdict absent until a stream-aware
+    mechanism records it at generator completion (see
+    observability_context/query_search_planning.md, Bite 2).
+
     Apply it *inside* the route decorator so it wraps the handler, not the route
     registration::
 
         @app.get("/title_search")
         @record_outcome
         async def title_search(...): ...
+
+        @app.post("/query_search")
+        @record_outcome(success_on_return=False)
+        async def query_search(...): ...
     """
 
-    @wraps(handler)
-    async def wrapper(*args, **kwargs):
-        # The auto-instrumented server span is the active span while the handler
-        # runs, so this returns the request root — the same reference the handlers
-        # capture as `request_span` for their other request-scoped attributes.
-        span = trace.get_current_span()
-        try:
-            result = await handler(*args, **kwargs)
-        except EndpointFailure as exc:
-            # Expected failure — the reason was decided at the raising site.
-            span.set_attribute(OUTCOME_SUCCESS, False)
-            span.set_attribute(OUTCOME_FAILURE_REASON, exc.failure_reason.value)
-            raise
-        except Exception:
-            # Unexpected failure — collapse to the single internal_error class; the
-            # stack/root cause lives on the recorded exception, not on this key.
-            span.set_attribute(OUTCOME_SUCCESS, False)
-            span.set_attribute(OUTCOME_FAILURE_REASON, FailureReason.INTERNAL_ERROR.value)
-            raise
-        span.set_attribute(OUTCOME_SUCCESS, True)
-        return result
+    def decorate(handler):
+        @wraps(handler)
+        async def wrapper(*args, **kwargs):
+            # The auto-instrumented server span is the active span while the handler
+            # runs, so this returns the request root — the same reference the handlers
+            # capture as `request_span` for their other request-scoped attributes.
+            span = trace.get_current_span()
+            try:
+                result = await handler(*args, **kwargs)
+            except EndpointFailure as exc:
+                # Expected failure — the reason was decided at the raising site.
+                span.set_attribute(OUTCOME_SUCCESS, False)
+                span.set_attribute(OUTCOME_FAILURE_REASON, exc.failure_reason.value)
+                raise
+            except Exception:
+                # Unexpected failure — collapse to the single internal_error class; the
+                # stack/root cause lives on the recorded exception, not on this key.
+                span.set_attribute(OUTCOME_SUCCESS, False)
+                span.set_attribute(OUTCOME_FAILURE_REASON, FailureReason.INTERNAL_ERROR.value)
+                raise
+            if success_on_return:
+                span.set_attribute(OUTCOME_SUCCESS, True)
+            return result
 
-    return wrapper
+        return wrapper
+
+    # Dual-form decorator: bare `@record_outcome` receives the handler directly;
+    # `@record_outcome(success_on_return=False)` returns `decorate` for it.
+    if handler is not None:
+        return decorate(handler)
+    return decorate

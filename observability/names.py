@@ -130,3 +130,40 @@ TITLE_SEARCH_QUERY = TITLE_SEARCH.child("query")
 TITLE_SEARCH_LIMIT = TITLE_SEARCH.child("limit")
 TITLE_SEARCH_RESULT_COUNT = TITLE_SEARCH.child("result_count")
 TITLE_SEARCH_FUZZY_RESULT_COUNT = TITLE_SEARCH.child("fuzzy_result_count")
+
+# --- query_search: request-boundary input attributes ---
+# Written at handler entry from the RAW wire body, before validation runs, so a
+# rejected (400/422) trace still carries the input that caused it. The text
+# attrs are defensively truncated at the call site (Pydantic enforces no max
+# length on these fields); the `_chars` attrs carry the true pre-truncation
+# length (rule D unit suffix). All four are high-cardinality — span-attr-only,
+# never metric labels (rule F).
+QUERY_SEARCH = Name("query_search")
+QUERY_SEARCH_QUERY = QUERY_SEARCH.child("query")
+QUERY_SEARCH_QUERY_CHARS = QUERY_SEARCH.child("query_chars")
+QUERY_SEARCH_CLARIFICATION = QUERY_SEARCH.child("clarification")
+QUERY_SEARCH_CLARIFICATION_CHARS = QUERY_SEARCH.child("clarification_chars")
+
+# --- filters: cross-endpoint hard-filter input attributes (raw wire values) ---
+# `filters` earns a root (rule C): eleven emitted siblings, and the same wire
+# shape (MetadataFiltersInput) is shared by /query_search today and
+# /rerun_query_search, /similarity_search, /attribute_search when they are
+# instrumented (1c-2..4). One attr per wire field, set ONLY when the client
+# sent that field — attribute existence answers "is this filter active?",
+# the typed value carries the debugging detail. Values are captured
+# PRE-translation (the raw enum strings, not resolved enums / offer keys) so
+# a translation failure still shows exactly what the client sent. Per-field
+# attrs are high-cardinality-OK span attrs (rule F); `active_count` is the
+# one low-cardinality, label-eligible member (always set; 0 = no filters).
+FILTERS = Name("filters")
+FILTERS_MIN_RELEASE_TS = FILTERS.child("min_release_ts")
+FILTERS_MAX_RELEASE_TS = FILTERS.child("max_release_ts")
+FILTERS_MIN_RUNTIME = FILTERS.child("min_runtime")
+FILTERS_MAX_RUNTIME = FILTERS.child("max_runtime")
+FILTERS_MIN_MATURITY_RANK = FILTERS.child("min_maturity_rank")
+FILTERS_MAX_MATURITY_RANK = FILTERS.child("max_maturity_rank")
+FILTERS_GENRES = FILTERS.child("genres")
+FILTERS_AUDIO_LANGUAGES = FILTERS.child("audio_languages")
+FILTERS_KEYWORDS = FILTERS.child("keywords")
+FILTERS_STREAMING_SERVICES = FILTERS.child("streaming_services")
+FILTERS_ACTIVE_COUNT = FILTERS.child("active_count")

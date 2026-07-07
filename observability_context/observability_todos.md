@@ -129,6 +129,15 @@ it names a real unit of work or covers Qdrant's gRPC gap).
 The marquee endpoint (`api/main.py:427`): Steps 0/1/2/3 → Stage 4, streamed as
 SSE, with the parallel LLM fan-out the latency goal targets. Everything below
 reuses these spans. This is the highest-value item in Phase 1.
+
+> **Superseded breakdown (2026-07-06):** the detailed per-phase plan, locked
+> decisions, open questions, and bite-sized implementation checklist for this
+> item now live in **`query_search_planning.md`** (this folder) — treat that
+> doc as the source of truth for 1c-1's work breakdown. The sub-checklist
+> below predates it and describes the V1 pipeline vocabulary (the live path is
+> the V2 streaming, branch-parallel architecture); read it as historical
+> intent only. Check 1c-1 off here when `query_search_planning.md` §5 is
+> fully landed.
 - [ ] Query Understanding parent span, with a child span per parallel LLM call
       (so per-provider tail latency is visible — the expected first finding).
 - [ ] On each LLM call span, add `gen_ai.*` semantic-convention attributes:
