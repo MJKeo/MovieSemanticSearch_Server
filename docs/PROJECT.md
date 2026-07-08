@@ -32,6 +32,19 @@ Major wins in a lower priority can justify minor costs in a higher
 priority (e.g., a large cost savings is worth a small latency
 increase).
 
+### Secondary criterion: skill transferability
+
+The four priorities above are the product priorities and govern all
+product-facing tradeoffs. One non-product factor also legitimately
+influences **tooling and infrastructure** choices on this solo-developer
+project: preferring industry-standard, transferable (resume-credible)
+technologies over throwaway or niche ones. This acts only as a
+tiebreaker between options that are otherwise close on cost / latency /
+simplicity — it never overrides search quality or justifies a material
+product cost. It was an explicit factor in ADR-101 (selecting an
+OpenTelemetry + Grafana observability stack), where the chosen stack is
+also defensible purely on the cost and simplicity axes.
+
 ## Constraints
 
 - Python 3.13

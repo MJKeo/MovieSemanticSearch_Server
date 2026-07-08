@@ -9,10 +9,13 @@
 # TitlePatternQuerySpec) selected via
 # endpoint_registry._ENTITY_DISPATCH.
 #
-# The module is kept as a stub because search_v2/reranking/dispatch.py
-# still imports `generate_entity_query`. Calling it now raises
-# NotImplementedError; the module-level prompt strings below are
-# unused and remain for future reference only.
+# Its only importer (search_v2/reranking/dispatch.py) has been removed,
+# so no live code imports `generate_entity_query` anymore. The module is
+# retained as a reference stub — sibling generation modules
+# (award/studio/semantic query generation) point back to the
+# prompt-string note below. Calling `generate_entity_query` raises
+# NotImplementedError; the module-level prompt strings below are unused
+# and remain for future reference only.
 #
 # See search_improvement_planning/finalized_search_proposal.md
 # (Step 3 → Endpoint 1: Entity Lookup) for the full design rationale

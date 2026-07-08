@@ -36,12 +36,15 @@ and API endpoints for search and movie detail retrieval.
   query and the correction; Steps 2+ receive a single merged natural-language
   query per branch (slot 1 carries `main_rewrite`, spins operate on the
   corrected intent). Whitespace-only clarification is normalized to `None`.
-- **Filters**: `MetadataFiltersInput` exposes six hard filters:
+- **Filters**: `MetadataFiltersInput` exposes seven hard filters:
   - `release_date` — start/end Unix timestamps
   - `runtime` — min/max in minutes
   - `maturity` — min/max maturity rank
   - `genres` — list of genre display strings (e.g. `"Action"`)
   - `audio_languages` — list of language display strings (e.g. `"English"`)
+  - `keywords` — list of overall-keyword display strings; each resolves
+    to an `OverallKeyword` and the set is applied as a GIN-index overlap
+    on `movie_card.keyword_ids` (`idx_movie_card_keyword_ids`)
   - `streaming_services` — list of `StreamingService` enum values
     (e.g. `"netflix"`, `"max"`); API expands these into encoded
     `watch_offer_keys` via `STREAMING_PROVIDER_MAP ×
@@ -51,21 +54,18 @@ and API endpoints for search and movie detail retrieval.
   primitive (Postgres + Qdrant), not post-hoc — ensures filter-
   respecting candidates are retrieved rather than filtered out
   after the fact.
-- **Telemetry**: **Stage 0 (request boundary) instrumented; pipeline not yet.**
+- **Telemetry**: **request boundary + most of the streaming pipeline instrumented;
+  Stage-4 dispatch/scoring spans + terminal success rollups still pending.**
   Wrapped in `@record_outcome(success_on_return=False)` — failure-only mode,
   because the handler returns the `StreamingResponse` before the pipeline runs,
   so a clean return can't yet mean "succeeded" (the success verdict + the
-  result-count rollups are deferred to a stream-aware mechanism). One family of
-  stream-end rollups is already live, written on the server span from the
-  streaming generator's `finally`: `query_search.cost_usd` plus
-  `query_search.usage.{input,cached_input,output}_tokens` — the summed cost and
-  token usage across every LLM + embedding call (all billed attempts). Cost skips
-  unpriced models; tokens count unconditionally; `cached_input` ⊆ `input`.
-  Request-span attributes,
-  captured at handler entry from the raw wire body *before* validation
-  (`_record_query_search_inputs`): `query_search.query` (truncated) +
-  `query_search.query_chars`, `query_search.clarification` (+ `_chars`) when
-  sent, one `filters.*` attr per sent field (`filters.genres`,
+  result-count rollups are deferred to a stream-aware mechanism; a fatal Step 0
+  failure DOES already write `outcome.success=false` +
+  `failure_reason=query_understanding_failed` from `event_stream()`'s `error`-event
+  watcher). Request-span attributes, captured at handler entry from the raw wire
+  body *before* validation (`_record_query_search_inputs`): `query_search.query`
+  (truncated) + `query_search.query_chars`, `query_search.clarification`
+  (+ `_chars`) when sent, one `filters.*` attr per sent field (`filters.genres`,
   `filters.min_runtime`, …; raw wire values, pre-translation), and
   `filters.active_count` (always) — the count of distinct filter *groups* the
   user engaged, where each min/max range (release date, runtime, maturity)
@@ -75,10 +75,38 @@ and API endpoints for search and movie detail retrieval.
   `invalid_filters`, and `invalid_parameters` respectively. Unknown body fields
   422 because `QuerySearchBody`/`MetadataFiltersInput` set `extra="forbid"`, and
   the framework 422 is recorded by the app-level `RequestValidationError`
-  handler (`_on_request_validation_error`). No manual pipeline-stage spans yet —
-  the rest of the pipeline (Steps 0–3, query generation, Stage 4, Qdrant,
-  scoring) is Bites 1–9 in
-  `observability_context/query_search_planning.md`.
+  handler (`_on_request_validation_error`).
+
+  Stream-end rollup (server span, written from the generator's `finally` so it
+  survives partial failure / client disconnect): `query_search.cost_usd` plus
+  `query_search.usage.{input,cached_input,output}_tokens` — summed cost and
+  token usage across every LLM + embedding call, counting **all billed
+  attempts** (a retried/failed-but-billed attempt still counts). Cost gates on
+  the pricing table (unpriced models contribute 0, never fabricated); tokens
+  count unconditionally so the two can diverge by design; `cached_input` ⊆
+  `input`.
+
+  Pipeline-stage spans now cover most of the streaming path: `query_search.step_0`
+  / `.step_1` (flow routing + spin generation, parallel siblings under the
+  server span); one `query_search.branch` span per fetch (`branch_type` +
+  `branch_uses_original_text`), closed centrally in the merge loop — also
+  emitted on `/rerun_query_search` since it shares the same
+  `_stream_from_branch_plan`; per standard-branch trait pipeline spans
+  `query_search.step_2` / `.trait` / `.step_3` / `.query_generation`; the six
+  entity-flow executors (person / similarity / exact_title / studio /
+  non_character_franchise / character_franchise) record `branch_*` attributes
+  plus per-flow child spans (person per-entity resolution, character-franchise's
+  two parallel resolutions, similarity's Qdrant probes + per-lane candidate
+  fetches) directly onto their `query_search.branch` span; and Stage 4's Qdrant
+  calls carry `query_search.semantic_qdrant` (three primitives, `probe_kind`
+  discriminator) and `similarity_qdrant` (anchor-vector retrieve + shape probe)
+  spans. Every routed LLM call nests a shared `llm.generate` span (provider/model/
+  cost/tokens/prompt-version/retry contract — see `docs/modules/llms.md`) under
+  whichever step/branch/handler span is current. Still pending: the Stage-4
+  dispatch span + `branch_error`/failed-branch-count attributes, and the
+  terminal success verdict + full result-count rollups (Bites 2 remainder, 5, 7,
+  9 in `observability_context/query_search_planning.md`). Full catalog:
+  `observability_context/observability_architecture.md`.
 
 ### `POST /rerun_query_search`
 - **Purpose**: Re-run a prior search with a new filter set while **bypassing
@@ -114,7 +142,7 @@ and API endpoints for search and movie detail retrieval.
 - **Errors**: 400 on a blank/over-length standard `query`; 422 on a duplicate
   entity flow, a blank/over-length entity name, more than 3 standard branches,
   empty `branches`, an unknown branch `type`, or an unknown filter enum value.
-- **Telemetry**: auto-traced only today; not yet manually instrumented.
+- **Telemetry**: no `outcome.*` verdict yet, but reuses the shared `_stream_from_branch_plan()` machine, so it gets the same `query_search.branch` spans (`branch_type` + `branch_uses_original_text`, the latter always false on rerun since Steps 0/1 don't run), Step 2/trait/Step 3/query-generation spans on standard branches, and entity-flow `branch_*` attributes + child spans for free. See the `/query_search` Telemetry note above and `docs/modules/observability.md`.
 
 ### `POST /similarity_search`
 - **Request**: `SimilaritySearchBody` — `tmdb_ids` (non-empty list of
@@ -136,14 +164,12 @@ and API endpoints for search and movie detail retrieval.
   entries stay valid. 24h TTL on every variant.
 - Errors: empty `tmdb_ids` → 422 (pydantic), unknown IDs → 422,
   invalid anchor → 400, unknown filter enum value → 422.
-- **Telemetry**: auto-traced only today; introducing the manual Qdrant
-  span (auto-instrumentation can't cover its gRPC client) is planned here
-  — see Observability section below.
+- **Telemetry**: no `outcome.*` verdict yet, but the underlying engine (`run_similar_movies_for_ids` in `search_v2/similar_movies.py`) is the same code the `/query_search` similarity entity flow calls, so this endpoint gets its Qdrant probe spans (`similarity_qdrant`: anchor-vector retrieve + shape probe) for free — closing the gRPC auto-instrumentation gap noted in `docs/modules/observability.md`. No request-span attributes or child spans beyond that yet.
 
 ### `POST /attribute_search`
 - **Request**: `AttributeSearchBody` — both fields optional:
   - `filters`: same `MetadataFiltersInput` shape used by `/query_search`
-    (genres, audio_languages, streaming_services, release_date /
+    (genres, audio_languages, keywords, streaming_services, release_date /
     runtime / maturity ranges). Same 422 path on unknown enum values.
   - `people`: list of `PersonInput` entries, each `{name: str}` (no
     role — the flow is role-agnostic). Name is normalized server-side.
@@ -317,8 +343,11 @@ called at import time right after `app = FastAPI(...)` is constructed) and
 auto-instruments FastAPI, httpx, psycopg v3, and redis — every request on
 every endpoint already gets a full network-hop trace for free. Manual spans
 and attributes on top of that exist for `/title_search`, `/movie_details`,
-`/movie_credits` (fully), and `/query_search` (Stage 0 request boundary only)
-as noted inline above; see
+`/movie_credits` (fully), `/query_search` (request boundary + most of the
+streaming pipeline — Steps 0/1, per-branch, trait pipeline, entity flows,
+Qdrant probes; Stage-4 dispatch/scoring + terminal success rollup still
+pending), and `/rerun_query_search` / `/similarity_search` (partially, via
+shared code paths with `/query_search`) as noted inline above; see
 `docs/modules/observability.md` for the bootstrap module itself and
 `observability_context/observability_architecture.md` for the full as-built
 catalog (source of truth — this section is a summary, not a replacement).
@@ -326,17 +355,27 @@ catalog (source of truth — this section is a summary, not a replacement).
 - **Per-request outcome verdict** — `outcome.success` (bool) /
   `outcome.failure_reason` (`FailureReason`: `invalid_parameters` |
   `invalid_filters` | `not_indexed` | `tmdb_removed` | `tmdb_fetch_failed` |
-  `internal_error`) — is written on the request span by the `@record_outcome`
-  decorator (`api/outcome.py`), applied to `/title_search`, `/movie_details`,
-  `/movie_credits`, and `/query_search`. Endpoint code never sets this
-  directly; it raises `EndpointFailure(failure_reason=...)` at each known
-  failure site and the reason bubbles up to the one recording point.
-  `/query_search` uses the decorator's **failure-only** form
-  (`success_on_return=False`) — it records rejections/crashes but not
-  `success=true`, because its handler returns a streaming response before the
-  work runs (the success verdict awaits a stream-aware mechanism). The three
+  `query_understanding_failed` | `internal_error`) — is written on the request
+  span by the `@record_outcome` decorator (`api/outcome.py`), applied to
+  `/title_search`, `/movie_details`, `/movie_credits`, and `/query_search`.
+  Endpoint code never sets this directly; it raises
+  `EndpointFailure(failure_reason=...)` at each known failure site and the
+  reason bubbles up to the one recording point. `/query_search` uses the
+  decorator's **failure-only** form (`success_on_return=False`) — it records
+  rejections/crashes but not `success=true`, because its handler returns a
+  streaming response before the work runs (the success verdict awaits a
+  stream-aware mechanism). A fatal Step 0 failure (caught inside the
+  orchestrator, delivered as a terminal SSE `error` event after the handler
+  already returned) is a second write path: `event_stream()` watches for that
+  event and sets `outcome.success=false` + `failure_reason=query_understanding_failed`
+  directly on `request_span` — the one case where the outcome write happens
+  outside the decorator, because the decorator can't see inside an
+  already-returned streaming response. A framework-level 422 (malformed body,
+  including any `extra="forbid"` rejection) is recorded by a separate app-level
+  `RequestValidationError` handler and applies to every endpoint. The three
   remaining endpoints (`/rerun_query_search`, `/similarity_search`,
-  `/attribute_search`) carry no `outcome.*` attribute yet.
+  `/attribute_search`) carry no per-request `outcome.*` attribute yet (aside
+  from that shared framework-422 handler).
 - **`movie.tmdb_id` / `movie.payload_source`** — shared request-span
   attributes on `/movie_details` and `/movie_credits`. `payload_source`
   (`cache`|`tmdb`) is set only at a success point, never optimistically, so
@@ -346,15 +385,18 @@ catalog (source of truth — this section is a summary, not a replacement).
   exception marks the span ERROR + records the exception. Swallowed
   best-effort failures (cache read/write, credits cross-populate) surface
   as span *events*, never span errors, and don't affect `outcome.success`.
-- **Partially / not yet instrumented**: `/query_search` has its Stage 0
-  request boundary instrumented (outcome + input attributes above) but **no
-  pipeline-stage spans** yet; `/rerun_query_search`, `/similarity_search`,
-  `/attribute_search` get only the auto-traced network spans — no outcome
-  attribute, no pipeline-stage spans, no `gen_ai.*` LLM attributes yet
-  (planned: `observability_context/observability_todos.md` Phase 1c-1..1c-4;
-  the `/query_search` pipeline is the highest-priority remaining target,
-  carrying the LLM fan-out the latency goal cares most about — see the
-  9-bite plan in `observability_context/query_search_planning.md`).
+- **Partially / not yet instrumented**: `/query_search` now carries request-
+  boundary attributes, a stream-end cost/token rollup, Step 0/1 spans,
+  per-branch spans, the standard-branch trait pipeline (Step 2/trait/Step 3/
+  query generation), entity-flow `branch_*` attributes + child spans, and
+  Stage-4 semantic/similarity Qdrant probe spans — but still lacks a Stage-4
+  dispatch span (`branch_error` + failed-branch-count attributes), the terminal
+  success verdict, and full result-count rollups. `/rerun_query_search` and
+  `/similarity_search` inherit a subset of this for free via shared code paths
+  (see their Telemetry notes above); `/attribute_search` gets only the
+  auto-traced network spans — no outcome attribute, no manual spans, no
+  `gen_ai.*` LLM attributes (it makes no LLM calls). See the remaining-bite
+  list in `observability_context/query_search_planning.md`.
 - **Naming**: every manual span name / attribute key referenced above is a
   `Name` constant from `observability/names.py` — never an inline string
   literal. See that module's docstring for the naming ruleset.
@@ -373,8 +415,9 @@ The lifespan context manager handles:
 ## CORS
 
 `CORSMiddleware` is configured on the app with an explicit allow-list of
-origins: `["https://www.cinemind.dev", "http://localhost:3000"]`,
-`allow_credentials=True`, `methods=["GET", "POST"]`, and
+origins: `["https://www.cinemind.dev", "http://localhost:3000",
+"http://localhost:3001"]`, `allow_credentials=True`,
+`methods=["GET", "POST"]`, and
 `headers=["Authorization", "Content-Type"]`. Explicit enumeration (not
 `"*"`) is required when `allow_credentials=True`. CORS is browser-enforced
 only — not a defense against curl/scripted callers. Add the apex domain

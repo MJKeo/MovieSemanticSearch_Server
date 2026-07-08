@@ -166,6 +166,16 @@ These rules apply everywhere and are not negotiable:
   Pydantic model already represents the data, return it directly
   rather than creating a parallel dataclass.
 
+- **`extra="forbid"` on wire-boundary and LLM-output models.** Every
+  Pydantic model that is either an external request boundary (API
+  `*Body` / `*Input` request models) or an LLM structured-output schema
+  sets `model_config = ConfigDict(extra="forbid")`. Unknown fields then
+  fail loudly — a framework 422 at the API boundary, a validation error
+  on LLM output — instead of being silently dropped. An unexpected field
+  is almost always client/UI taxonomy drift or an LLM contract violation
+  worth surfacing, not ignoring. Default to `extra="forbid"` on every new
+  boundary/output model rather than opting in per-model as gaps are
+  discovered (see ADR-102).
 - **Per-call async clients for pooled HTTP SDKs.** For async SDK
   clients that manage HTTP connection pools internally (e.g.,
   `AsyncOpenAI`, `httpx.AsyncClient`), prefer per-call

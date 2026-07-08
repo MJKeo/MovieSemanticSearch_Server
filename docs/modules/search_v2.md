@@ -163,7 +163,18 @@ source (IDF-weighted), themes (IDF-weighted + compounding bonus),
 cast (N-anchor bucket-with-floor), quality (always-on), format,
 country/language, specific-award. V3.4 Bucket-Weaver assembles top
 10 from 5 named buckets with MMR; franchise-fatigue (≤0.34 ratio)
-and director gap-boost prevent over-clustering.
+and director gap-boost prevent over-clustering. `active_anchor_types`
+appends `director_signature` in the multi-anchor path whenever
+`has_auteur_anchor` (union of anchor directors ∩ the curated auteur
+set) — this mirrors the single-anchor gate and was a correctness fix;
+it means "≥1 anchor was directed by a curated auteur", NOT "anchors
+share a director" (that's a separate, currently-untraced director
+*cohesion* signal). Title-based resolution (`_resolve_similarity_reference`)
+returns the winning row itself, and the engine
+(`run_similar_movies_for_ids`) reuses those already-fetched anchor rows
+instead of re-querying Postgres by id — the title path now issues one
+fewer `movie_card` read than the raw-ID path (`/similarity_search`,
+`run_similar_movies_batch.py`), which still fetches all anchors by id.
 
 ### Character-franchise search (`character_franchise_search.py`)
 Fires when Step 0 selects `EntityFlow.CHARACTER_FRANCHISE`. Uses
@@ -237,6 +248,43 @@ tier. Single-person queries collapse to pure popularity DESC.
 - `run_step_0_batch.py` — batch runner for Step 0 across N queries;
   writes per-query files to `step_0_results/`. Includes person and
   studio search result display.
+
+## Deterministic Endpoint Backers (no NLP / LLM / vector search)
+
+Three standalone modules back API endpoints outside the trait pipeline
+and the Step-0 entity flows. None makes an LLM or vector call — every
+input is a closed enum / numeric range (pushed to the SQL layer via
+`MetadataFilters`), a person name resolved against the lexical posting
+tables, or a normalized title match.
+
+### Attribute search (`attribute_search.py`)
+Backs `POST /attribute_search`. Hard-attribute browse: with no people
+supplied, returns the whole `movie_card` table ranked by the neutral
+80/20 popularity/reception prior (`fetch_neutral_reranker_seed_ids`),
+filter-respecting. With one or more people supplied, reuses the Step 0
+person-prominence model verbatim via the shared `fetch_person_buckets`
+(role-agnostic, 4 buckets LEAD/MAJOR/RELEVANT/MINOR) — the sole
+divergence from Step 0 is that per-person bucket weights are **summed**
+across people (Step 0 takes MIN bucket + `overlap_count`), so a movie
+crediting more/more-prominent people ranks higher.
+
+### Title-only typeahead (`title_search.py`)
+Backs `GET /title_search`. Title-search for the frontend's "pick
+similar-to" mode, called on every debounced keystroke. Single Postgres
+query over `movie_card.title_normalized` with two exact tiers
+(token-prefix > substring) plus a `pg_trgm` `word_similarity` fuzzy
+fallback when the exact scan underfills; within-tier sort is
+shorter-normalized-title-first, then the same 80/20 popularity/reception
+prior `/attribute_search` uses, then `movie_id DESC`.
+
+### Query input validation (`query_input_validation.py`)
+Single source of truth for sanitizing the two user free-text fields
+(`query` and optional `clarification`): strip, non-empty, length cap.
+Every public surface that accepts them (the API endpoint, both
+orchestrators, and the individually-callable Steps 0/1) routes through
+here so the rules are enforced identically. Over-length input is
+**rejected** (API → 400), never silently truncated, so a query is never
+sliced mid-clause into corrupted intent.
 
 ## Stage 4 — Execution & Ranking (`stage_4_execution.py`)
 
@@ -568,6 +616,9 @@ concurrently via `asyncio.gather`.
 | `popularity_sort.py` | Shared popularity-sort helper for entity-flow executors. |
 | `implicit_expectations.py` | Implicit-prior state management (quality/popularity priors). |
 | `vague_temporal_vocabulary.py` | Shared vague-time/duration mappings injected into Steps 2/3 and metadata handler. |
+| `attribute_search.py` | Backs `POST /attribute_search`. Deterministic hard-attribute browse; sums Step-0 person-prominence bucket weights across people. No LLM/vector. |
+| `title_search.py` | Backs `GET /title_search`. Deterministic title typeahead over `movie_card.title_normalized` (two exact tiers + `pg_trgm` fuzzy fallback). No LLM/vector/Redis. |
+| `query_input_validation.py` | Single source of truth for `query`/`clarification` sanitization (strip, non-empty, length cap); used by the API, both orchestrators, and Steps 0/1. |
 
 ## Step 2 / Query Analysis Design
 
@@ -774,6 +825,26 @@ through every V2 pipeline primitive at retrieval time:
   an eligible-movie-card scan in one Postgres round-trip.
 - **No-filter regression.** When filters is None, helpers return `("", [])`
   and the query plan is byte-identical to pre-filter behavior.
+
+## Observability
+
+The `/query_search` streaming path (`streaming_orchestrator.py`) carries manual
+OTel spans through most of the pipeline: `query_search.step_0`/`.step_1`
+(flow routing + spin generation), one `query_search.branch` span per fetch
+(also emitted on rerun, which shares `_stream_from_branch_plan`), the
+standard-branch trait pipeline (`full_pipeline_orchestrator.py` /
+`category_handlers/handler.py`: `.step_2`/`.trait`/`.step_3`/`.query_generation`),
+the six entity-flow executors' `branch_*` attributes + per-flow child spans, and
+manual Qdrant probe spans (`semantic_query_execution.py`'s
+`query_search.semantic_qdrant`, `similar_movies.py`'s `similarity_qdrant`) that
+close the gRPC auto-instrumentation gap. Every routed LLM call
+(`implementation/llms/generic_methods.py`) nests a shared `llm.generate` span
+under whichever step/branch/handler span is current, so cost/tokens/retries
+attribute automatically to the right stage. This module never imports the OTel
+SDK directly for its own logic — spans wrap existing call sites without
+changing return values or control flow. Source of truth for the full span/
+attribute catalog: `observability_context/observability_architecture.md`;
+summary: `docs/modules/api.md`'s Observability section.
 
 ## Interactions
 

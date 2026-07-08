@@ -66,10 +66,18 @@ instrumentation elsewhere in the codebase. Both are consumed by
   driver) needs its own instrumentor added in `tracing.py`.
 - **Qdrant is deliberately NOT auto-instrumented.** Its async client
   speaks gRPC, which the available auto-instrumentors don't wrap
-  cleanly. Qdrant timing is expected to come from a manual vector-search
-  span once `/similarity_search` / `/query_search` are instrumented
-  (`observability_context/observability_todos.md` Phase 1c-1/1c-3) — not
-  from this module.
+  cleanly. The gap is closed for every current Qdrant call site by manual
+  spans in the call-site modules (not here): `query_search.semantic_qdrant`
+  (one span per `query_points` primitive, discriminated by a `probe_kind`
+  enum) in `search_v2/endpoint_fetching/semantic_query_execution.py`, and
+  `similarity_qdrant` (anchor-vector retrieve + shape probe, same
+  `probe_kind` vocabulary) in `search_v2/similar_movies.py`. Because
+  `similar_movies.py` is the shared engine behind both the `/query_search`
+  similarity entity flow and the standalone `/similarity_search` endpoint,
+  both get the spans for free. Parenting is automatic — the probes run
+  inside `asyncio.gather`, and Tasks copy the ambient OTel context. See
+  `observability_context/observability_architecture.md` for the full
+  attribute catalog.
 - **The docker-compose `api` service is not tracing-ready.**
   `observability/` is not volume-mounted into the container and the OTel
   packages are not in `api/requirements.txt`, so importing this package

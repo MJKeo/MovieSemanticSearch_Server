@@ -1,6 +1,11 @@
 # ADR-012: LLM Generation Cost Optimization (Proposals)
 
-**Status:** Proposed (not yet implemented)
+**Status:** Superseded — the phased roadmap below was not implemented as
+written. See the Postscript for the trajectory the pipeline actually took.
+
+> **Note:** The proposals below are preserved verbatim as a historical
+> record. Do not follow this roadmap — read the Postscript at the bottom
+> first for what was actually built and why the plan diverged.
 
 ## Context
 
@@ -92,6 +97,36 @@ Any change should be validated on 50-100 diverse movies:
 - Schema validation pass rate (target: >97%)
 - Manual review of 15-20 outputs
 
+## Postscript (2026-07 audit)
+
+This ADR's four-phase roadmap is superseded. What actually shipped diverged
+on three of the four phases, so the "Proposed" framing above is misleading if
+read as the current plan:
+
+- **Phase 1 (schema cleanup + Batch API) — shipped, under later ADRs.** The
+  OpenAI Batch API is now the *core* Stage 6 production architecture, not a
+  proposal: see `movie_ingestion/metadata_generation/batch_generation/` and
+  ADR-025 (schema design), ADR-036 (field-description minimalism), ADR-041
+  (per-type batch architecture), ADR-044 (multi-type batch pipeline).
+- **Phase 2 (migrate to GPT-4o-mini to eliminate reasoning tokens) — not
+  adopted.** The shipped generators run on `gpt-5-mini` / `gpt-5.4-mini`,
+  selected per-generator via evaluation (ADR-039, ADR-043, ADR-044), a
+  different model family than this ADR recommends. The "eliminate hidden
+  reasoning tokens" cost argument was outweighed by generation quality.
+- **Phase 4 (consolidate 8 calls → 5) — not adopted; the opposite happened.**
+  The pipeline grew to **12** generation types (plot_events, reception,
+  plot_analysis, viewer_experience, watch_context, narrative_techniques,
+  production_keywords, production_techniques, source_of_inspiration,
+  source_material_v2, concept_tags, franchise) rather than merging down to 5.
+- **Phase 3 (input-token reduction) — partially reflected** in the schema and
+  prompt work of ADR-025/ADR-036, not tracked as a discrete phase.
+
+Net: the cost-reduction *intent* was pursued (Batch API discount, schema
+minimalism), but the specific model swap and call-consolidation tactics were
+rejected in favor of quality-driven, per-generator model selection.
+
 ## References
 
 - docs/modules/llms.md (ingestion-time LLM generation details)
+- ADR-025, ADR-036, ADR-041, ADR-044 (Batch API + schema — realized Phase 1)
+- ADR-039, ADR-043 (per-generator model selection — supersedes Phase 2)

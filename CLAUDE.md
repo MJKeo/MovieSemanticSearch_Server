@@ -104,7 +104,7 @@ Fetch display metadata → return JSON
 | `implementation/prompts/` | System prompts for each LLM task |
 | `implementation/misc/` | Utilities: string normalization, SQL LIKE escaping |
 | `schemas/` | Top-level shared Pydantic models, enums, V2 search-side translation schemas, category taxonomy |
-| `search_v2/` | V2 search pipeline: front-end Steps 0/1/2 (Gemini) + back-end Stage 3 (7 endpoints) and Stage 4 (assembly). Includes Jupyter notebooks for exploration. |
+| `search_v2/` | V2 search pipeline: front-end Steps 0/1/2 (Gemini) + back-end Stage 3 (10 endpoints) and Stage 4 (assembly). Includes Jupyter notebooks for exploration. |
 | `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data), `metadata_generation/` (Stage 6 LLM generation), `final_ingestion/` (Postgres + Qdrant upserts) |
 | `unit_tests/` | pytest test suite (77 files); `conftest.py` provides `base_movie_factory` fixture |
 | `docs/` | Project context, decision records, module summaries, conventions |

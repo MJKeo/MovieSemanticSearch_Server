@@ -26,7 +26,8 @@ lives in `movie_ingestion/metadata_generation/`. See
 
 | File | Purpose |
 |------|---------|
-| `generic_methods.py` | LLM client initialization, all provider-specific generation functions, `LLMProvider` enum, and `generate_llm_response_async` unified router. Seven providers: OpenAI, Kimi, Gemini, Groq, Alibaba, Anthropic, WHAM. Embeddings via OpenAI `text-embedding-3-large` (3072 dims) per ADR-066. |
+| `generic_methods.py` | LLM client initialization, all provider-specific generation functions, `LLMProvider` enum, and `generate_llm_response_async` unified router. Seven providers: OpenAI, Kimi, Gemini, Groq, Alibaba, Anthropic, WHAM. Embeddings via OpenAI `text-embedding-3-large` (3072 dims) per ADR-066. Wraps the router's retry loop in one `llm.generate` OTel span and `generate_vector_embedding` in one `embedding.generate` span (cost/token rollup, cache-read accounting, prompt-version hash, sample-gated payload capture) — see `docs/modules/observability.md` and `observability_context/observability_architecture.md` for the span/attribute catalog. |
+| `pricing.py` | Canonical `(input, cached_input, output)` USD-per-1M-token pricing table for the live serving models (`gemini-3.5-flash`, `gpt-5.4-mini`, `text-embedding-3-large`) plus `compute_llm_cost_usd()`. Dependency-free (stdlib only) so the low-level router can import it without pulling in the OTel SDK. An unpriced model returns `None` (never a fabricated cost). Scoped to live serving only — a separate, not-yet-deduplicated `MODEL_PRICING` table in `movie_ingestion/metadata_generation/helper_scripts/estimate_generation_cost.py` covers offline ingestion-time models (see `docs/TODO.md`). |
 | `query_understanding_methods.py` | **V1 search path only** — search-time DAG: 5 async functions that run in parallel with dependency management. Uses Kimi for all QU calls. Redis caching planned but not yet implemented (key format: `qu:v{N}:{hash}`, TTL 1 day). The V2 search pipeline (`search_v2/step_0.py`, `step_1.py`, `step_2.py`) does NOT use this DAG — V2 calls Gemini directly via `generate_llm_response_async`. |
 | `vector_metadata_generation_methods.py` | Legacy ingestion-time generation functions. Superseded by `movie_ingestion/metadata_generation/generators/`. Provides `TokenUsage` NamedTuple which is actively imported by all 12 generators — do not delete this module. |
 
@@ -66,8 +67,7 @@ provider (passed through to the API) and popped by the WHAM provider
 before forwarding; all 12 generators pass `verbosity="low"`. Errors
 propagate without wrapping.
 
-All provider methods return `Tuple[BaseModel, int, int]` (parsed
-response, input tokens, output tokens).
+**Return-type contract differs by call shape.** The 7 async provider functions (`generate_openai_response_async`, `generate_kimi_response_async`, `generate_gemini_response_async`, `generate_groq_response_async`, `generate_alibaba_response_async`, `generate_anthropic_response_async`, `generate_wham_response_async`) all return a uniform 4-tuple `(parsed, input_tokens, output_tokens, cached_input_tokens)` so the router can unpack any provider identically; `cached_input_tokens` is a SUBSET of `input_tokens` (tokens the provider served from its prompt cache), never additive. The 2 sync helpers (`generate_openai_response`, `generate_kimi_response` — an offline/ingestion path, not on the search-time telemetry path) stay a 3-tuple `(parsed, input_tokens, output_tokens)`. `generate_llm_response_async` (the router) itself still returns a 3-tuple to its callers — it accounts cost/cached-tokens internally via `_account_llm_call_cost` and does not surface `cached_input_tokens` up the stack. Each async provider extracts cached tokens via the shared `_extract_cached_tokens(usage)` helper, which probes the Chat-Completions/compatible, Responses-API/WHAM, and Gemini usage shapes; Anthropic is deliberately NOT probed (it reports cache reads separately and does not fold them into `input_tokens`, which would break the cached⊆input model) — it's unpriced anyway.
 
 ## Search-Time Query Understanding DAG
 
@@ -96,10 +96,12 @@ partial DAG results.
   are applied downstream and never baked into cached QU results.
 - Many LLM output fields (justification, explanation) exist for
   chain-of-thought quality but are not used in final embeddings.
-- Kimi return type: both sync and async Kimi methods return
-  `Tuple[BaseModel, int, int]`. Callers in `query_understanding_methods.py`
-  unpack with `parsed, _, _`. A pre-existing bug (returning only the
-  model, not the tuple) was fixed when the multi-provider work landed.
+- Kimi return type: the sync `generate_kimi_response` stays a 3-tuple
+  `(parsed, input_tokens, output_tokens)`; the async `generate_kimi_response_async`
+  is a 4-tuple with `cached_input_tokens` appended (see the Return-type contract
+  note above). Callers in `query_understanding_methods.py` unpack the async form
+  with `parsed, _, _, _`. A pre-existing bug (returning only the model, not the
+  tuple) was fixed when the multi-provider work landed.
 - Kimi schema name: uses `response_format.__name__` (actual class name),
   not `response_format.__class__.__name__` (which returns the metaclass).
 - Gemini config: required keys (`response_mime_type`, `response_json_schema`,
@@ -137,6 +139,7 @@ partial DAG results.
   uses `responses.stream()` (Responses API), not `chat.completions`.
   With any `reasoning_effort` other than `"none"`, GPT-5.4 rejects
   `temperature`, `top_p`, `max_output_tokens`, and `logprobs`.
+- **LLM cost/token accounting happens per-attempt, before parsing.** Every async provider extracts usage and calls `_account_llm_call_cost` (→ `compute_llm_cost_usd` → the request-scoped accumulator in `observability/cost_tracking.py`) immediately after the API call returns, BEFORE the structured-output parse/validate that can raise. A billed-but-failed-parse attempt (and every retried attempt) still counts toward the request-level `query_search.cost_usd` / `query_search.usage.*` rollup — the router's own per-span `llm.cost_usd` stays the successful-attempt cost only, so the rollup is a strict superset. This is a no-op outside a request tracked via `track_request_cost()` (offline ingestion pays nothing).
 - **`generate_vector_embedding` uses a per-call `async with AsyncOpenAI(...)`
   context manager** instead of the module-level singleton. This avoids
   httpx connection pool exhaustion (openai-python#769) that caused
