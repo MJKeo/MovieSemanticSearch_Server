@@ -80,35 +80,40 @@ from search_v2.similar_studio_registry import (
 )
 
 from observability.names import (
-    QUERY_SEARCH_BRANCH_ADDITIONAL_BOOSTS,
-    QUERY_SEARCH_BRANCH_ANCHOR_SHAPE,
-    QUERY_SEARCH_BRANCH_ANCHOR_SHAPE_COHESION,
+    # query_search-branch-specific: the reference->anchor resolution skeleton,
+    # set only on the /query_search path (the pure endpoint supplies anchor IDs).
     QUERY_SEARCH_BRANCH_ENTITIES,
     QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS,
-    QUERY_SEARCH_BRANCH_LANE_COHESION,
-    QUERY_SEARCH_BRANCH_LANE_WEIGHTS,
-    QUERY_SEARCH_BRANCH_LOW_COHESION_FALLBACK,
-    QUERY_SEARCH_BRANCH_RETRIEVAL_LANES,
-    QUERY_SEARCH_BRANCH_RETRIEVAL_TOTAL,
-    QUERY_SEARCH_BRANCH_SHAPE_MODIFIERS,
     QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
-    QUERY_SEARCH_BRANCH_VECTOR_SPACE_COHESION,
-    QUERY_SEARCH_BRANCH_VECTOR_SPACE_WEIGHTS,
-    QUERY_SEARCH_BRANCH_WEAVE_TARGETS,
-    QUERY_SEARCH_SIMILARITY_FETCH,
-    QUERY_SEARCH_SIMILARITY_FETCH_LANE,
-    QUERY_SEARCH_SIMILARITY_FETCH_MATCH,
-    QUERY_SEARCH_SIMILARITY_FETCH_RESULT_COUNT,
-    QUERY_SEARCH_SIMILARITY_QDRANT,
-    QUERY_SEARCH_SIMILARITY_QDRANT_FILTER_ACTIVE,
-    QUERY_SEARCH_SIMILARITY_QDRANT_HIT_COUNT,
-    QUERY_SEARCH_SIMILARITY_QDRANT_HITS_BY_SPACE,
-    QUERY_SEARCH_SIMILARITY_QDRANT_LIMIT_PER_SPACE,
-    QUERY_SEARCH_SIMILARITY_QDRANT_PROBE_KIND,
-    QUERY_SEARCH_SIMILARITY_QDRANT_REQUESTED_COUNT,
-    QUERY_SEARCH_SIMILARITY_QDRANT_RETURNED_COUNT,
-    QUERY_SEARCH_SIMILARITY_QDRANT_SPACE_COUNT,
-    QUERY_SEARCH_SIMILARITY_QDRANT_SPACES,
+    # flow-neutral engine spans + signal attributes (land on the branch span on the
+    # /query_search path, on the server span on the /similarity_search path).
+    SIMILARITY_ADDITIONAL_BOOSTS,
+    SIMILARITY_ANCHOR_COUNT,
+    SIMILARITY_ANCHOR_SHAPE,
+    SIMILARITY_ANCHOR_SHAPE_COHESION,
+    SIMILARITY_FETCH,
+    SIMILARITY_FETCH_LANE,
+    SIMILARITY_FETCH_MATCH,
+    SIMILARITY_FETCH_RESULT_COUNT,
+    SIMILARITY_LANE_COHESION,
+    SIMILARITY_LANE_WEIGHTS,
+    SIMILARITY_LOW_COHESION_FALLBACK,
+    SIMILARITY_QDRANT,
+    SIMILARITY_QDRANT_FILTER_ACTIVE,
+    SIMILARITY_QDRANT_HIT_COUNT,
+    SIMILARITY_QDRANT_HITS_BY_SPACE,
+    SIMILARITY_QDRANT_LIMIT_PER_SPACE,
+    SIMILARITY_QDRANT_PROBE_KIND,
+    SIMILARITY_QDRANT_REQUESTED_COUNT,
+    SIMILARITY_QDRANT_RETURNED_COUNT,
+    SIMILARITY_QDRANT_SPACE_COUNT,
+    SIMILARITY_QDRANT_SPACES,
+    SIMILARITY_RETRIEVAL_LANES,
+    SIMILARITY_RETRIEVAL_TOTAL,
+    SIMILARITY_SHAPE_MODIFIERS,
+    SIMILARITY_VECTOR_SPACE_COHESION,
+    SIMILARITY_VECTOR_SPACE_WEIGHTS,
+    SIMILARITY_WEAVE_TARGETS,
 )
 
 # Manual instrumentation tracer. A no-op proxy when `setup_tracing` hasn't run
@@ -1390,13 +1395,13 @@ async def _load_anchor_vectors(
     # auto-instrumentation), so without this the vector-load is an untraced blind
     # spot — the flow's OTHER Qdrant call (the `shape` probe) was the only visible
     # one. `returned_count < requested_count` flags an anchor missing from Qdrant.
-    with tracer.start_as_current_span(QUERY_SEARCH_SIMILARITY_QDRANT) as span:
+    with tracer.start_as_current_span(SIMILARITY_QDRANT) as span:
         span.set_attribute(
-            QUERY_SEARCH_SIMILARITY_QDRANT_PROBE_KIND,
+            SIMILARITY_QDRANT_PROBE_KIND,
             SimilarityQdrantProbeKind.ANCHOR_VECTORS.value,
         )
         span.set_attribute(
-            QUERY_SEARCH_SIMILARITY_QDRANT_REQUESTED_COUNT, len(anchor_ids)
+            SIMILARITY_QDRANT_REQUESTED_COUNT, len(anchor_ids)
         )
         records = await qdrant_client.retrieve(
             collection_name=COLLECTION_ALIAS,
@@ -1404,7 +1409,7 @@ async def _load_anchor_vectors(
             with_payload=False,
             with_vectors=[space.value for space in VectorName],
         )
-        span.set_attribute(QUERY_SEARCH_SIMILARITY_QDRANT_RETURNED_COUNT, len(records))
+        span.set_attribute(SIMILARITY_QDRANT_RETURNED_COUNT, len(records))
     return {int(getattr(record, "id")): _record_vectors(record) for record in records}
 
 
@@ -1451,21 +1456,21 @@ async def _query_spaces_batch(
     # N named vectors server-side, so the attrs describe the batch (space_count /
     # spaces / per-space + total recall) rather than a single space.
     spaces = [vector_name.value for vector_name, _, _ in requests]
-    with tracer.start_as_current_span(QUERY_SEARCH_SIMILARITY_QDRANT) as span:
+    with tracer.start_as_current_span(SIMILARITY_QDRANT) as span:
         span.set_attribute(
-            QUERY_SEARCH_SIMILARITY_QDRANT_PROBE_KIND,
+            SIMILARITY_QDRANT_PROBE_KIND,
             SimilarityQdrantProbeKind.SHAPE.value,
         )
-        span.set_attribute(QUERY_SEARCH_SIMILARITY_QDRANT_SPACE_COUNT, len(spaces))
-        span.set_attribute(QUERY_SEARCH_SIMILARITY_QDRANT_SPACES, json.dumps(spaces))
+        span.set_attribute(SIMILARITY_QDRANT_SPACE_COUNT, len(spaces))
+        span.set_attribute(SIMILARITY_QDRANT_SPACES, json.dumps(spaces))
         # Per-space limits are uniform within a call (shape search passes one
         # effective limit across the batch); record it so the 2× over-fetch under
         # an active filter is visible.
         span.set_attribute(
-            QUERY_SEARCH_SIMILARITY_QDRANT_LIMIT_PER_SPACE, requests[0][2]
+            SIMILARITY_QDRANT_LIMIT_PER_SPACE, requests[0][2]
         )
         span.set_attribute(
-            QUERY_SEARCH_SIMILARITY_QDRANT_FILTER_ACTIVE, qdrant_filter is not None
+            SIMILARITY_QDRANT_FILTER_ACTIVE, qdrant_filter is not None
         )
         responses = await qdrant_client.query_batch_points(
             collection_name=COLLECTION_ALIAS,
@@ -1478,10 +1483,10 @@ async def _query_spaces_batch(
             for space, response in zip(spaces, responses, strict=True)
         }
         span.set_attribute(
-            QUERY_SEARCH_SIMILARITY_QDRANT_HITS_BY_SPACE, json.dumps(hits_by_space)
+            SIMILARITY_QDRANT_HITS_BY_SPACE, json.dumps(hits_by_space)
         )
         span.set_attribute(
-            QUERY_SEARCH_SIMILARITY_QDRANT_HIT_COUNT, sum(hits_by_space.values())
+            SIMILARITY_QDRANT_HIT_COUNT, sum(hits_by_space.values())
         )
     return [
         [(int(point.id), float(point.score)) for point in response.points]
@@ -2592,7 +2597,7 @@ def _record_weave_targets(target_by_bucket: dict[str, int]) -> None:
         for bucket in ALL_BUCKETS
         if bucket in target_by_bucket
     }
-    span.set_attribute(QUERY_SEARCH_BRANCH_WEAVE_TARGETS, json.dumps(ordered))
+    span.set_attribute(SIMILARITY_WEAVE_TARGETS, json.dumps(ordered))
 
 
 async def _resolve_similarity_reference(reference: SimilarityReference) -> dict | None:
@@ -2726,16 +2731,18 @@ async def run_similarity_search(
         )
     # Hand the winning rows resolved above straight to the engine; anchor facets
     # were already fetched while disambiguating each title, so the engine's anchor
-    # load fetches nothing on this path (see `run_similar_movies_for_ids`).
-    result = await run_similar_movies_for_ids(
+    # load fetches nothing on this path (see `run_similar_movies_for_ids`). The
+    # engine records the flow-neutral `similarity.*` signal attributes itself, so
+    # both this branch path and the pure /similarity_search endpoint get them with
+    # no per-caller wiring — only the reference-resolution skeleton above is
+    # query_search-specific.
+    return await run_similar_movies_for_ids(
         anchor_ids,
         prefetched_anchor_rows=anchor_rows,
         limit=limit,
         qdrant_limit=qdrant_limit,
         metadata_filters=metadata_filters,
     )
-    _record_similarity_signals(result)
-    return result
 
 
 def _record_similarity_entities(
@@ -2790,31 +2797,34 @@ def _set_json_map(span: object, name: str, mapping: dict) -> None:
 
 
 def _record_similarity_signals(result: SimilarMoviesSearchResult) -> None:
-    """Set similarity-specific flow signals on the branch span, organized around
-    the four reader questions: (1) which traits mattered, (2) which avenues fetched
-    candidates and how many each returned, (3) how strong the scoring weights were,
-    (4) which paths were active in the final weave. Map-shaped signals are single
-    JSON-string attributes (see `_set_json_map`). The (1) block is flow-specific —
-    single-anchor emits its additive weight modifiers + scalar shape, multi-anchor
-    emits per-shape/lane/vector-space cohort cohesion — so the split mirrors how the
-    two flows actually differ. Weave-seat counts are set deeper, in `_build_results`."""
+    """Set the flow-neutral `similarity.*` signal attributes on the CURRENT span,
+    organized around the four reader questions: (1) which traits mattered, (2) which
+    avenues fetched candidates and how many each returned, (3) how strong the scoring
+    weights were, (4) which paths were active in the final weave. Called from the
+    engine, so the current span is the `query_search.branch` span on the /query_search
+    path and the FastAPI server span on the pure /similarity_search path. Map-shaped
+    signals are single JSON-string attributes (see `_set_json_map`). The (1) block is
+    flow-specific — single-anchor emits its additive weight modifiers + scalar shape,
+    multi-anchor emits per-shape/lane/vector-space cohort cohesion — so the split
+    mirrors how the two flows actually differ. Weave-seat counts are set deeper, in
+    `_build_results`."""
     span = trace.get_current_span()
     debug = result.debug
     is_single = len(result.anchor_movie_ids) == 1
 
     # (2) Candidate-fetch avenues (fired lanes → result count) + deduped union.
-    _set_json_map(span, QUERY_SEARCH_BRANCH_RETRIEVAL_LANES, debug.retrieval_counts_by_lane)
-    span.set_attribute(QUERY_SEARCH_BRANCH_RETRIEVAL_TOTAL, debug.retrieval_total)
+    _set_json_map(span, SIMILARITY_RETRIEVAL_LANES, debug.retrieval_counts_by_lane)
+    span.set_attribute(SIMILARITY_RETRIEVAL_TOTAL, debug.retrieval_total)
 
     # (3) Scoring weight strengths: additive lane weights + the 8-space shape mix.
-    _set_json_map(span, QUERY_SEARCH_BRANCH_LANE_WEIGHTS, debug.normalized_lane_weights)
+    _set_json_map(span, SIMILARITY_LANE_WEIGHTS, debug.normalized_lane_weights)
     _set_json_map(
-        span, QUERY_SEARCH_BRANCH_VECTOR_SPACE_WEIGHTS, debug.vector_space_weights
+        span, SIMILARITY_VECTOR_SPACE_WEIGHTS, debug.vector_space_weights
     )
 
     # (4) Final-weave paths: seat map is set in `_build_results`; fallback flag here.
     span.set_attribute(
-        QUERY_SEARCH_BRANCH_LOW_COHESION_FALLBACK,
+        SIMILARITY_LOW_COHESION_FALLBACK,
         bool(debug.low_cohesion_fallback_used),
     )
 
@@ -2822,7 +2832,7 @@ def _record_similarity_signals(result: SimilarMoviesSearchResult) -> None:
     # multiplier). Omit the attribute entirely when nothing fired.
     boosts = [b for b in _ADDITIONAL_BOOST_TYPES if b in result.active_anchor_types]
     if boosts:
-        span.set_attribute(QUERY_SEARCH_BRANCH_ADDITIONAL_BOOSTS, json.dumps(boosts))
+        span.set_attribute(SIMILARITY_ADDITIONAL_BOOSTS, json.dumps(boosts))
 
     # (1) Traits marked important — flow-specific presentation.
     if is_single:
@@ -2832,11 +2842,11 @@ def _record_similarity_signals(result: SimilarMoviesSearchResult) -> None:
         modifiers = [
             t for t in result.active_anchor_types if SINGLE_ANCHOR_ADJUSTMENTS.get(t)
         ]
-        span.set_attribute(QUERY_SEARCH_BRANCH_SHAPE_MODIFIERS, json.dumps(modifiers))
+        span.set_attribute(SIMILARITY_SHAPE_MODIFIERS, json.dumps(modifiers))
         # Scalar reach×quality shape; single-anchor cohesion is {shape: 1.0} or {}.
         shape_keys = list(debug.anchor_shape_cohesion)
         span.set_attribute(
-            QUERY_SEARCH_BRANCH_ANCHOR_SHAPE,
+            SIMILARITY_ANCHOR_SHAPE,
             shape_keys[0] if shape_keys else _ANCHOR_SHAPE_NONE,
         )
     else:
@@ -2850,11 +2860,11 @@ def _record_similarity_signals(result: SimilarMoviesSearchResult) -> None:
             cohesion[_ANCHOR_SHAPE_NONE] = none_fraction
         ordered = dict(sorted(cohesion.items(), key=lambda kv: (-kv[1], kv[0])))
         span.set_attribute(
-            QUERY_SEARCH_BRANCH_ANCHOR_SHAPE_COHESION, json.dumps(ordered)
+            SIMILARITY_ANCHOR_SHAPE_COHESION, json.dumps(ordered)
         )
-        _set_json_map(span, QUERY_SEARCH_BRANCH_LANE_COHESION, debug.lane_cohesion)
+        _set_json_map(span, SIMILARITY_LANE_COHESION, debug.lane_cohesion)
         _set_json_map(
-            span, QUERY_SEARCH_BRANCH_VECTOR_SPACE_COHESION, debug.vector_space_cohesion
+            span, SIMILARITY_VECTOR_SPACE_COHESION, debug.vector_space_cohesion
         )
 
 
@@ -2918,8 +2928,17 @@ async def run_similar_movies_for_ids(
     if missing:
         raise LookupError(f"movie_card rows not found for tmdb_ids={missing}")
 
+    # anchor_count is the single-vs-multi discriminator that selects the pipeline
+    # below and governs how every downstream similarity signal reads. Set it on the
+    # current span (the query_search.branch span on the branch path; the FastAPI
+    # server span on the /similarity_search endpoint) so both callers carry it;
+    # it stands in for the query_search entity skeleton, which the pure endpoint
+    # can't produce (anchors are supplied, not resolved). No-op offline.
+    span = trace.get_current_span()
+    span.set_attribute(SIMILARITY_ANCHOR_COUNT, len(anchor_ids))
+
     if len(anchor_ids) == 1:
-        return await _run_single_anchor_similarity(
+        result = await _run_single_anchor_similarity(
             anchor_ids[0],
             anchor_rows,
             vectors_by_anchor,
@@ -2930,18 +2949,26 @@ async def run_similar_movies_for_ids(
             quality_limit=quality_limit,
             metadata_filters=metadata_filters,
         )
+    else:
+        result = await _run_multi_anchor_similarity(
+            anchor_ids,
+            anchor_rows,
+            vectors_by_anchor,
+            studio_entries_by_company_id,
+            director_terms_by_anchor,
+            limit=limit,
+            qdrant_limit=qdrant_limit,
+            quality_limit=quality_limit,
+            metadata_filters=metadata_filters,
+        )
 
-    return await _run_multi_anchor_similarity(
-        anchor_ids,
-        anchor_rows,
-        vectors_by_anchor,
-        studio_entries_by_company_id,
-        director_terms_by_anchor,
-        limit=limit,
-        qdrant_limit=qdrant_limit,
-        quality_limit=quality_limit,
-        metadata_filters=metadata_filters,
-    )
+    # Record the flow-neutral `similarity.*` signal attributes here in the engine so
+    # BOTH callers get them: the /query_search similarity branch (recording onto its
+    # branch span) and the pure /similarity_search endpoint (recording onto the
+    # server span). Relocated from `run_similarity_search`, which previously called
+    # this only on the branch path.
+    _record_similarity_signals(result)
+    return result
 
 
 # Per-lane candidate-fetch instrumentation. Each Postgres retrieval lane in the
@@ -2967,13 +2994,13 @@ async def _traced_lane_fetch(
     and returns the fetch result unchanged. Behavior-preserving: the result and any
     raised exception propagate exactly as the bare `await coro` would.
     """
-    with tracer.start_as_current_span(QUERY_SEARCH_SIMILARITY_FETCH) as span:
-        span.set_attribute(QUERY_SEARCH_SIMILARITY_FETCH_LANE, lane)
+    with tracer.start_as_current_span(SIMILARITY_FETCH) as span:
+        span.set_attribute(SIMILARITY_FETCH_LANE, lane)
         span.set_attribute(
-            QUERY_SEARCH_SIMILARITY_FETCH_MATCH, json.dumps(match, sort_keys=True)
+            SIMILARITY_FETCH_MATCH, json.dumps(match, sort_keys=True)
         )
         result = await coro
-        span.set_attribute(QUERY_SEARCH_SIMILARITY_FETCH_RESULT_COUNT, len(result))
+        span.set_attribute(SIMILARITY_FETCH_RESULT_COUNT, len(result))
         return result
 
 

@@ -66,6 +66,8 @@ from implementation.classes.watch_providers import (
 from implementation.misc.event_loop import install_uvloop
 from implementation.misc.helpers import create_watch_provider_offering_key
 from observability.names import (
+    ATTRIBUTE_SEARCH_PEOPLE_NAMES,
+    ATTRIBUTE_SEARCH_PEOPLE_REQUESTED_COUNT,
     CACHE_WRITE_OK,
     FILTERS_ACTIVE_COUNT,
     FILTERS_AUDIO_LANGUAGES,
@@ -86,20 +88,26 @@ from observability.names import (
     MOVIE_DETAILS_PAYLOAD_CREATION,
     MOVIE_PAYLOAD_SOURCE,
     MOVIE_TMDB_ID,
-    OUTCOME_FAILURE_REASON,
-    OUTCOME_SUCCESS,
     QUERY_SEARCH_CLARIFICATION,
     QUERY_SEARCH_CLARIFICATION_CHARS,
-    QUERY_SEARCH_COST_USD,
+    QUERY_SEARCH_FAILED_BRANCH_COUNT,
     QUERY_SEARCH_QUERY,
     QUERY_SEARCH_QUERY_CHARS,
-    QUERY_SEARCH_USAGE_CACHED_INPUT_TOKENS,
-    QUERY_SEARCH_USAGE_INPUT_TOKENS,
-    QUERY_SEARCH_USAGE_OUTPUT_TOKENS,
+    QUERY_SEARCH_SUCCEEDED_BRANCH_COUNT,
+    REQUEST_COST_USD,
+    REQUEST_FAILURE_REASON,
+    REQUEST_RESULT_COUNT,
+    REQUEST_SUCCESS,
+    REQUEST_USAGE_CACHED_INPUT_TOKENS,
+    REQUEST_USAGE_INPUT_TOKENS,
+    REQUEST_USAGE_OUTPUT_TOKENS,
+    RERUN_QUERY_SEARCH_BRANCH_COUNT,
+    RERUN_QUERY_SEARCH_BRANCH_TYPES,
+    RERUN_QUERY_SEARCH_STANDARD_QUERIES,
+    SIMILARITY_SEARCH_CACHE_HIT,
     TITLE_SEARCH_FUZZY_RESULT_COUNT,
     TITLE_SEARCH_LIMIT,
     TITLE_SEARCH_QUERY,
-    TITLE_SEARCH_RESULT_COUNT,
 )
 from observability.cost_tracking import track_request_cost
 from observability.tracing import setup_tracing
@@ -319,9 +327,9 @@ async def _on_request_validation_error(
     a verdict, not just the instrumented ones.
     """
     span = trace.get_current_span()
-    span.set_attribute(OUTCOME_SUCCESS, False)
+    span.set_attribute(REQUEST_SUCCESS, False)
     span.set_attribute(
-        OUTCOME_FAILURE_REASON, FailureReason.INVALID_PARAMETERS.value
+        REQUEST_FAILURE_REASON, FailureReason.INVALID_PARAMETERS.value
     )
     span.add_event(
         "request rejected", {"detail": _summarize_validation_errors(exc)}
@@ -636,7 +644,23 @@ def _record_query_search_inputs(body: QuerySearchBody, span) -> None:
         span.set_attribute(
             QUERY_SEARCH_CLARIFICATION_CHARS, len(body.clarification)
         )
+    _record_filter_attributes(body.filters, span)
 
+
+def _record_filter_attributes(
+    filters: Optional[MetadataFiltersInput], span
+) -> None:
+    """Record the raw `filters.*` hard-filter attributes on the given span.
+
+    Shared by every endpoint that accepts the `MetadataFiltersInput` wire block
+    (/query_search, /similarity_search, /attribute_search): one typed attribute per sent field, plus
+    the always-on low-cardinality `filters.active_count`. Values are the raw wire
+    payload, PRE enum translation — raw is the ground truth when the boundary is
+    what's being debugged. Deliberately always-on, not error-path-only: the numeric
+    filter fields have no validation, so a valid-but-wrong filter (wrong-unit
+    timestamp, min>max) yields empty results on a *successful* trace, which no error
+    hook fires for.
+    """
     # (group, name constant, raw wire value) triples — an unset field is None;
     # an empty list is also "not sent" (downstream treats it as no-filter, so it
     # doesn't count as active). Enum lists are captured as their raw string
@@ -644,7 +668,6 @@ def _record_query_search_inputs(body: QuerySearchBody, span) -> None:
     # belongs to: the three min/max ranges each pair two wire fields into one
     # group, so setting both bounds of the release-date range is one active
     # filter, not two.
-    filters = body.filters
     filter_fields = [] if filters is None else [
         ("release_date", FILTERS_MIN_RELEASE_TS, filters.min_release_ts),
         ("release_date", FILTERS_MAX_RELEASE_TS, filters.max_release_ts),
@@ -767,6 +790,15 @@ async def query_search(body: QuerySearchBody):
             # handle — so we set it explicitly. end_on_exit=False leaves the
             # span's lifecycle to the ASGI instrumentation.
             with trace.use_span(request_span, end_on_exit=False):
+                # Stream-end outcome accounting (Phase I). Accumulated as
+                # branch_results events stream by; the verdict is written in
+                # `finally`, guarded so a client disconnect writes nothing and a
+                # fatal Step 0 keeps its own verdict.
+                succeeded_branches = 0
+                failed_branches = 0
+                total_results = 0
+                fatal = False
+                completed = False
                 try:
                     async for event_name, payload in stream_full_pipeline(
                         query,
@@ -777,40 +809,78 @@ async def query_search(body: QuerySearchBody):
                         # (today: Step 0 exhausted its LLM retries). It is
                         # delivered as an SSE event AFTER the HTTP 200 + the
                         # handler's clean return, so `@record_outcome` never sees
-                        # it — write the request verdict on the server span here
-                        # instead. Interim slice of Bite 2's SSE-adapted outcome
-                        # mechanism: only the failure verdict lands today; the
-                        # success verdict + remaining stream-end rollups stay
-                        # deferred, so the happy path is still absent under
-                        # success_on_return=False.
+                        # it — write the request verdict on the server span here.
+                        # `fatal` guards the completion verdict below so this
+                        # reason isn't overwritten by the branch-based verdict.
                         if event_name == "error":
-                            request_span.set_attribute(OUTCOME_SUCCESS, False)
+                            fatal = True
+                            request_span.set_attribute(REQUEST_SUCCESS, False)
                             request_span.set_attribute(
-                                OUTCOME_FAILURE_REASON,
+                                REQUEST_FAILURE_REASON,
                                 FailureReason.QUERY_UNDERSTANDING_FAILED.value,
                             )
+                        elif event_name == "branch_results":
+                            # A branch "succeeds" when it executed without a
+                            # branch_error (an empty-but-clean result set still
+                            # counts). total_results is what the requestor
+                            # receives, summed across branches (pre-dedup — no
+                            # server-side cross-branch merge).
+                            if payload.get("branch_error") is None:
+                                succeeded_branches += 1
+                            else:
+                                failed_branches += 1
+                            total_results += len(payload["results"])
                         body = _json_encoder.encode(payload).decode("utf-8")
                         yield f"event: {event_name}\ndata: {body}\n\n"
+                    # Stream drained cleanly (every event consumed). A client
+                    # disconnect raises out of the `async for` and skips this,
+                    # so the completion verdict below is written only for
+                    # genuine completions.
+                    completed = True
                 finally:
                     # Stream-end usage rollup on the server span: total dollar
                     # cost plus the input / cached-input / output token totals,
                     # summed across all billed attempts (see
                     # observability/cost_tracking.py).
                     request_span.set_attribute(
-                        QUERY_SEARCH_COST_USD, cost_acc.total_usd
+                        REQUEST_COST_USD, cost_acc.total_usd
                     )
                     request_span.set_attribute(
-                        QUERY_SEARCH_USAGE_INPUT_TOKENS,
+                        REQUEST_USAGE_INPUT_TOKENS,
                         cost_acc.total_input_tokens,
                     )
                     request_span.set_attribute(
-                        QUERY_SEARCH_USAGE_CACHED_INPUT_TOKENS,
+                        REQUEST_USAGE_CACHED_INPUT_TOKENS,
                         cost_acc.total_cached_input_tokens,
                     )
                     request_span.set_attribute(
-                        QUERY_SEARCH_USAGE_OUTPUT_TOKENS,
+                        REQUEST_USAGE_OUTPUT_TOKENS,
                         cost_acc.total_output_tokens,
                     )
+                    # Request outcome + branch/result rollups (Phase I). Written
+                    # only on clean completion and only when the pipeline didn't
+                    # fatally abort (a fatal Step 0 already wrote its verdict).
+                    if completed and not fatal:
+                        request_span.set_attribute(
+                            QUERY_SEARCH_SUCCEEDED_BRANCH_COUNT, succeeded_branches
+                        )
+                        request_span.set_attribute(
+                            QUERY_SEARCH_FAILED_BRANCH_COUNT, failed_branches
+                        )
+                        request_span.set_attribute(
+                            REQUEST_RESULT_COUNT, total_results
+                        )
+                        if succeeded_branches > 0:
+                            request_span.set_attribute(REQUEST_SUCCESS, True)
+                        else:
+                            # Every branch soft-failed, or none ran at all
+                            # (empty plan — both counts 0): the stream served
+                            # correctly but delivered no executed branch.
+                            request_span.set_attribute(REQUEST_SUCCESS, False)
+                            request_span.set_attribute(
+                                REQUEST_FAILURE_REASON,
+                                FailureReason.ALL_BRANCHES_FAILED.value,
+                            )
 
     return StreamingResponse(
         event_stream(),
@@ -949,6 +1019,28 @@ _RERUN_STANDARD_KINDS: tuple[str, str, str] = ("original", "spin_1", "spin_2")
 _MAX_RERUN_BRANCH_QUERY_CHARS = MAX_QUERY_CHARS + MAX_CLARIFICATION_CHARS + 2
 
 
+def _rerun_rejection(*, status_code: int, detail: str) -> EndpointFailure:
+    """Build the boundary-rejection error for /rerun_query_search.
+
+    Every rerun boundary rejection (blank/over-length branch query, blank/over-cap
+    entity name, duplicate entity flow, >3 standard branches, unknown branch type)
+    is a malformed request → `invalid_parameters`, regardless of the 400/422 status
+    split. Returning `EndpointFailure` (not raw `HTTPException`) is what lets the
+    handler's `@record_outcome` classify the failure on the server span instead of
+    logging it as `internal_error`. A `request rejected` span event carrying the
+    detail is recorded here (mirroring the /query_search 400 path) so the offending
+    field/value is pinpointed on the trace; the current span at every call site is
+    the server span (these helpers run synchronously in the handler, before the
+    streaming generator). The caller raises the returned exception.
+    """
+    trace.get_current_span().add_event("request rejected", {"detail": detail})
+    return EndpointFailure(
+        status_code=status_code,
+        failure_reason=FailureReason.INVALID_PARAMETERS,
+        detail=detail,
+    )
+
+
 def _clean_branch_query(raw: str) -> str:
     """Strip + non-empty + cap a standard-flow branch query.
 
@@ -959,11 +1051,11 @@ def _clean_branch_query(raw: str) -> str:
     """
     query = raw.strip()
     if not query:
-        raise HTTPException(
+        raise _rerun_rejection(
             status_code=400, detail="standard branch query must be non-empty."
         )
     if len(query) > _MAX_RERUN_BRANCH_QUERY_CHARS:
-        raise HTTPException(
+        raise _rerun_rejection(
             status_code=400,
             detail=(
                 f"standard branch query must be at most "
@@ -982,7 +1074,7 @@ def _enforce_name_cap(name: str, flow_label: str) -> None:
     parity (see query_input_validation.MAX_QUERY_CHARS).
     """
     if len(name) > MAX_QUERY_CHARS:
-        raise HTTPException(
+        raise _rerun_rejection(
             status_code=422,
             detail=(
                 f"{flow_label} branch name must be at most "
@@ -1000,7 +1092,7 @@ def _clean_one(raw: str, flow_label: str) -> str:
     """
     name = raw.strip()
     if not name:
-        raise HTTPException(
+        raise _rerun_rejection(
             status_code=422, detail=f"{flow_label} branch has a blank name"
         )
     _enforce_name_cap(name, flow_label)
@@ -1012,7 +1104,7 @@ def _clean_names(raw_names: list[str], flow_label: str) -> list[str]:
     over the cap (mirrors `_to_person_specs`). Returns at least one name."""
     names = [n.strip() for n in raw_names if n.strip()]
     if not names:
-        raise HTTPException(
+        raise _rerun_rejection(
             status_code=422, detail=f"{flow_label} branch has no usable names"
         )
     for name in names:
@@ -1029,9 +1121,10 @@ def _to_rerun_plan(branches: list[RerunBranch]) -> RerunPlan:
     assigned positionally; label defaulting to the query); each entity branch
     becomes its executor's flow-data object.
 
-    Raises HTTPException 400 on a blank/over-length standard query, and 422
-    on a duplicate entity flow, a blank/over-length entity name, or more than
-    three standard branches.
+    Raises `EndpointFailure` (via `_rerun_rejection`, `invalid_parameters`) —
+    400 on a blank/over-length standard query, 422 on a duplicate entity flow, a
+    blank/over-length entity name, or more than three standard branches — so the
+    handler's `@record_outcome` records the verdict on the server span.
     """
     branch_plan: list[tuple[str, str, str]] = []
     exact_title_flow_data: ExactTitleFlowData | None = None
@@ -1045,7 +1138,7 @@ def _to_rerun_plan(branches: list[RerunBranch]) -> RerunPlan:
         # The orchestrator has exactly one slot per entity flow, so a second
         # branch of the same entity type is a malformed request.
         if existing is not None:
-            raise HTTPException(
+            raise _rerun_rejection(
                 status_code=422, detail=f"duplicate {flow_label} branch"
             )
 
@@ -1054,7 +1147,7 @@ def _to_rerun_plan(branches: list[RerunBranch]) -> RerunPlan:
     for branch in branches:
         if isinstance(branch, StandardRerunBranch):
             if standard_count >= len(_RERUN_STANDARD_KINDS):
-                raise HTTPException(
+                raise _rerun_rejection(
                     status_code=422,
                     detail="at most 3 standard branches may be replayed",
                 )
@@ -1088,7 +1181,7 @@ def _to_rerun_plan(branches: list[RerunBranch]) -> RerunPlan:
                     )
                 )
             if not refs:
-                raise HTTPException(
+                raise _rerun_rejection(
                     status_code=422,
                     detail="similarity branch has no usable references",
                 )
@@ -1141,7 +1234,40 @@ def _to_rerun_plan(branches: list[RerunBranch]) -> RerunPlan:
     )
 
 
+def _record_rerun_inputs(body: RerunSearchBody, span) -> None:
+    """Record the raw /rerun_query_search inputs on the request (server) span.
+
+    The rerun analog of `_record_query_search_inputs`: called at handler entry,
+    before `_to_rerun_plan` runs, so a rejected (400/422) trace still carries the
+    input that caused it. Rerun has no raw query or clarification — its input IS
+    the replayed branch plan — so this captures the branch-set shape (count +
+    per-branch type tags) plus the standard-branch queries (the high-cardinality
+    text that determines what got replayed). Filters reuse the shared
+    `_record_filter_attributes` helper. Entity anchor names are NOT captured here:
+    they already land on the entity branch spans (Bite 8), and `branch_types`
+    shows which flows fired.
+    """
+    span.set_attribute(RERUN_QUERY_SEARCH_BRANCH_COUNT, len(body.branches))
+    span.set_attribute(
+        RERUN_QUERY_SEARCH_BRANCH_TYPES, [b.type for b in body.branches]
+    )
+    # Standard-branch queries only (defensively truncated — StandardRerunBranch
+    # caps at _MAX_RERUN_BRANCH_QUERY_CHARS, above the query-attr bound). Set only
+    # when at least one standard branch is present (an entity-only rerun omits it).
+    standard_queries = [
+        b.query[:_INPUT_ATTR_MAX_CHARS]
+        for b in body.branches
+        if isinstance(b, StandardRerunBranch)
+    ]
+    if standard_queries:
+        span.set_attribute(
+            RERUN_QUERY_SEARCH_STANDARD_QUERIES, standard_queries
+        )
+    _record_filter_attributes(body.filters, span)
+
+
 @app.post("/rerun_query_search")
+@record_outcome(success_on_return=False)
 async def rerun_query_search(body: RerunSearchBody):
     """
     Re-run a prior search with a new filter set, bypassing Steps 0 and 1.
@@ -1155,23 +1281,107 @@ async def rerun_query_search(body: RerunSearchBody):
     / branch_categories / branch_results → done), so the frontend consumes it
     unchanged.
 
+    Telemetry: reuses every shared query_search.* pipeline span (branch, step_2,
+    Stage 4, …) — the `trace.use_span` wrapper below is what keeps them nested
+    under this server span rather than orphaned — plus the cross-endpoint
+    `request.*` (cost / usage / result_count) and `outcome.*` rollups, and the
+    branch-plan-owned `query_search.{succeeded,failed}_branch_count`. The
+    rerun-specific input attrs (`rerun_query_search.*`) + raw `filters.*` are
+    stamped at entry. Unlike /query_search there is no Step-0 fatal path, so no
+    `error` SSE event / `query_understanding_failed` verdict.
+
     Returns:
       HTTP 200 with `text/event-stream`. 400 on a blank/over-length standard
       branch query; 422 on a duplicate entity flow, a blank/over-length entity
       name, more than three standard branches, an unknown branch `type`, or an
       unknown filter enum value.
     """
+    # Record the raw input suite on the server span FIRST, before translation,
+    # so rejected requests still carry what caused them (mirrors /query_search).
+    request_span = trace.get_current_span()
+    _record_rerun_inputs(body, request_span)
+
     # Translate the wire branches into a RerunPlan at the boundary (raises
-    # 400/422), then translate filters with the same helper /query_search uses.
+    # EndpointFailure 400/422 via _rerun_rejection), then translate filters with
+    # the same helper /query_search uses (EndpointFailure 422 on a bad enum).
     plan = _to_rerun_plan(body.branches)
     metadata_filters = _to_metadata_filters(body.filters)
 
     async def event_stream():
-        async for event_name, payload in stream_rerun_pipeline(
-            plan, metadata_filters=metadata_filters,
-        ):
-            encoded = _json_encoder.encode(payload).decode("utf-8")
-            yield f"event: {event_name}\ndata: {encoded}\n\n"
+        # Same streamed-outcome scaffold as /query_search: enter the cost
+        # accumulator before any pipeline task spawns (so every downstream
+        # LLM/embedding call self-accounts via the copied context), then
+        # re-activate the server span as current for the whole stream so every
+        # reused pipeline span (query_search.branch / step_2 / Stage 4 / the
+        # router's llm.generate) nests beneath it instead of orphaning. Both
+        # rollups are written in `finally`, which runs while the ASGI server span
+        # is still open and covers the client-disconnect path.
+        with track_request_cost() as cost_acc:
+            with trace.use_span(request_span, end_on_exit=False):
+                succeeded_branches = 0
+                failed_branches = 0
+                total_results = 0
+                completed = False
+                try:
+                    async for event_name, payload in stream_rerun_pipeline(
+                        plan, metadata_filters=metadata_filters,
+                    ):
+                        if event_name == "branch_results":
+                            # A branch "succeeds" when it executed without a
+                            # branch_error (an empty-but-clean result set still
+                            # counts). total_results is summed across branches
+                            # (pre-dedup — no server-side cross-branch merge).
+                            if payload.get("branch_error") is None:
+                                succeeded_branches += 1
+                            else:
+                                failed_branches += 1
+                            total_results += len(payload["results"])
+                        encoded = _json_encoder.encode(payload).decode("utf-8")
+                        yield f"event: {event_name}\ndata: {encoded}\n\n"
+                    # Stream drained cleanly (a client disconnect raises out of
+                    # the `async for` and skips this).
+                    completed = True
+                finally:
+                    # Cross-endpoint cost/usage rollup on the server span (summed
+                    # across all billed attempts — see cost_tracking.py). Written
+                    # even on a partial-failure / disconnect so a request that
+                    # errors mid-stream still reports the cost it incurred.
+                    request_span.set_attribute(REQUEST_COST_USD, cost_acc.total_usd)
+                    request_span.set_attribute(
+                        REQUEST_USAGE_INPUT_TOKENS, cost_acc.total_input_tokens
+                    )
+                    request_span.set_attribute(
+                        REQUEST_USAGE_CACHED_INPUT_TOKENS,
+                        cost_acc.total_cached_input_tokens,
+                    )
+                    request_span.set_attribute(
+                        REQUEST_USAGE_OUTPUT_TOKENS, cost_acc.total_output_tokens
+                    )
+                    # Branch/result rollups + outcome verdict, only on clean
+                    # completion. Branch counts reuse the branch-plan-owned
+                    # query_search.* keys; result count is the cross-endpoint
+                    # request.* rollup.
+                    if completed:
+                        request_span.set_attribute(
+                            QUERY_SEARCH_SUCCEEDED_BRANCH_COUNT, succeeded_branches
+                        )
+                        request_span.set_attribute(
+                            QUERY_SEARCH_FAILED_BRANCH_COUNT, failed_branches
+                        )
+                        request_span.set_attribute(
+                            REQUEST_RESULT_COUNT, total_results
+                        )
+                        if succeeded_branches > 0:
+                            request_span.set_attribute(REQUEST_SUCCESS, True)
+                        else:
+                            # Every branch soft-failed, or none ran at all: the
+                            # stream served correctly but delivered no executed
+                            # branch (same ruling as /query_search).
+                            request_span.set_attribute(REQUEST_SUCCESS, False)
+                            request_span.set_attribute(
+                                REQUEST_FAILURE_REASON,
+                                FailureReason.ALL_BRANCHES_FAILED.value,
+                            )
 
     return StreamingResponse(
         event_stream(),
@@ -1186,6 +1396,7 @@ async def rerun_query_search(body: RerunSearchBody):
 
 
 @app.post("/similarity_search")
+@record_outcome
 async def similarity_search(body: SimilaritySearchBody) -> Response:
     """
     Run the similarity-search flow against a caller-supplied anchor set.
@@ -1206,14 +1417,28 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
       - Empty `tmdb_ids` → 422 (pydantic).
       - Unknown TMDB IDs → 422 with the missing IDs in the detail.
       - Unknown enum value in `filters` → 422.
+
+    Telemetry: the shared engine emits every `similarity.*` span/attribute
+    (Qdrant + per-lane fetch spans, retrieval/weight/shape signals,
+    anchor_count) onto this server span; the endpoint adds the facts only it
+    knows — `similarity_search.cache_hit`, the cross-endpoint
+    `request.result_count`, the raw `filters.*` inputs, and the
+    `@record_outcome` verdict.
     """
+    # Request-scoped facts go on the server span (the current span at handler
+    # entry). Inside a child `start_as_current_span` block get_current_span()
+    # would return the child, so capture the handle once here.
+    request_span = trace.get_current_span()
+    _record_filter_attributes(body.filters, request_span)
+
     # Canonicalize anchors (dedup + sort) so the cache key is order- and
     # duplicate-insensitive. run_similar_movies_for_ids dedups again
     # internally and doesn't depend on input ordering.
     canonical_ids = sorted(dict.fromkeys(int(mid) for mid in body.tmdb_ids))
 
-    # Translate wire filters at the boundary. Raises 422 on unknown enum
-    # values inside _to_metadata_filters; an all-None MetadataFiltersInput
+    # Translate wire filters at the boundary. Raises EndpointFailure(422,
+    # invalid_filters) on unknown enum values inside _to_metadata_filters (so
+    # the outcome verdict is recorded); an all-None MetadataFiltersInput
     # collapses back to None here.
     metadata_filters = _to_metadata_filters(body.filters)
 
@@ -1230,13 +1455,17 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
             canonical_ids, filter_fingerprint=fingerprint,
         )
     except Exception:
+        # Swallowed best-effort degradation (§5.2 error contract): record a
+        # span event, not a span error, and do NOT fail the request.
         logger.warning(
             "similar_movies cache read failed for tmdb_ids=%s",
             canonical_ids,
             exc_info=True,
         )
+        request_span.add_event("cache read failed")
         cached = None
     if cached is not None:
+        request_span.set_attribute(SIMILARITY_SEARCH_CACHE_HIT, True)
         return Response(content=cached, media_type="application/json")
 
     try:
@@ -1244,10 +1473,21 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
             canonical_ids, metadata_filters=metadata_filters,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Empty anchor set after canonicalization (unreachable given the
+        # pydantic min_length=1 guard, kept as a boundary contract).
+        raise EndpointFailure(
+            status_code=400,
+            failure_reason=FailureReason.INVALID_PARAMETERS,
+            detail=str(exc),
+        ) from exc
     except LookupError as exc:
-        # Raised when one or more tmdb_ids don't exist in movie_card.
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Raised when one or more tmdb_ids don't exist in movie_card — a bad
+        # request parameter (the caller supplied an un-indexed anchor).
+        raise EndpointFailure(
+            status_code=422,
+            failure_reason=FailureReason.INVALID_PARAMETERS,
+            detail=str(exc),
+        ) from exc
 
     # Hydrate the ranked tmdb_ids into MovieCard summaries. Order is
     # preserved by fetch_movie_card_summaries, so the response stays
@@ -1258,9 +1498,16 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
     cards = await fetch_movie_card_summaries(ranked_ids)
     encoded = _json_encoder.encode(cards)
 
+    # Cold path served: cache_hit=false (set at the success point, mirroring
+    # movie.payload_source honesty — a failed request carries neither), plus the
+    # post-hydration count actually returned (the cross-endpoint
+    # request.result_count rollup).
+    request_span.set_attribute(SIMILARITY_SEARCH_CACHE_HIT, False)
+    request_span.set_attribute(REQUEST_RESULT_COUNT, len(cards))
+
     # Cache-write failures must NOT lose the response we already built —
-    # log and continue. The fingerprint keeps filtered and unfiltered
-    # writes in disjoint key slots.
+    # log, emit a span event, and continue. The fingerprint keeps filtered
+    # and unfiltered writes in disjoint key slots.
     try:
         await cache_similar_movies(
             canonical_ids, encoded, filter_fingerprint=fingerprint,
@@ -1271,10 +1518,12 @@ async def similarity_search(body: SimilaritySearchBody) -> Response:
             canonical_ids,
             exc_info=True,
         )
+        request_span.add_event("cache write failed")
     return Response(content=encoded, media_type="application/json")
 
 
 @app.post("/attribute_search")
+@record_outcome
 async def attribute_search(body: AttributeSearchBody) -> Response:
     """
     Hard-attribute browse search — no NLP, no LLM, no vector search.
@@ -1305,7 +1554,22 @@ async def attribute_search(body: AttributeSearchBody) -> Response:
       within-tier tie-break), capped at 250.
       HTTP 422 on unknown genre / keyword / audio_language /
       streaming_service enum values (handled inside `_to_metadata_filters`).
+
+    Telemetry: each supplied name emits the shared flow-neutral `person.resolve`
+    span (movie_count + best_bucket + a `"person unresolved"` event on a
+    zero-credit miss); the orchestrator stamps the `attribute_search.*` path +
+    people/pool skeleton on this server span; the endpoint adds the raw
+    `filters.*` inputs, the people-input attrs, the cross-endpoint
+    `request.result_count`, and the `@record_outcome` verdict
+    (`invalid_filters` on a bad enum).
     """
+    # Request-scoped facts go on the server span (the current span at handler
+    # entry). Inside a child `start_as_current_span` block get_current_span()
+    # would return the child, so capture the handle once here. Mirrors
+    # /similarity_search.
+    request_span = trace.get_current_span()
+    _record_filter_attributes(body.filters, request_span)
+
     # Translate the wire mirror into MetadataFilters once at the
     # boundary. Raises 422 on any unknown enum value; collapses to
     # None if every filter field is unset so the orchestrator's
@@ -1316,6 +1580,20 @@ async def attribute_search(body: AttributeSearchBody) -> Response:
     # list (stripped name). Blank-after-strip entries are dropped here
     # so the orchestrator never sees them.
     people_specs = _to_person_specs(body.people)
+
+    # People-input attrs on the server span (the request's "traits"), raw and
+    # pre-normalization. `people_requested_count` is always set (0 = browse
+    # path); the high-cardinality names list is set only when people were sent
+    # and is per-element truncated (PersonInput.name has no Pydantic max, same
+    # defensive bound as the /query_search free-text attrs).
+    request_span.set_attribute(
+        ATTRIBUTE_SEARCH_PEOPLE_REQUESTED_COUNT, len(people_specs)
+    )
+    if people_specs:
+        request_span.set_attribute(
+            ATTRIBUTE_SEARCH_PEOPLE_NAMES,
+            [spec.name[:_INPUT_ATTR_MAX_CHARS] for spec in people_specs],
+        )
 
     ranked_ids = await run_attribute_search(
         people=people_specs,
@@ -1329,6 +1607,10 @@ async def attribute_search(body: AttributeSearchBody) -> Response:
     # the neutral prior on the no-people path). Same msgspec-encode hot
     # path as /similarity_search.
     cards = await fetch_movie_card_summaries(ranked_ids)
+
+    # Post-hydration card count — the cross-endpoint request.result_count
+    # rollup (the count is known only here).
+    request_span.set_attribute(REQUEST_RESULT_COUNT, len(cards))
     return Response(
         content=_json_encoder.encode(cards),
         media_type="application/json",
@@ -1418,14 +1700,14 @@ async def title_search(
     # server span is the queryable root the two DB spans already hang off.
     # `get_current_span()` returns that active server span here (no manual
     # child span is warranted — title_search is a single unit of work).
-    # `result_count` uses the hydrated cards (what the client actually got);
-    # `fuzzy_result_count` > 0 means the fuzzy fallback fired, the signal for
+    # the cross-endpoint `request.result_count` uses the hydrated cards (what the
+    # client actually got); `fuzzy_result_count` > 0 means the fuzzy fallback fired, the signal for
     # likely typos or catalog gaps. NOTE: `query` is high-cardinality — fine
     # as a span attribute (per-trace) but must never become a metric label.
     span = trace.get_current_span()
     span.set_attribute(TITLE_SEARCH_QUERY, trimmed)
     span.set_attribute(TITLE_SEARCH_LIMIT, limit)
-    span.set_attribute(TITLE_SEARCH_RESULT_COUNT, len(cards))
+    span.set_attribute(REQUEST_RESULT_COUNT, len(cards))
     span.set_attribute(TITLE_SEARCH_FUZZY_RESULT_COUNT, result.fuzzy_count)
 
     return Response(
@@ -2123,7 +2405,7 @@ async def _fetch_movie_payload(
         failure).
 
     In every case the failure carries a `FailureReason` that bubbles up to the
-    `record_outcome` decorator, which sets `outcome.success`/`outcome.failure_reason`
+    `record_outcome` decorator, which sets `request.success`/`request.failure_reason`
     on the server span once — this helper never touches the server span itself.
 
     The span disables auto status/record so expected 404s stay UNSET, but an

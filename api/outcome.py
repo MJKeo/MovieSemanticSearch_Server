@@ -1,7 +1,7 @@
 """Per-request outcome instrumentation for the API endpoints.
 
-Records a single, uniform verdict on every instrumented request — `outcome.success`
-(bool) and, when that is false, `outcome.failure_reason` — on the FastAPI server
+Records a single, uniform verdict on every instrumented request — `request.success`
+(bool) and, when that is false, `request.failure_reason` — on the FastAPI server
 span. The verdict is written in exactly ONE place (`record_outcome`); each failure
 site only declares *why* it failed by raising `EndpointFailure` with a
 `FailureReason`, and that reason bubbles up the call stack to be recorded at the
@@ -9,7 +9,7 @@ boundary. Keeping the write single-sourced is deliberate: the same fact (this
 request failed, for reason X) written at many exit points is exactly the kind of
 duplication that drifts out of sync.
 
-Layering: the outcome *names* (`outcome.success` / `outcome.failure_reason`) live in
+Layering: the verdict *names* (`request.success` / `request.failure_reason`) live in
 `observability/names.py`, the dependency-free name registry. This module is the
 API-layer *mechanism* — it imports FastAPI and the OTel SDK — so it sits under
 `api/`, not `observability/` (which we keep SDK-plumbing / dependency-free).
@@ -23,12 +23,12 @@ from functools import wraps
 from fastapi import HTTPException
 from opentelemetry import trace
 
-from observability.names import OUTCOME_FAILURE_REASON, OUTCOME_SUCCESS
+from observability.names import REQUEST_FAILURE_REASON, REQUEST_SUCCESS
 
 
 class FailureReason(str, Enum):
-    """Why a request failed, recorded as `outcome.failure_reason` (only when
-    `outcome.success` is false).
+    """Why a request failed, recorded as `request.failure_reason` (only when
+    `request.success` is false).
 
     Kept intentionally coarse: each member is a distinct, *actionable* class of
     failure — the span's other attributes (which parameter, which tmdb_id) and the
@@ -55,6 +55,14 @@ class FailureReason(str, Enum):
     # stack trace). Recorded on the server span by the stream consumer, since it
     # never bubbles to `record_outcome`.
     QUERY_UNDERSTANDING_FAILED = "query_understanding_failed"
+    # /query_search only — every branch soft-failed (or none ran at all), so the
+    # stream completed but delivered no successfully-executed branch. Recorded on
+    # the server span by the stream consumer at clean completion (like
+    # QUERY_UNDERSTANDING_FAILED, it never bubbles to `record_outcome`). Distinct
+    # from INTERNAL_ERROR: the request was served correctly end-to-end; the
+    # failure is that no branch produced a result set (empty-but-clean branches
+    # still count as success — this fires only when they all errored).
+    ALL_BRANCHES_FAILED = "all_branches_failed"
     INTERNAL_ERROR = "internal_error"          # 500 — unexpected server-side failure
 
 
@@ -77,7 +85,7 @@ class EndpointFailure(HTTPException):
 
 
 def record_outcome(handler=None, *, success_on_return: bool = True):
-    """Decorate an async endpoint so its `outcome.*` verdict is recorded exactly once.
+    """Decorate an async endpoint so its `request.*` verdict is recorded exactly once.
 
     Reads the active FastAPI server span (the current span when the handler runs)
     and, around the handler body:
@@ -88,7 +96,7 @@ def record_outcome(handler=None, *, success_on_return: bool = True):
         the success verdict (the "final analysis" of the request).
     Every branch re-raises or returns unchanged, so HTTP behavior and the
     auto-instrumentation server-span ERROR status are untouched — this only adds the
-    semantic `outcome.*` attributes.
+    semantic `request.success` / `request.failure_reason` attributes.
 
     `success_on_return=False` switches to **failure-only** recording: the failure
     branches behave identically, but a clean return writes nothing. This exists for
@@ -123,17 +131,17 @@ def record_outcome(handler=None, *, success_on_return: bool = True):
                 result = await handler(*args, **kwargs)
             except EndpointFailure as exc:
                 # Expected failure — the reason was decided at the raising site.
-                span.set_attribute(OUTCOME_SUCCESS, False)
-                span.set_attribute(OUTCOME_FAILURE_REASON, exc.failure_reason.value)
+                span.set_attribute(REQUEST_SUCCESS, False)
+                span.set_attribute(REQUEST_FAILURE_REASON, exc.failure_reason.value)
                 raise
             except Exception:
                 # Unexpected failure — collapse to the single internal_error class; the
                 # stack/root cause lives on the recorded exception, not on this key.
-                span.set_attribute(OUTCOME_SUCCESS, False)
-                span.set_attribute(OUTCOME_FAILURE_REASON, FailureReason.INTERNAL_ERROR.value)
+                span.set_attribute(REQUEST_SUCCESS, False)
+                span.set_attribute(REQUEST_FAILURE_REASON, FailureReason.INTERNAL_ERROR.value)
                 raise
             if success_on_return:
-                span.set_attribute(OUTCOME_SUCCESS, True)
+                span.set_attribute(REQUEST_SUCCESS, True)
             return result
 
         return wrapper

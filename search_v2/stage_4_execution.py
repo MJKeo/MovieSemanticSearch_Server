@@ -39,6 +39,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -46,10 +47,51 @@ from enum import Enum
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import numpy as np
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from db.postgres import fetch_neutral_reranker_seed_ids
 from db.qdrant import qdrant_client
 from implementation.classes.schemas import MetadataFilters
+from observability.cost_tracking import track_stage_cost
+from observability.names import (
+    QUERY_SEARCH_AUXILIARY_SHORTS_EXCLUSION,
+    QUERY_SEARCH_CANDIDATE_GENERATION,
+    QUERY_SEARCH_CANDIDATE_GENERATION_CANDIDATE_COUNT,
+    QUERY_SEARCH_CANDIDATE_GENERATION_COST_USD,
+    QUERY_SEARCH_CANDIDATE_GENERATION_FETCH_COUNT,
+    QUERY_SEARCH_DISPATCH,
+    QUERY_SEARCH_DISPATCH_OPERATION_TYPE,
+    QUERY_SEARCH_DISPATCH_POLARITY,
+    QUERY_SEARCH_DISPATCH_QUERY_PARAMS,
+    QUERY_SEARCH_DISPATCH_RESULT_COUNT,
+    QUERY_SEARCH_DISPATCH_ROUTE,
+    QUERY_SEARCH_DISPATCH_WAS_PROMOTED,
+    QUERY_SEARCH_GENERATORS,
+    QUERY_SEARCH_GENERATORS_FINAL_POOL_COUNT,
+    QUERY_SEARCH_GENERATORS_RAW_UNION_COUNT,
+    QUERY_SEARCH_GENERATORS_SHORTS_REMOVED_COUNT,
+    QUERY_SEARCH_NEUTRAL_SEED,
+    QUERY_SEARCH_NEUTRAL_SEED_REASON,
+    QUERY_SEARCH_NEUTRAL_SEED_SEED_COUNT,
+    QUERY_SEARCH_PROMOTION,
+    QUERY_SEARCH_PROMOTION_POOL_COUNT_AFTER,
+    QUERY_SEARCH_PROMOTION_POOL_COUNT_BEFORE,
+    QUERY_SEARCH_PROMOTION_PROMOTED_SPEC_COUNT,
+    QUERY_SEARCH_PROMOTION_SHORTS_REMOVED_COUNT,
+    QUERY_SEARCH_PROMOTION_TIER,
+    QUERY_SEARCH_RERANKERS,
+    QUERY_SEARCH_RERANKERS_CALL_COUNT,
+    QUERY_SEARCH_RERANKERS_COST_USD,
+    QUERY_SEARCH_RERANKERS_POOL_COUNT,
+    QUERY_SEARCH_SCORING,
+    QUERY_SEARCH_SCORING_RANKED_COUNT,
+    QUERY_SEARCH_SCORING_TOP_SCORE,
+    QUERY_SEARCH_SCORING_TRAIT_WEIGHTS,
+)
+from search_v2.implicit_prior_rerank import (
+    apply_implicit_prior_rerank_for_branch,
+)
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import (
     CategoryCombineType,
@@ -72,6 +114,8 @@ from search_v2.endpoint_fetching.trending_query_execution import (
     execute_trending_query,
 )
 from search_v2.promotion_tiers import (
+    NeutralSeedReason,
+    PromotionReason,
     PromotionTier,
     determine_promotion_tier,
 )
@@ -85,6 +129,13 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+# Module tracer for the Stage 4 execution spans. A no-op ProxyTracer when
+# `setup_tracing` hasn't run (offline callers / tests), so these spans are a
+# cheap no-op there. Every span created here nests under the current span,
+# which — in the live pipeline — is the `query_search.branch` span Stage 4
+# runs under via `_run_under_span` in the streaming orchestrator.
+tracer = trace.get_tracer(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +594,302 @@ async def execute_branches(
 # ---------------------------------------------------------------------------
 
 
+async def _define_candidate_pool(
+    branch: "Step2BranchResult",
+    *,
+    pos_generators: list[_TaggedSpec],
+    auxiliary_specs: list[GeneratedEndpointSpec],
+    metadata_filters: MetadataFilters | None,
+    call_score_maps: dict[_CallKey, dict[int, float] | None],
+) -> tuple[set[int], set[_CallKey]]:
+    """Phase B — Pool definition, wrapped in the `candidate_generation` span.
+
+    Run every positive-polarity generator concurrently with no restrict (each
+    emits its own match set). Build the union from successful generator score-map
+    keys. Apply shorts subtraction. When the user has an active hard filter, run
+    a tiered promotion loop so a filter-narrowed initial pool can be rescued by
+    promoting the next-lowest reranker tier into a generator role. Apply neutral
+    seed fallback when no positive generator was attempted OR (filter-active
+    path) when tier promotion exhausted without reaching the candidate floor.
+
+    Mutates `call_score_maps` in place (generator + promotion score maps that the
+    caller's Phase C/D scoring reads). Returns `(union, promoted_keys)`: the
+    finalized deduped pool (empty if nothing survived) and the set of _CallKeys
+    promoted into generator role during the loop (so the caller drops them from
+    the positive reranker pass). The `candidate_generation` span (Group C) is the
+    branch-level wrapper over the whole phase — the `generators` / `promotion` /
+    `neutral_seed` / `auxiliary_shorts_exclusion` spans nest under it — and
+    records `fetch_count` (dispatch calls issued), `candidate_count` (deduped
+    union size), and `cost_usd` (semantic-generator embeddings).
+    """
+    union: set[int] = set()
+    promoted_keys: set[_CallKey] = set()
+
+    # Cross-iteration dedup cache shared between the initial generator dispatch
+    # and the tiered-promotion loop. Lets the loop skip re-dispatch when a later
+    # tier holds a structurally identical (route, params) spec already executed
+    # in an earlier tier or in the initial pass.
+    dispatch_cache: dict[_DispatchCacheKey, dict[int, float] | None] = {}
+
+    # Running count of dispatch calls actually issued (post-dedup), reported as
+    # candidate_generation.fetch_count.
+    fetch_count = 0
+
+    with tracer.start_as_current_span(
+        QUERY_SEARCH_CANDIDATE_GENERATION
+    ) as cg_span, track_stage_cost() as cg_cost:
+        # Precompute shorts IDs once; the loop reapplies the blocklist
+        # per iteration without re-querying.
+        shorts_specs = [
+            s for s in auxiliary_specs if s.route is EndpointRoute.MEDIA_TYPE
+        ]
+        shorts_ids = await _fetch_shorts_ids(shorts_specs)
+        fetch_count += len(shorts_specs)
+
+        if pos_generators:
+            with tracer.start_as_current_span(QUERY_SEARCH_GENERATORS) as gen_span:
+                fetch_count += await _dispatch_generator_specs(
+                    tagged_specs=pos_generators,
+                    call_score_maps=call_score_maps,
+                    metadata_filters=metadata_filters,
+                    branch_kind=branch.kind,
+                    dispatch_cache=dispatch_cache,
+                )
+                for tagged in pos_generators:
+                    scores = call_score_maps.get(tagged.key)
+                    if scores is not None:
+                        union.update(scores.keys())
+                # Snapshot the pre-shorts union so the span can report both the
+                # raw fetch size and what survived the default shorts exclusion.
+                raw_union_count = len(union)
+                union = _apply_shorts_subtraction(union, shorts_ids)
+                shorts_removed = raw_union_count - len(union)
+                gen_span.set_attribute(
+                    QUERY_SEARCH_GENERATORS_RAW_UNION_COUNT, raw_union_count
+                )
+                gen_span.set_attribute(
+                    QUERY_SEARCH_GENERATORS_SHORTS_REMOVED_COUNT, shorts_removed
+                )
+                gen_span.set_attribute(
+                    QUERY_SEARCH_GENERATORS_FINAL_POOL_COUNT, len(union)
+                )
+                # The default shorts blocklist — distinct from a user-expressed
+                # negative MEDIA_TYPE trait (which scores as a negative trait).
+                # `formats` is always ["short"] (the only categorical aux
+                # exclusion, hardcoded in `_build_shorts_exclusion_spec`).
+                if shorts_removed > 0:
+                    gen_span.add_event(
+                        "aux_shorts_exclusion",
+                        {
+                            "formats": ["short"],
+                            "shorts_pool_count": len(shorts_ids),
+                            "removed_count": shorts_removed,
+                            "remaining_count": len(union),
+                        },
+                    )
+
+        # --------------------------------------------------------------
+        # Tiered promotion loop (filter-active gate). When the user's hard
+        # filter has narrowed the initial union below CANDIDATE_FLOOR, the
+        # filter — not concept absence — is most likely the cause of the
+        # shortfall. Promote the next-lowest reranker tier into generator
+        # role, re-dispatch just the newly-promoted specs, and merge the
+        # results into the union. Repeat until either the floor is met or
+        # every promotable tier in the branch has been promoted. Promotion
+        # is parallelized WITHIN a tier (rerankers at the same tier are
+        # roughly comparable in authority); tiers run SERIALLY so the
+        # loop stops at the earliest tier that brings the pool over the
+        # floor. The unfiltered base case is intentionally unchanged —
+        # "doesn't exist means doesn't exist" remains the contract.
+        # --------------------------------------------------------------
+        filter_active = (
+            metadata_filters is not None and metadata_filters.is_active
+        )
+        if filter_active and len(union) < CANDIDATE_FLOOR:
+            # Collect all promotable reranker specs in the branch with
+            # their stable _CallKeys and category/polarity context.
+            promotable_refs: list[
+                tuple[PromotionTier, _CallKey, GeneratedEndpointSpec]
+            ] = []
+            for trait_idx, trait in enumerate(branch.traits):
+                if trait.step_3_error is not None:
+                    continue
+                for cat_idx, cc in enumerate(trait.category_calls):
+                    if cc.handler_error is not None:
+                        continue
+                    for spec_idx, spec in enumerate(cc.generated_specs):
+                        tier = determine_promotion_tier(
+                            cc.category, spec, trait.polarity
+                        )
+                        if tier is PromotionTier.NEVER_PROMOTE:
+                            continue
+                        key: _CallKey = (trait_idx, cat_idx, spec_idx)
+                        promotable_refs.append((tier, key, spec))
+
+            promoted_tiers: set[PromotionTier] = set()
+            while len(union) < CANDIDATE_FLOOR:
+                # Pick the lowest tier with at least one not-yet-promoted
+                # spec. min() over the filtered list keeps the same
+                # authority-first ordering used by the pre-execution
+                # fallback.
+                remaining_tiers = [
+                    tier
+                    for tier, _, _ in promotable_refs
+                    if tier not in promoted_tiers
+                ]
+                if not remaining_tiers:
+                    break
+                next_tier = min(remaining_tiers)
+
+                # Each promotion round is its own span so the escalation reads
+                # as a clean sequence of siblings under candidate_generation
+                # (never nested in each other — the `with` closes before the
+                # next while check).
+                with tracer.start_as_current_span(QUERY_SEARCH_PROMOTION) as prom_span:
+                    pool_count_before = len(union)
+                    newly_promoted: list[_TaggedSpec] = []
+                    for tier, key, spec in promotable_refs:
+                        if tier is not next_tier:
+                            continue
+                        # Mutations are idempotent and commutative — the spec
+                        # is mutated in-place so Phase C reads the updated
+                        # operation_type when classifying live rerankers.
+                        spec.operation_type = OperationType.CANDIDATE_GENERATOR
+                        spec.was_promoted = True
+                        newly_promoted.append(_TaggedSpec(key=key, spec=spec))
+                        promoted_keys.add(key)
+
+                    promoted_tiers.add(next_tier)
+
+                    # Filter-active candidate-floor fallback: record the tier we
+                    # escalated to and the pool size at the moment we decided to
+                    # promote (`count_so_far`). Same event name as the pre-Stage-4
+                    # no-generator promotion (emitted from the orchestrator) so all
+                    # promotions query uniformly, discriminated by `reason`.
+                    prom_span.add_event(
+                        "reranker_fallback_promotion",
+                        {
+                            "reason": PromotionReason.UNDER_CANDIDATE_FLOOR.value,
+                            "tier": next_tier.name,
+                            "count_so_far": pool_count_before,
+                        },
+                    )
+
+                    # `next_tier` was chosen as the min of `remaining_tiers`,
+                    # which is the set of tiers in `promotable_refs` not yet
+                    # promoted — so at least one spec in `promotable_refs` has
+                    # `tier is next_tier`, and `newly_promoted` is guaranteed
+                    # non-empty here. No defensive guard needed.
+                    logger.info(
+                        "branch %s: union %d < floor %d; promoting tier %s "
+                        "(%d specs)",
+                        branch.kind, len(union), CANDIDATE_FLOOR,
+                        next_tier.name, len(newly_promoted),
+                    )
+                    fetch_count += await _dispatch_generator_specs(
+                        tagged_specs=newly_promoted,
+                        call_score_maps=call_score_maps,
+                        metadata_filters=metadata_filters,
+                        branch_kind=branch.kind,
+                        dispatch_cache=dispatch_cache,
+                    )
+                    for tagged in newly_promoted:
+                        scores = call_score_maps.get(tagged.key)
+                        if scores is not None:
+                            union.update(scores.keys())
+                    pool_before_shorts = len(union)
+                    union = _apply_shorts_subtraction(union, shorts_ids)
+                    prom_span.set_attribute(QUERY_SEARCH_PROMOTION_TIER, next_tier.name)
+                    prom_span.set_attribute(
+                        QUERY_SEARCH_PROMOTION_POOL_COUNT_BEFORE, pool_count_before
+                    )
+                    prom_span.set_attribute(
+                        QUERY_SEARCH_PROMOTION_PROMOTED_SPEC_COUNT, len(newly_promoted)
+                    )
+                    prom_span.set_attribute(
+                        QUERY_SEARCH_PROMOTION_POOL_COUNT_AFTER, len(union)
+                    )
+                    prom_span.set_attribute(
+                        QUERY_SEARCH_PROMOTION_SHORTS_REMOVED_COUNT,
+                        pool_before_shorts - len(union),
+                    )
+
+        # Under an active filter the tiered loop can exhaust every promotable
+        # tier and still leave the pool below the floor but non-empty — we
+        # proceed with the thin pool rather than neutral-seeding (that only
+        # fires on a fully empty union). Mark it so a sub-floor result set is
+        # legible in the trace; mutually exclusive with the neutral_seed span
+        # (which partitions on union == 0). Lands on the candidate_generation
+        # span (the current span here — generators/promotion spans have closed).
+        if filter_active and 0 < len(union) < CANDIDATE_FLOOR:
+            cg_span.add_event(
+                "thin_pool_accepted", {"final_count": len(union)}
+            )
+
+        # Empty-pool semantics:
+        #   * No generators were attempted → seed via NEUTRAL_SEED (the
+        #     orchestrator's pre-execution fallback added the aux spec
+        #     for this case).
+        #   * Hard filter active and the tiered loop exhausted without
+        #     producing any candidates → seed directly from the neutral
+        #     pool, bypassing the aux-spec gate. The orchestrator can't
+        #     predict this case (it doesn't know filters are active), so
+        #     `auxiliary_specs` won't carry a NEUTRAL_SEED spec for
+        #     branches that had generators present.
+        #   * Generators ran without filters and union ended up empty →
+        #     return empty. Per rescore_overhaul.md: "if something truly
+        #     doesn't exist, then it doesn't exist."
+        if not union:
+            if not pos_generators:
+                seed_specs = [
+                    s for s in auxiliary_specs
+                    if s.route is EndpointRoute.NEUTRAL_SEED
+                ]
+                if seed_specs:
+                    with tracer.start_as_current_span(
+                        QUERY_SEARCH_NEUTRAL_SEED
+                    ) as seed_span:
+                        seed_span.set_attribute(
+                            QUERY_SEARCH_NEUTRAL_SEED_REASON,
+                            NeutralSeedReason.NO_CANDIDATE_GENERATORS.value,
+                        )
+                        union = await _seed_from_neutral(
+                            seed_specs, metadata_filters=metadata_filters,
+                        )
+                        fetch_count += 1
+                        seed_span.set_attribute(
+                            QUERY_SEARCH_NEUTRAL_SEED_SEED_COUNT, len(union)
+                        )
+            elif filter_active:
+                with tracer.start_as_current_span(
+                    QUERY_SEARCH_NEUTRAL_SEED
+                ) as seed_span:
+                    seed_span.set_attribute(
+                        QUERY_SEARCH_NEUTRAL_SEED_REASON,
+                        NeutralSeedReason.UNDER_FLOOR_EXHAUSTED.value,
+                    )
+                    union = await _seed_neutral_pool(
+                        metadata_filters=metadata_filters,
+                        reason=f"branch {branch.kind} filter-active fallback",
+                    )
+                    fetch_count += 1
+                    seed_span.set_attribute(
+                        QUERY_SEARCH_NEUTRAL_SEED_SEED_COUNT, len(union)
+                    )
+
+        cg_span.set_attribute(
+            QUERY_SEARCH_CANDIDATE_GENERATION_FETCH_COUNT, fetch_count
+        )
+        cg_span.set_attribute(
+            QUERY_SEARCH_CANDIDATE_GENERATION_CANDIDATE_COUNT, len(union)
+        )
+        cg_span.set_attribute(
+            QUERY_SEARCH_CANDIDATE_GENERATION_COST_USD, cg_cost.total_usd
+        )
+
+    return union, promoted_keys
+
+
 async def _run_branch(
     branch: "Step2BranchResult",
     auxiliary_specs: list[GeneratedEndpointSpec],
@@ -591,179 +938,30 @@ async def _run_branch(
                     pos_rerankers.append(tagged)
 
     # ------------------------------------------------------------------
-    # Phase B — Pool definition.
-    # Run every positive-polarity generator concurrently with no
-    # restrict (each emits its own match set). Build the union from
-    # successful generator score-map keys. Apply shorts subtraction.
-    # When the user has an active hard filter, run a tiered promotion
-    # loop so a filter-narrowed initial pool can be rescued by
-    # promoting the next-lowest reranker tier into a generator role.
-    # Apply neutral seed fallback when no positive generator was
-    # attempted OR (filter-active path) when tier promotion exhausted
-    # without reaching the candidate floor.
+    # Phase B — Pool definition (Group C: `candidate_generation` span). See
+    # `_define_candidate_pool`: generators + tiered promotion + shorts
+    # subtraction + neutral-seed fallback, returning the finalized union and
+    # the keys promoted into generator role (dropped from the reranker pass).
     # ------------------------------------------------------------------
     call_score_maps: dict[_CallKey, dict[int, float] | None] = {}
-    union: set[int] = set()
-
-    # Cross-iteration dedup cache shared between the initial generator
-    # dispatch and the tiered-promotion loop. Lets the loop skip
-    # re-dispatch when a later tier holds a structurally identical
-    # (route, params) spec already executed in an earlier tier or in
-    # the initial pass.
-    dispatch_cache: dict[_DispatchCacheKey, dict[int, float] | None] = {}
-
-    # Precompute shorts IDs once; the loop reapplies the blocklist
-    # per iteration without re-querying.
-    shorts_specs = [
-        s for s in auxiliary_specs if s.route is EndpointRoute.MEDIA_TYPE
-    ]
-    shorts_ids = await _fetch_shorts_ids(shorts_specs)
-
-    if pos_generators:
-        await _dispatch_generator_specs(
-            tagged_specs=pos_generators,
-            call_score_maps=call_score_maps,
-            metadata_filters=metadata_filters,
-            branch_kind=branch.kind,
-            dispatch_cache=dispatch_cache,
-        )
-        for tagged in pos_generators:
-            scores = call_score_maps.get(tagged.key)
-            if scores is not None:
-                union.update(scores.keys())
-        union = _apply_shorts_subtraction(union, shorts_ids)
-
-    # ------------------------------------------------------------------
-    # Tiered promotion loop (filter-active gate). When the user's hard
-    # filter has narrowed the initial union below CANDIDATE_FLOOR, the
-    # filter — not concept absence — is most likely the cause of the
-    # shortfall. Promote the next-lowest reranker tier into generator
-    # role, re-dispatch just the newly-promoted specs, and merge the
-    # results into the union. Repeat until either the floor is met or
-    # every promotable tier in the branch has been promoted. Promotion
-    # is parallelized WITHIN a tier (rerankers at the same tier are
-    # roughly comparable in authority); tiers run SERIALLY so the
-    # loop stops at the earliest tier that brings the pool over the
-    # floor. The unfiltered base case is intentionally unchanged —
-    # "doesn't exist means doesn't exist" remains the contract.
-    # ------------------------------------------------------------------
-    filter_active = (
-        metadata_filters is not None and metadata_filters.is_active
+    union, promoted_keys = await _define_candidate_pool(
+        branch,
+        pos_generators=pos_generators,
+        auxiliary_specs=auxiliary_specs,
+        metadata_filters=metadata_filters,
+        call_score_maps=call_score_maps,
     )
-    promoted_keys: set[_CallKey] = set()
-    if filter_active and len(union) < CANDIDATE_FLOOR:
-        # Collect all promotable reranker specs in the branch with
-        # their stable _CallKeys and category/polarity context.
-        promotable_refs: list[
-            tuple[PromotionTier, _CallKey, GeneratedEndpointSpec]
-        ] = []
-        for trait_idx, trait in enumerate(branch.traits):
-            if trait.step_3_error is not None:
-                continue
-            for cat_idx, cc in enumerate(trait.category_calls):
-                if cc.handler_error is not None:
-                    continue
-                for spec_idx, spec in enumerate(cc.generated_specs):
-                    tier = determine_promotion_tier(
-                        cc.category, spec, trait.polarity
-                    )
-                    if tier is PromotionTier.NEVER_PROMOTE:
-                        continue
-                    key: _CallKey = (trait_idx, cat_idx, spec_idx)
-                    promotable_refs.append((tier, key, spec))
-
-        promoted_tiers: set[PromotionTier] = set()
-        while len(union) < CANDIDATE_FLOOR:
-            # Pick the lowest tier with at least one not-yet-promoted
-            # spec. min() over the filtered list keeps the same
-            # authority-first ordering used by the pre-execution
-            # fallback.
-            remaining_tiers = [
-                tier
-                for tier, _, _ in promotable_refs
-                if tier not in promoted_tiers
-            ]
-            if not remaining_tiers:
-                break
-            next_tier = min(remaining_tiers)
-
-            newly_promoted: list[_TaggedSpec] = []
-            for tier, key, spec in promotable_refs:
-                if tier is not next_tier:
-                    continue
-                # Mutations are idempotent and commutative — the spec
-                # is mutated in-place so Phase C reads the updated
-                # operation_type when classifying live rerankers.
-                spec.operation_type = OperationType.CANDIDATE_GENERATOR
-                spec.was_promoted = True
-                newly_promoted.append(_TaggedSpec(key=key, spec=spec))
-                promoted_keys.add(key)
-
-            promoted_tiers.add(next_tier)
-
-            # `next_tier` was chosen as the min of `remaining_tiers`,
-            # which is the set of tiers in `promotable_refs` not yet
-            # promoted — so at least one spec in `promotable_refs` has
-            # `tier is next_tier`, and `newly_promoted` is guaranteed
-            # non-empty here. No defensive guard needed.
-            logger.info(
-                "branch %s: union %d < floor %d; promoting tier %s "
-                "(%d specs)",
-                branch.kind, len(union), CANDIDATE_FLOOR,
-                next_tier.name, len(newly_promoted),
-            )
-            await _dispatch_generator_specs(
-                tagged_specs=newly_promoted,
-                call_score_maps=call_score_maps,
-                metadata_filters=metadata_filters,
-                branch_kind=branch.kind,
-                dispatch_cache=dispatch_cache,
-            )
-            for tagged in newly_promoted:
-                scores = call_score_maps.get(tagged.key)
-                if scores is not None:
-                    union.update(scores.keys())
-            union = _apply_shorts_subtraction(union, shorts_ids)
-
-    # Empty-pool semantics:
-    #   * No generators were attempted → seed via NEUTRAL_SEED (the
-    #     orchestrator's pre-execution fallback added the aux spec
-    #     for this case).
-    #   * Hard filter active and the tiered loop exhausted without
-    #     producing any candidates → seed directly from the neutral
-    #     pool, bypassing the aux-spec gate. The orchestrator can't
-    #     predict this case (it doesn't know filters are active), so
-    #     `auxiliary_specs` won't carry a NEUTRAL_SEED spec for
-    #     branches that had generators present.
-    #   * Generators ran without filters and union ended up empty →
-    #     return empty. Per rescore_overhaul.md: "if something truly
-    #     doesn't exist, then it doesn't exist."
     if not union:
-        if not pos_generators:
-            seed_specs = [
-                s for s in auxiliary_specs
-                if s.route is EndpointRoute.NEUTRAL_SEED
-            ]
-            if seed_specs:
-                union = await _seed_from_neutral(
-                    seed_specs, metadata_filters=metadata_filters,
-                )
-        elif filter_active:
-            union = await _seed_neutral_pool(
-                metadata_filters=metadata_filters,
-                reason=f"branch {branch.kind} filter-active fallback",
-            )
-        if not union:
-            logger.info(
-                "branch %s: empty union after Phase B; returning empty",
-                branch.kind,
-            )
-            return BranchRankedResults(
-                kind=branch.kind,
-                query=branch.query,
-                ui_label=branch.ui_label,
-                ranked=[],
-            )
+        logger.info(
+            "branch %s: empty union after Phase B; returning empty",
+            branch.kind,
+        )
+        return BranchRankedResults(
+            kind=branch.kind,
+            query=branch.query,
+            ui_label=branch.ui_label,
+            ranked=[],
+        )
 
     # Filter Phase C input to drop specs that were promoted into
     # generator role during the loop — their score is already in
@@ -777,81 +975,169 @@ async def _run_branch(
         ]
 
     # ------------------------------------------------------------------
-    # Phase C — Reranker pass against the finalized union.
-    # Every positive reranker now scores every candidate in the union,
-    # not just the trait-local subset. This is the load-bearing fix
-    # vs the prior recursive-granularity scoring path.
+    # Phase C/D — Rerankers (positive + negative) against the finalized union,
+    # dispatched in parallel under one `rerankers` span. Both polarities depend
+    # only on `union` and produce independent score maps merged later at
+    # aggregation, so there is no ordering constraint between them; running them
+    # together saves a serialized endpoint round-trip. Positive reranker scores
+    # land in call_score_maps; negative score maps are captured here and consumed
+    # (no re-dispatch) by the scoring span below. Every positive reranker now
+    # scores every candidate in the union — the load-bearing fix vs the prior
+    # trait-local scoring path.
     # ------------------------------------------------------------------
-    if pos_rerankers:
-        rer_results = await asyncio.gather(
-            *(
-                _dispatch_call(
-                    t.spec, restrict=union,
-                    metadata_filters=metadata_filters,
+    negative_traits = [branch.traits[i] for i in negative_trait_indices]
+    neg_score_maps: list[dict[int, float]] = []
+    if pos_rerankers or negative_traits:
+        with tracer.start_as_current_span(
+            QUERY_SEARCH_RERANKERS
+        ) as rer_span, track_stage_cost() as rer_cost:
+            # Launch both fan-outs before awaiting so all dispatches interleave.
+            pos_coro = asyncio.gather(
+                *(
+                    _dispatch_call(
+                        t.spec, restrict=union,
+                        metadata_filters=metadata_filters,
+                        polarity=Polarity.POSITIVE,
+                    )
+                    for t in pos_rerankers
                 )
-                for t in pos_rerankers
             )
-        )
-        for tagged, scores in zip(pos_rerankers, rer_results):
-            call_score_maps[tagged.key] = scores
+            neg_coro = asyncio.gather(
+                *(
+                    _dispatch_negative_trait(
+                        t, union, metadata_filters=metadata_filters,
+                    )
+                    for t in negative_traits
+                )
+            )
+            rer_results, neg_score_maps = await asyncio.gather(pos_coro, neg_coro)
+            for tagged, scores in zip(pos_rerankers, rer_results):
+                call_score_maps[tagged.key] = scores
+            # call_count spans both polarities: positive reranker specs + the
+            # endpoint calls each negative trait dispatched.
+            negative_call_count = sum(
+                _negative_trait_spec_count(t) for t in negative_traits
+            )
+            rer_span.set_attribute(
+                QUERY_SEARCH_RERANKERS_CALL_COUNT,
+                len(pos_rerankers) + negative_call_count,
+            )
+            rer_span.set_attribute(QUERY_SEARCH_RERANKERS_POOL_COUNT, len(union))
+            rer_span.set_attribute(
+                QUERY_SEARCH_RERANKERS_COST_USD, rer_cost.total_usd
+            )
 
     # ------------------------------------------------------------------
-    # Phase D — Per-trait scoring against the finalized union.
-    # Positive traits compose per-call scores via combine_calls and
-    # take max across categories; negative traits dispatch their calls
-    # against the union and route through the existing gate × fuzzy
-    # formula in _score_negative_trait.
+    # Phase E — Per-trait scoring against the finalized union + branch
+    # aggregation, wrapped in one `query_search.scoring` span: the positive
+    # combine/weight fold, the negative gate × fuzzy fold (over the score maps
+    # already dispatched in the rerankers span), and the final aggregation are
+    # the compute tail that turns the scored pool into a ranked list. The
+    # implicit-prior post-rerank nests here too — it is part of producing the
+    # final ranked list. The per-trait weight decomposition (incl. corpus-
+    # relative rarity) rides `scoring.trait_weights`.
     # ------------------------------------------------------------------
-    pos_payloads: list[_TraitPayload] = []
-    for trait_idx, trait in enumerate(branch.traits):
-        if trait.polarity is Polarity.NEGATIVE:
-            continue
-        if trait.step_3_error is not None:
-            # Trait failed upstream — contributes nothing.
-            continue
-        trait_scores, cat_scores = _score_positive_trait(
-            trait_idx=trait_idx,
-            trait=trait,
-            union=union,
-            call_score_maps=call_score_maps,
-        )
-        weight = _positive_trait_weight(
-            trait_idx=trait_idx,
-            trait=trait,
-            call_score_maps=call_score_maps,
-        )
-        pos_payloads.append((trait, trait_scores, weight, +1.0, cat_scores))
+    with tracer.start_as_current_span(QUERY_SEARCH_SCORING) as scoring_span:
+        # Per-trait weight breakdown for `scoring.trait_weights` — only the
+        # facts that drive scoring: trait text, polarity, how the trait was used
+        # (generator / mixed / reranker), the final weight, and (pure-generator
+        # only) the rarity inputs match_count + rarity_multiplier. Paired with
+        # trait_idx so the emitted array can be sorted back into branch order.
+        trait_weight_records: list[tuple[int, dict]] = []
 
-    # Negative traits in parallel — each rescores the union via its
-    # own three-bin formula. _score_negative_trait already handles
-    # failed-call drops and the gate × fuzzy combine. Negative scoring
-    # does not fold through per-category scores (the gate × fuzzy
-    # bins partition calls cross-category), so the per-category map
-    # is left empty for negatives.
-    neg_payloads: list[_TraitPayload] = []
-    if negative_trait_indices:
-        negative_traits = [branch.traits[i] for i in negative_trait_indices]
-        neg_score_maps = await asyncio.gather(
-            *(
-                _dispatch_negative_trait(
-                    t, union, metadata_filters=metadata_filters,
-                )
-                for t in negative_traits
+        pos_payloads: list[_TraitPayload] = []
+        for trait_idx, trait in enumerate(branch.traits):
+            if trait.polarity is Polarity.NEGATIVE:
+                continue
+            if trait.step_3_error is not None:
+                # Trait failed upstream — contributes nothing.
+                continue
+            trait_scores, cat_scores = _score_positive_trait(
+                trait_idx=trait_idx,
+                trait=trait,
+                union=union,
+                call_score_maps=call_score_maps,
             )
-        )
-        for trait, neg_scores in zip(negative_traits, neg_score_maps):
+            tw = _positive_trait_weight(
+                trait_idx=trait_idx,
+                trait=trait,
+                call_score_maps=call_score_maps,
+            )
+            pos_payloads.append(
+                (trait, trait_scores, tw.weight, +1.0, cat_scores)
+            )
+            record: dict = {
+                "trait": trait.surface_text,
+                "polarity": "positive",
+                "used_as": _USED_AS_LABEL[tw.classification],
+                "weight": tw.weight,
+            }
+            if tw.match_count is not None:
+                # Pure-generator only: the corpus-relative rarity inputs.
+                record["match_count"] = tw.match_count
+                record["rarity_multiplier"] = tw.rarity_factor
+            trait_weight_records.append((trait_idx, record))
+
+        # Negative traits: fold the score maps already dispatched in the
+        # rerankers span into payloads + weight records — no dispatch here.
+        # `_dispatch_negative_trait` already applied the three-bin gate × fuzzy
+        # combine during dispatch; scoring only attaches commitment weight and
+        # sign. Negative scoring does not fold through per-category scores (the
+        # gate × fuzzy bins partition calls cross-category), so the per-category
+        # map is left empty for negatives.
+        neg_payloads: list[_TraitPayload] = []
+        for idx, trait, neg_scores in zip(
+            negative_trait_indices, negative_traits, neg_score_maps
+        ):
             weight = _commitment_multiplier(trait.commitment)
             neg_payloads.append((trait, neg_scores, weight, -1.0, {}))
+            trait_weight_records.append((idx, {
+                "trait": trait.surface_text,
+                "polarity": "negative",
+                # Negatives run as rerankers against the union (gate × fuzzy);
+                # rarity does not apply, so no match_count / rarity_multiplier.
+                "used_as": "reranker",
+                "weight": weight,
+            }))
 
-    # ------------------------------------------------------------------
-    # Phase E — Branch aggregation.
-    # ------------------------------------------------------------------
-    ranked, score_breakdowns = _finalize_scores(
-        union=union,
-        branch_traits=branch.traits,
-        pos_payloads=pos_payloads,
-        neg_payloads=neg_payloads,
-    )
+        # ------------------------------------------------------------------
+        # Branch aggregation.
+        # ------------------------------------------------------------------
+        ranked, score_breakdowns = _finalize_scores(
+            union=union,
+            branch_traits=branch.traits,
+            pos_payloads=pos_payloads,
+            neg_payloads=neg_payloads,
+        )
+
+        # Scoring-span attributes: per-trait weight decomposition (branch
+        # order) + ranked pool size + top base score. Set BEFORE the implicit-
+        # prior rerank so top_score stays the base relevance score
+        # (pre-implicit-prior); ~0 across the board flags a filler /
+        # neutral-seed pool with no real trait signal.
+        trait_weight_records.sort(key=lambda item: item[0])
+        scoring_span.set_attribute(
+            QUERY_SEARCH_SCORING_TRAIT_WEIGHTS,
+            json.dumps([rec for _, rec in trait_weight_records]),
+        )
+        scoring_span.set_attribute(
+            QUERY_SEARCH_SCORING_RANKED_COUNT, len(ranked)
+        )
+        scoring_span.set_attribute(
+            QUERY_SEARCH_SCORING_TOP_SCORE, ranked[0][1] if ranked else 0.0
+        )
+
+        # Assemble the branch result and apply the implicit-prior post-rerank
+        # in-scope, so its `implicit_prior_rerank` span nests under scoring. The
+        # rerank mutates result.ranked (and the per-movie boost fractions).
+        result = BranchRankedResults(
+            kind=branch.kind,
+            query=branch.query,
+            ui_label=branch.ui_label,
+            ranked=ranked,
+            score_breakdowns=score_breakdowns,
+        )
+        result = await apply_implicit_prior_rerank_for_branch(branch, result)
 
     logger.info(
         "branch %s: ranked %d candidates in %.2fs",
@@ -859,13 +1145,7 @@ async def _run_branch(
         len(ranked),
         time.perf_counter() - branch_start,
     )
-    return BranchRankedResults(
-        kind=branch.kind,
-        query=branch.query,
-        ui_label=branch.ui_label,
-        ranked=ranked,
-        score_breakdowns=score_breakdowns,
-    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -888,9 +1168,13 @@ async def _dispatch_generator_specs(
     branch_kind: "BranchKind",
     dispatch_cache: dict[_DispatchCacheKey, dict[int, float] | None]
     | None = None,
-) -> None:
+) -> int:
     """Dispatch a batch of generator specs with dedup, merging the
     resulting score maps into `call_score_maps` in place.
+
+    Returns the number of dispatch calls actually issued (post-dedup
+    representatives) so the caller can roll them into the
+    `candidate_generation.fetch_count` telemetry.
 
     Shared between the initial Phase B generator dispatch and the
     tiered-promotion loop. Two layers of dedup:
@@ -920,7 +1204,7 @@ async def _dispatch_generator_specs(
     entries discovered this call.
     """
     if not tagged_specs:
-        return
+        return 0
 
     dedup_groups: dict[_DispatchCacheKey, list[_TaggedSpec]] = {}
     unkeyed: list[_TaggedSpec] = []
@@ -967,18 +1251,36 @@ async def _dispatch_generator_specs(
     for tagged in unkeyed:
         call_score_maps[tagged.key] = rep_map[tagged.key]
 
-    if logger.isEnabledFor(logging.INFO):
-        n_total = len(tagged_specs)
-        n_dispatched = len(representatives)
-        n_cache_hits = len(cached_assignments)
-        # Surface dedup whenever the batch had any savings — either
-        # within-batch folds or cross-iteration cache reuse.
-        if n_total != n_dispatched or n_cache_hits:
+    # Surface dedup whenever the batch had any savings — either within-batch
+    # folds or cross-iteration cache reuse. Computed unconditionally (cheap)
+    # so the span event fires independent of log level.
+    n_total = len(tagged_specs)
+    n_dispatched = len(representatives)
+    n_cache_hits = len(cached_assignments)
+    if n_total != n_dispatched or n_cache_hits:
+        # The folded-away route values: the within-batch duplicate tails
+        # (every member past the group head) plus the cross-iteration cache
+        # hits. Rare in practice — worth knowing when it happens. Lands on
+        # whichever container span is current: `generators` on the initial
+        # pass, a `promotion` span during a tiered-promotion round.
+        deduped_routes = [
+            t.spec.route.value
+            for group in dedup_groups.values()
+            if len(group) > 1
+            for t in group[1:]
+        ] + [t.spec.route.value for t, _ in cached_assignments]
+        trace.get_current_span().add_event(
+            "generator_dedup", {"deduped_routes": deduped_routes}
+        )
+        if logger.isEnabledFor(logging.INFO):
             logger.info(
                 "branch %s: generator dedup folded %d → %d specs "
                 "(%d cross-iteration cache hits)",
                 branch_kind, n_total, n_dispatched, n_cache_hits,
             )
+
+    # Actual dispatch calls issued this batch (post-dedup representatives).
+    return n_dispatched
 
 
 async def _fetch_shorts_ids(
@@ -1005,7 +1307,14 @@ async def _fetch_shorts_ids(
     if not shorts_specs:
         return set()
     shorts_results = await asyncio.gather(
-        *(_dispatch_call(spec, restrict=None) for spec in shorts_specs)
+        *(
+            _dispatch_call(
+                spec,
+                restrict=None,
+                span_name=QUERY_SEARCH_AUXILIARY_SHORTS_EXCLUSION,
+            )
+            for spec in shorts_specs
+        )
     )
     shorts_ids: set[int] = set()
     for scores in shorts_results:
@@ -1307,27 +1616,70 @@ def _classify_trait(trait: "TraitWithEndpoints") -> _TraitClass:
     return "pure_reranker"
 
 
+class _TraitWeight(NamedTuple):
+    """Decomposition of a positive trait's weight, for scoring + telemetry.
+
+    `weight` is the value Phase E consumes (commitment × rarity). The other
+    fields surface the decomposition so the scoring span can report *why* a
+    trait was weighted as it was without recomputing it. `match_count` /
+    `rarity_factor` are meaningful only for pure-generator traits — the sole
+    class rarity applies to; for mixed / pure-reranker traits rarity is not
+    applied, so `match_count` is None and `rarity_factor` is 1.0.
+    """
+
+    weight: float
+    commitment_multiplier: float
+    classification: _TraitClass
+    match_count: int | None
+    rarity_factor: float
+
+
+# `_TraitClass` -> the coarse "how was this trait used" label emitted on
+# `scoring.trait_weights`. Generators build the candidate pool; rerankers score
+# it; mixed traits did both.
+_USED_AS_LABEL: dict[_TraitClass, str] = {
+    "pure_generator": "generator",
+    "mixed": "mixed",
+    "pure_reranker": "reranker",
+}
+
+
 def _positive_trait_weight(
     trait_idx: int,
     trait: "TraitWithEndpoints",
     call_score_maps: dict[_CallKey, dict[int, float] | None],
-) -> float:
+) -> _TraitWeight:
     """Compute the positive-trait weight = commitment × rarity.
 
     Rarity is only applied to pure-generator traits (rescore_overhaul
     "Trait weighting"). Mixed and pure-reranker traits get
-    rarity_factor = 1.0; the trait weight is purely commitment.
+    rarity_factor = 1.0; the trait weight is purely commitment. Returns the
+    full decomposition (see `_TraitWeight`) so callers can surface it without
+    re-deriving the rarity inputs.
     """
     commit = _commitment_multiplier(trait.commitment)
     classification = _classify_trait(trait)
     if classification != "pure_generator":
-        return commit
+        return _TraitWeight(
+            weight=commit,
+            commitment_multiplier=commit,
+            classification=classification,
+            match_count=None,
+            rarity_factor=1.0,
+        )
     match_count = _match_count_for_rarity(
         trait_idx=trait_idx,
         trait=trait,
         call_score_maps=call_score_maps,
     )
-    return commit * _rarity_factor(match_count)
+    rarity = _rarity_factor(match_count)
+    return _TraitWeight(
+        weight=commit * rarity,
+        commitment_multiplier=commit,
+        classification=classification,
+        match_count=match_count,
+        rarity_factor=rarity,
+    )
 
 
 def _match_count_for_rarity(
@@ -1379,6 +1731,20 @@ def _match_count_for_rarity(
 # ---------------------------------------------------------------------------
 
 
+def _negative_trait_spec_count(trait: "TraitWithEndpoints") -> int:
+    """Number of endpoint specs a negative trait dispatches.
+
+    Mirrors the `paired` build in `_dispatch_negative_trait`: every generated
+    spec across the trait's non-error category calls. Used to roll negative
+    dispatches into the merged `rerankers.call_count`.
+    """
+    return sum(
+        len(cc.generated_specs)
+        for cc in trait.category_calls
+        if cc.handler_error is None
+    )
+
+
 async def _dispatch_negative_trait(
     trait: "TraitWithEndpoints",
     union: set[int],
@@ -1412,6 +1778,7 @@ async def _dispatch_negative_trait(
             _dispatch_call(
                 spec, restrict=union,
                 metadata_filters=metadata_filters,
+                polarity=Polarity.NEGATIVE,
             )
             for _, spec in paired
         )
@@ -1712,6 +2079,79 @@ def _params_identity(value) -> object:
 
 
 # ---------------------------------------------------------------------------
+# Query-param serialization for the dispatch span
+# ---------------------------------------------------------------------------
+
+# Endpoint-param fields that are LLM generation scaffolding (analysis /
+# reasoning / enumeration layers) rather than the committed query the executor
+# runs. Dropped from `dispatch.query_params` so the span shows WHAT was queried,
+# not how the LLM got there. Grounded in the translation schemas' consistent
+# "analysis layer -> commitment layer" shape: keyword `attributes` walk ->
+# `finalized_keywords`; metadata `column_candidates` -> `column_spec`; semantic
+# `*_exploration` / `space_candidates` -> `space_queries`; franchise
+# `request_overview` -> `franchise_names`. Exact names + suffix families,
+# applied recursively. `attributes` is collision-safe (defined only as the
+# keyword analysis layer); `strengths` / `weaknesses` / `potential_keywords`
+# live under a dropped parent so they fall out transitively.
+_QUERY_PARAM_DROP_EXACT: frozenset[str] = frozenset({
+    "thinking",
+    "exploration",
+    "search_picture",
+    "request_overview",
+    "attributes",
+})
+_QUERY_PARAM_DROP_SUFFIXES: tuple[str, ...] = (
+    "_exploration",
+    "_reasoning",
+    "_candidates",
+    "_intent",
+)
+
+
+def _is_generation_assist_field(key: str) -> bool:
+    return key in _QUERY_PARAM_DROP_EXACT or key.endswith(
+        _QUERY_PARAM_DROP_SUFFIXES
+    )
+
+
+def _strip_generation_assist(value: object) -> object:
+    """Recursively drop generation-assist keys from a dumped params tree."""
+    if isinstance(value, dict):
+        return {
+            k: _strip_generation_assist(v)
+            for k, v in value.items()
+            if not _is_generation_assist_field(k)
+        }
+    if isinstance(value, list):
+        return [_strip_generation_assist(v) for v in value]
+    return value
+
+
+def _query_params_json(params) -> str | None:
+    """Compact JSON of the query-relevant endpoint params for the dispatch span.
+
+    `model_dump(mode="json", exclude_none=True)` keeps the full committed query
+    (including non-null default-valued fields) while dropping the uncommitted
+    nulls; `_strip_generation_assist` then removes the LLM analysis/reasoning
+    layers so only what the executor actually queries on remains — no reasoning
+    prose, and none of the movie-ID bloat the SQL child spans carry (the
+    `restrict` set is a separate arg, never in `params`). Returns None when
+    there are no params (e.g. TRENDING) or nothing query-relevant survives.
+    Never raises — telemetry must not break dispatch.
+    """
+    if params is None:
+        return None
+    try:
+        dumped = params.model_dump(mode="json", exclude_none=True)
+        cleaned = _strip_generation_assist(dumped)
+        if not cleaned:
+            return None
+        return json.dumps(cleaned, separators=(",", ":"), default=str)
+    except Exception:  # noqa: BLE001 — telemetry is best-effort
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Single-call dispatch wrapper (preserved unchanged)
 # ---------------------------------------------------------------------------
 
@@ -1721,6 +2161,8 @@ async def _dispatch_call(
     *,
     restrict: set[int] | None,
     metadata_filters: MetadataFilters | None = None,
+    span_name: str = QUERY_SEARCH_DISPATCH,
+    polarity: Polarity = Polarity.POSITIVE,
 ) -> dict[int, float] | None:
     """Run one GeneratedEndpointSpec through the existing dispatcher.
 
@@ -1746,30 +2188,83 @@ async def _dispatch_call(
     that shape, so we route TRENDING to `execute_trending_query`
     directly, mirroring the special-case in
     `category_handlers.handler._dispatch_one_spec`.
-    """
-    try:
-        if spec.route is EndpointRoute.TRENDING:
-            coro = execute_trending_query(
-                restrict_to_movie_ids=restrict,
-                metadata_filters=metadata_filters,
-            )
-        else:
-            coro = build_endpoint_coroutine(
-                spec,
-                qdrant_client=qdrant_client,
-                restrict_to_movie_ids=restrict,
-                metadata_filters=metadata_filters,
-            )
-        result: EndpointResult = await asyncio.wait_for(
-            coro, timeout=EXECUTOR_TIMEOUT_SECONDS
-        )
-    except Exception as exc:  # noqa: BLE001 — soft-fail per call
-        logger.warning(
-            "endpoint call failed (route=%s, op=%s); call dropped (%r)",
-            spec.route.value,
-            spec.operation_type.value,
-            exc,
-        )
-        return None
 
-    return {sc.movie_id: sc.score for sc in result.scores}
+    `span_name` overrides the span name (default `query_search.dispatch`); the
+    shorts-exclusion fetch passes `query_search.auxiliary_shorts_exclusion` so
+    it is identifiable in the waterfall instead of reading as an anonymous
+    dispatch. The `dispatch.*` attributes are unchanged either way.
+
+    `polarity` labels the dispatch positive vs negative. Positive and negative
+    rerankers both run as POOL_RERANKER and now share the `rerankers` span, so
+    `operation_type` alone can't tell them apart — `dispatch.polarity` does.
+    Defaults to POSITIVE (generators / promotions / shorts, already
+    distinguished by `operation_type`); the negative-trait scorer passes
+    NEGATIVE.
+    """
+    with tracer.start_as_current_span(span_name) as disp_span:
+        disp_span.set_attribute(QUERY_SEARCH_DISPATCH_ROUTE, spec.route.value)
+        disp_span.set_attribute(
+            QUERY_SEARCH_DISPATCH_OPERATION_TYPE, spec.operation_type.value
+        )
+        disp_span.set_attribute(QUERY_SEARCH_DISPATCH_POLARITY, polarity.value)
+        disp_span.set_attribute(
+            QUERY_SEARCH_DISPATCH_WAS_PROMOTED, spec.was_promoted
+        )
+        query_params_json = _query_params_json(spec.params)
+        if query_params_json is not None:
+            disp_span.set_attribute(
+                QUERY_SEARCH_DISPATCH_QUERY_PARAMS, query_params_json
+            )
+        try:
+            if spec.route is EndpointRoute.TRENDING:
+                coro = execute_trending_query(
+                    restrict_to_movie_ids=restrict,
+                    metadata_filters=metadata_filters,
+                )
+            else:
+                coro = build_endpoint_coroutine(
+                    spec,
+                    qdrant_client=qdrant_client,
+                    restrict_to_movie_ids=restrict,
+                    metadata_filters=metadata_filters,
+                )
+            result: EndpointResult = await asyncio.wait_for(
+                coro, timeout=EXECUTOR_TIMEOUT_SECONDS
+            )
+        except TimeoutError as exc:
+            # The asyncio.wait_for ceiling (Python 3.13: asyncio.TimeoutError
+            # IS the builtin TimeoutError). Split from other failures so a
+            # slow endpoint is queryable separately from a broken one. Must
+            # precede `except Exception`. Soft-fail semantics preserved.
+            disp_span.set_attribute("error.type", "timeout")
+            disp_span.record_exception(exc)
+            disp_span.set_status(Status(StatusCode.ERROR))
+            disp_span.add_event(
+                "dispatch_soft_fail", {"error.type": "timeout", "timeout": True}
+            )
+            logger.warning(
+                "endpoint call timed out (route=%s, op=%s); call dropped",
+                spec.route.value,
+                spec.operation_type.value,
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001 — soft-fail per call
+            error_type = type(exc).__name__
+            disp_span.set_attribute("error.type", error_type)
+            disp_span.record_exception(exc)
+            disp_span.set_status(Status(StatusCode.ERROR))
+            disp_span.add_event(
+                "dispatch_soft_fail",
+                {"error.type": error_type, "timeout": False},
+            )
+            logger.warning(
+                "endpoint call failed (route=%s, op=%s); call dropped (%r)",
+                spec.route.value,
+                spec.operation_type.value,
+                exc,
+            )
+            return None
+
+        scores = {sc.movie_id: sc.score for sc in result.scores}
+        disp_span.set_attribute(QUERY_SEARCH_DISPATCH_RESULT_COUNT, len(scores))
+        return scores

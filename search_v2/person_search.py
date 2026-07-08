@@ -70,12 +70,15 @@ from db.postgres import (
 from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
 from observability.names import (
+    PERSON_RESOLVE,
+    PERSON_RESOLVE_BEST_BUCKET,
+    PERSON_RESOLVE_MOVIE_COUNT,
+    PERSON_RESOLVE_NAME,
     QUERY_SEARCH_BRANCH_ENTITIES,
     QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS,
     QUERY_SEARCH_BRANCH_TOP_TIER,
     QUERY_SEARCH_BRANCH_TOP_TIER_COUNT,
     QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
-    QUERY_SEARCH_PERSON_RESOLUTION,
 )
 from schemas.step_0_flow_routing import PersonFlowData
 from search_v2.actor_zones import zone_cutoffs, zone_relative_position
@@ -202,18 +205,19 @@ async def run_person_search(
     # Stage 1: per-person resolution → {movie_id: bucket} for each
     # named person. Fanned out in parallel — each call issues one
     # phrase_term_ids lookup plus one fetch per role table. Each call is
-    # wrapped in a per-person child span (of the branch span, current here)
-    # so per-person resolution latency is visible and its Postgres calls
-    # nest under the right person — the one entity flow where multiple
-    # entities genuinely resolve as independent parallel tasks.
-    async def _resolve_person_traced(canonical_name: str) -> dict[int, int]:
-        with tracer.start_as_current_span(QUERY_SEARCH_PERSON_RESOLUTION):
-            return await fetch_person_buckets(
-                canonical_name, metadata_filters=metadata_filters,
-            )
-
+    # wrapped in the shared `resolve_person_traced` (the same flow-neutral
+    # `person.resolve` span the /attribute_search endpoint uses), so
+    # per-person resolution latency is visible and its Postgres calls nest
+    # under the right person — the one entity flow where multiple entities
+    # genuinely resolve as independent parallel tasks. The span is current
+    # here (under the branch span), so it parents correctly.
     per_person_buckets = await asyncio.gather(
-        *(_resolve_person_traced(ref.canonical_name) for ref in references)
+        *(
+            resolve_person_traced(
+                ref.canonical_name, metadata_filters=metadata_filters,
+            )
+            for ref in references
+        )
     )
 
     # Entity-flow observability skeleton on the branch span. `resolved_counts`
@@ -306,6 +310,52 @@ def _record_top_tier(result: PersonSearchResult) -> None:
 # ---------------------------------------------------------------------------
 # Stage 1 — per-person resolution across all five role tables.
 # ---------------------------------------------------------------------------
+
+
+async def resolve_person_traced(
+    name: str,
+    *,
+    metadata_filters: MetadataFilters | None = None,
+) -> dict[int, int]:
+    """Resolve one person under a flow-neutral `person.resolve` span.
+
+    The single instrumented entry point both person callers share — the
+    /query_search person branch (`run_person_search`) and the /attribute_search
+    endpoint (`search_v2.attribute_search.run_attribute_search`). It wraps the
+    pure resolver `fetch_person_buckets` in a `person.resolve` span (so the
+    resolver itself stays tracer-free) and records only the *intrinsic* facts the
+    resolution knows about itself:
+
+      - `person.resolve.name` — the name resolved (high-cardinality span attr).
+      - `person.resolve.movie_count` — number of movies this person resolved to;
+        0 means the name matched no filter-eligible credit (a silent drop that
+        also emits a `"person unresolved"` span event).
+      - `person.resolve.best_bucket` — the most-prominent bucket reached (1=lead
+        … 4=minor), set only when movie_count > 0. An all-bucket-4 result for a
+        well-known name is the fingerprint of a resolution collision.
+
+    Caller-specific facts (which branch, request path, union pool) are NOT set
+    here — they belong on the caller's span. The span is created as the current
+    span, so it nests under whatever span is active (the branch span on the
+    /query_search path, the FastAPI server span on the /attribute_search path)
+    and its Postgres calls nest under it. No-ops when tracing is not configured.
+    """
+    with tracer.start_as_current_span(PERSON_RESOLVE) as span:
+        buckets = await fetch_person_buckets(
+            name, metadata_filters=metadata_filters,
+        )
+        span.set_attribute(PERSON_RESOLVE_NAME, name)
+        span.set_attribute(PERSON_RESOLVE_MOVIE_COUNT, len(buckets))
+        if buckets:
+            # Lower bucket number = more prominent, so the best (most
+            # prominent) credit is the MIN bucket value across the person's
+            # movies.
+            span.set_attribute(PERSON_RESOLVE_BEST_BUCKET, min(buckets.values()))
+        else:
+            # Zero credits — the silent-drop case. Surfaced as an event so it is
+            # queryable without scanning every movie_count attribute.
+            span.add_event("person unresolved")
+        return buckets
 
 
 async def fetch_person_buckets(

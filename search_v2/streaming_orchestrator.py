@@ -94,6 +94,9 @@ from observability.names import (
     QUERY_SEARCH_BRANCH_RESULT_COUNT,
     QUERY_SEARCH_BRANCH_TYPE,
     QUERY_SEARCH_BRANCH_USES_ORIGINAL_TEXT,
+    QUERY_SEARCH_HYDRATION,
+    QUERY_SEARCH_HYDRATION_REQUESTED_COUNT,
+    QUERY_SEARCH_HYDRATION_RETURNED_COUNT,
     QUERY_SEARCH_STEP_0,
     QUERY_SEARCH_STEP_0_FLOWS,
     QUERY_SEARCH_STEP_0_STANDARD_BRANCH_COUNT,
@@ -132,7 +135,6 @@ from search_v2.full_pipeline_orchestrator import (
     CategoryCallWithEndpoints,
     Step2BranchResult,
     TraitWithEndpoints,
-    _apply_implicit_prior_rerank_for_branch,
     _call_with_retry,
     _compute_branch_auxiliary,
     _finish_branch_after_step2,
@@ -141,6 +143,7 @@ from search_v2.full_pipeline_orchestrator import (
     _standard_branch_count,
     _step1_needed,
 )
+from search_v2.promotion_tiers import PromotionReason
 from search_v2.similar_movies import run_similarity_search
 from search_v2.stage_4_execution import _run_branch as _stage4_run_branch
 from search_v2.query_input_validation import clean_clarification, clean_query
@@ -1053,7 +1056,25 @@ async def _handle_finished_task(
         # own specs in place (reranker → candidate generator), so
         # this must run before the task starts.
         emitter = make_emitter(info.fetch_id)
-        auxiliary = _compute_branch_auxiliary(branch_result)
+        # `fallback_outcome` is an opt-in side channel: if the reranker-only
+        # fallback promotes a tier (the "no candidate generators" case,
+        # decided here — pre-Stage-4 and outside the branch span's current
+        # context), it records the promoted tier so we can stamp the event
+        # on the branch span. The tiered-loop under-floor promotions are
+        # recorded inside Stage 4 on their own `query_search.promotion` spans.
+        fallback_outcome: dict[str, Any] = {}
+        auxiliary = _compute_branch_auxiliary(
+            branch_result, fallback_outcome=fallback_outcome
+        )
+        promoted_tier = fallback_outcome.get("tier")
+        if promoted_tier is not None and branch_span is not None:
+            branch_span.add_event(
+                "reranker_fallback_promotion",
+                {
+                    "reason": PromotionReason.NO_CANDIDATE_GENERATORS.value,
+                    "tier": promoted_tier,
+                },
+            )
         # Push "executing" through the queue before the task starts
         # so the UI flips out of "generating_endpoints" the instant
         # Step 3 completes (the task itself emits its later
@@ -1180,18 +1201,37 @@ async def _run_stage4_with_implicit_prior(
     through the longest phase of the pipeline. The caller has already
     emitted "executing" before this task started.
     """
-    # Execute candidate-generator + reranker specs and score traits.
+    # Execute candidate-generator + reranker specs, score traits, and apply the
+    # implicit-prior post-rerank — all inside Stage 4 now (the rerank runs in the
+    # scoring span), so the returned result is already reranked.
     result = await _stage4_run_branch(
         branch, auxiliary, metadata_filters=metadata_filters,
     )
+    # Pre-hydration progress marker (Stage 4 done, rescoring included).
     emit_stage("rescoring")
-    # Apply the implicit-prior post-rerank pass.
-    result = await _apply_implicit_prior_rerank_for_branch(branch, result)
     if result.branch_error is not None:
         return _FetchOutcome(cards=[], branch_error=result.branch_error)
     emit_stage("hydrating")
     movie_ids = [int(mid) for mid, _ in result.ranked]
-    cards = await fetch_movie_card_summaries(movie_ids)
+    # Hydration: bulk movie_card lookup turning ranked ids into display cards.
+    # The auto psycopg span nests inside for timing; these attributes add what
+    # SQL can't see — the requested/returned counts, and (as an event) the ids
+    # that scored but have no movie_card row (silently dropped by
+    # fetch_movie_card_summaries, an ingestion gap).
+    with tracer.start_as_current_span(QUERY_SEARCH_HYDRATION) as hyd_span:
+        cards = await fetch_movie_card_summaries(movie_ids)
+        hyd_span.set_attribute(
+            QUERY_SEARCH_HYDRATION_REQUESTED_COUNT, len(movie_ids)
+        )
+        hyd_span.set_attribute(
+            QUERY_SEARCH_HYDRATION_RETURNED_COUNT, len(cards)
+        )
+        if len(cards) < len(movie_ids):
+            returned_ids = {card.tmdb_id for card in cards}
+            missing_ids = [m for m in movie_ids if m not in returned_ids]
+            hyd_span.add_event(
+                "hydration missing cards", {"missing_ids": missing_ids}
+            )
     return _FetchOutcome(cards=cards, branch_error=None)
 
 

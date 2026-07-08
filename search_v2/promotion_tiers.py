@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from enum import IntEnum
+from enum import Enum, IntEnum
 
 from schemas.enums import EndpointRoute, OperationType, Polarity
 from schemas.trait_category import CategoryName
@@ -34,6 +34,32 @@ class PromotionTier(IntEnum):
     AUDIENCE_SENSITIVITY_OR_SEASONAL = 5
     VIBES_OR_CONTEXT_FIT = 6
     GLOBAL_METADATA_PRIOR_OR_ORDINAL = 7
+
+
+# Observability reason vocabularies for the pool-definition fallbacks. Defined
+# here (not at a single call site) because the same values are emitted from two
+# modules — Stage 4 (`stage_4_execution`) and the streaming orchestrator — and
+# this module is the OTel-free dependency both already import, so co-locating
+# them prevents value drift. Each is a str-Enum set via `.value` per the
+# names.py naming ruleset (rule E: closed value sets live in an owning module).
+class PromotionReason(str, Enum):
+    """Why a reranker→generator promotion fired (the `reranker_fallback_promotion` event)."""
+
+    # Branch had zero candidate generators; the pre-Stage-4 reranker-only
+    # fallback promoted the single lowest-authority-available tier.
+    NO_CANDIDATE_GENERATORS = "no_candidate_generators"
+    # A hard filter narrowed the pool below CANDIDATE_FLOOR; Stage 4's tiered
+    # loop promoted this round's tier to backfill.
+    UNDER_CANDIDATE_FLOOR = "under_candidate_floor"
+
+
+class NeutralSeedReason(str, Enum):
+    """Why the neutral-seed pool was fetched (the `query_search.neutral_seed` span)."""
+
+    # No generators were attempted pipeline-wide; consumed the aux NEUTRAL_SEED spec.
+    NO_CANDIDATE_GENERATORS = "no_candidate_generators"
+    # Filter-active tiered loop exhausted every tier and the union was still empty.
+    UNDER_FLOOR_EXHAUSTED = "under_floor_exhausted"
 
 
 _SEMANTIC_PROMOTION_TIERS: dict[CategoryName, PromotionTier] = {

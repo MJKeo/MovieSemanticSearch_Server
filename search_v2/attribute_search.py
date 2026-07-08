@@ -47,9 +47,11 @@
 #      normalization names are dropped (they contribute no credits)
 #      rather than collapsing the whole result — union semantics.
 #
-#   2. Per-person bucket resolution via `fetch_person_buckets`, fanned
-#      out in parallel. `metadata_filters` is threaded into every role
-#      lookup so each per-person dict is already filter-respecting.
+#   2. Per-person bucket resolution via the shared instrumented
+#      `resolve_person_traced` (wraps `fetch_person_buckets` in the
+#      flow-neutral `person.resolve` span), fanned out in parallel.
+#      `metadata_filters` is threaded into every role lookup so each
+#      per-person dict is already filter-respecting.
 #
 #   3. UNION + SUM of bucket weights across persons → `{movie_id:
 #      summed_weight}`.
@@ -67,7 +69,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
+
+from opentelemetry import trace
 
 from db.postgres import (
     fetch_neutral_reranker_seed_ids,
@@ -75,9 +80,18 @@ from db.postgres import (
 )
 from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
+from observability.names import (
+    ATTRIBUTE_SEARCH_PATH,
+    ATTRIBUTE_SEARCH_POOL_COUNT,
+    ATTRIBUTE_SEARCH_PEOPLE_SEARCHED_COUNT,
+    ATTRIBUTE_SEARCH_PEOPLE_UNRESOLVED_COUNT,
+)
 # Reuse Step 0's person resolver and bucket scheme so the two flows
 # can't drift — single-person attribute search matches Step 0 exactly.
-from search_v2.person_search import BUCKET_MINOR, fetch_person_buckets
+# `resolve_person_traced` is the shared, instrumented wrapper around
+# `fetch_person_buckets` (emits the flow-neutral `person.resolve` span), so the
+# per-person telemetry here is identical to the /query_search person branch.
+from search_v2.person_search import BUCKET_MINOR, resolve_person_traced
 
 
 # Default cap on results returned to the API. Browse-style endpoint —
@@ -86,6 +100,17 @@ from search_v2.person_search import BUCKET_MINOR, fetch_person_buckets
 # identical for the overlapping prefix — this endpoint just surfaces a
 # longer tail.)
 DEFAULT_ATTRIBUTE_SEARCH_LIMIT = 250
+
+
+class AttributeSearchPath(str, Enum):
+    """Which ranking path a request took — recorded as `attribute_search.path`.
+
+    Closed low-cardinality value set (names.py rule E: values are enums, not
+    Names), the single discriminator for slicing this endpoint's traces.
+    """
+
+    BROWSE = "browse"   # no people supplied — neutral 80/20 popularity/reception prior
+    PEOPLE = "people"   # one or more people — summed prominence-bucket ranking
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,12 +195,28 @@ async def run_attribute_search(
       filter-eligible credit. With no people supplied, returns the
       catalog ranked by the neutral 80/20 prior.
     """
+    # Request-scoped observability. `run_attribute_search` is awaited directly
+    # by the endpoint handler (no intervening manual span), so the current span
+    # here is the FastAPI server span — the same handle the handler records its
+    # input attributes on. These contextual facts (path + the people-count
+    # skeleton) are the endpoint's, so they live here on the server span, NOT on
+    # the shared `person.resolve` spans. `result_count` is set by the handler
+    # after hydration (the count is known only there).
+    request_span = trace.get_current_span()
+
     # No-person fast path: rank the whole movie_card table by the
     # neutral 80/20 prior (filter-respecting). Unchanged behavior.
     if not people:
+        request_span.set_attribute(
+            ATTRIBUTE_SEARCH_PATH, AttributeSearchPath.BROWSE.value
+        )
         return await fetch_neutral_reranker_seed_ids(
             limit=limit, metadata_filters=metadata_filters,
         )
+
+    request_span.set_attribute(
+        ATTRIBUTE_SEARCH_PATH, AttributeSearchPath.PEOPLE.value
+    )
 
     # Normalize + dedupe on the normalized name — the same dedupe Step 0
     # applies to canonical_name. A name that normalizes to empty
@@ -192,17 +233,33 @@ async def run_attribute_search(
         seen.add(normalized)
         names.append(spec.name)
 
-    # Every supplied name was blank after normalization — no credits.
+    # Names actually resolved after normalize + dedupe (== number of
+    # `person.resolve` spans emitted below). `people_requested_count -
+    # people_searched_count` is the count of blank/duplicate names dropped.
+    request_span.set_attribute(ATTRIBUTE_SEARCH_PEOPLE_SEARCHED_COUNT, len(names))
+
+    # Every supplied name was blank after normalization — no credits. Distinct
+    # from the empty-pool return below: here searched_count is 0.
     if not names:
         return []
 
-    # Per-person bucket resolution, in parallel, via the shared Step 0
-    # resolver (role-agnostic across all five credit tables).
+    # Per-person bucket resolution, in parallel, via the shared instrumented
+    # resolver (role-agnostic across all five credit tables). Each call emits a
+    # flow-neutral `person.resolve` span nesting its Postgres lookups, identical
+    # to the /query_search person branch.
     per_person = await asyncio.gather(
         *(
-            fetch_person_buckets(name, metadata_filters=metadata_filters)
+            resolve_person_traced(name, metadata_filters=metadata_filters)
             for name in names
         )
+    )
+
+    # Searched names that resolved to zero credits — the silent-drop signal in
+    # aggregate (each is also flagged by a `"person unresolved"` event on its
+    # own `person.resolve` span).
+    request_span.set_attribute(
+        ATTRIBUTE_SEARCH_PEOPLE_UNRESOLVED_COUNT,
+        sum(1 for buckets in per_person if not buckets),
     )
 
     # UNION + SUM of bucket weights across persons. A movie's score is
@@ -212,6 +269,11 @@ async def run_attribute_search(
     for person_buckets in per_person:
         for movie_id, bucket in person_buckets.items():
             pool[movie_id] = pool.get(movie_id, 0) + _bucket_weight(bucket)
+
+    # Union pool size before hydration. 0 here (with searched_count > 0) is the
+    # "empty pool" case — resolved names, but no movie survived the union/filter —
+    # distinct from the all-blank return above where searched_count is 0.
+    request_span.set_attribute(ATTRIBUTE_SEARCH_POOL_COUNT, len(pool))
 
     if not pool:
         return []

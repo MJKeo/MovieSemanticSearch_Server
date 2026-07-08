@@ -50,8 +50,8 @@ C. Dot vs. underscore (the one decision, applied at every boundary). When you
 
      cache.write_ok          -> dot: `cache` is a real, growing telemetry space
                                 (hit, read_ok, ttl_seconds are nameable siblings)
-     outcome.failure_reason  -> dot: `outcome` already groups >= 2 emitted
-                                attributes (success + failure_reason)
+     request.failure_reason  -> dot: `request` already groups >= 2 emitted
+                                attributes (success, failure_reason, cost_usd, …)
      movie.payload_source    -> underscore: we measure one fact (provenance);
                                 we will never emit movie.payload.size/.bytes
      gen_ai.usage.input_tokens (future) -> dot: `usage` groups input/output/total
@@ -69,7 +69,7 @@ E. Values are not names. A closed set of possible values is a `str`-Enum in the
 F. Cardinality. A namespaced span attribute may be high-cardinality
    (`movie.tmdb_id`, `title_search.query`) — fine on spans. That same key must
    NEVER become a metric label (Phase 3): only low-cardinality keys
-   (`movie.payload_source`, `outcome.success`, `outcome.failure_reason`) are
+   (`movie.payload_source`, `request.success`, `request.failure_reason`) are
    label-eligible.
 """
 
@@ -95,13 +95,46 @@ class Name(str):
         return Name(f"{self}.{segment}")
 
 
-# --- outcome: per-request success verdict, on every endpoint's server span ---
-# `outcome` earns a dot (rule C) because it groups >= 2 emitted attributes:
-# `success` is always set, `failure_reason` only when success is false. Both are
-# low-cardinality, so both stay metric-label-eligible (rule F).
-OUTCOME = Name("outcome")
-OUTCOME_SUCCESS = OUTCOME.child("success")                # outcome.success (bool)
-OUTCOME_FAILURE_REASON = OUTCOME.child("failure_reason")  # outcome.failure_reason
+# --- request: per-request rollups + verdict, on any endpoint's server span ---
+# The transport/pipeline-agnostic "what did this request cost / return" facts,
+# written on the FastAPI server span at handler (or stream) end. A cross-endpoint
+# root (rule B): the owner is the request itself, not any single endpoint, so an
+# endpoint-specific root would be wrong. Not every endpoint emits
+# every leaf — a no-LLM endpoint (similarity_search, attribute_search,
+# title_search) simply omits `cost_usd` / `usage.*`; absence == "spent nothing".
+# The measures (`cost_usd`, `result_count`, `usage.*`) are continuous —
+# span-attr-only, never metric labels (rule F). The verdict pair (`success` /
+# `failure_reason`) is the exception: both are low-cardinality, so both stay
+# metric-label-eligible.
+#
+# `success`: the request verdict bool, set on every path (exception: streaming
+# endpoints under `record_outcome(success_on_return=False)` write it only on
+# failure — see `/query_search`). `failure_reason`: names WHY, set only when
+# `success` is false (a `FailureReason` value). Both live on the `request` root —
+# the verdict is a per-request fact, not endpoint-specific (rule B) — and `request`
+# earns their dot the same way it groups the rollups.
+# `cost_usd`: summed USD across every LLM + embedding call the request incurred
+# (all billed attempts, including retried/failed ones — see
+# observability/cost_tracking.py). Flat leaf with the established `_usd` unit
+# suffix (mirroring `llm.cost_usd`).
+# `result_count`: the number of results the client received. Semantic nuance —
+# on the streaming branch-plan endpoints (query_search / rerun_query_search) it
+# is the pre-dedup SUM across branches (there is no server-side cross-branch
+# merge); on the single-response endpoints it is the hydrated card count. Both
+# read as "results the client received."
+# `usage.*`: summed token usage across every LLM + embedding call (all billed
+# attempts, mirroring cost). `usage` earns a dot (rule C): three emitted siblings
+# mirroring the standard `gen_ai.usage.*` triad. `cached_input_tokens` is a
+# SUBSET of `input_tokens` (cached ⊆ input), never additive to it.
+REQUEST = Name("request")
+REQUEST_SUCCESS = REQUEST.child("success")                           # request.success (bool)
+REQUEST_FAILURE_REASON = REQUEST.child("failure_reason")             # request.failure_reason
+REQUEST_COST_USD = REQUEST.child("cost_usd")                         # float
+REQUEST_RESULT_COUNT = REQUEST.child("result_count")                 # int
+REQUEST_USAGE = REQUEST.child("usage")
+REQUEST_USAGE_INPUT_TOKENS = REQUEST_USAGE.child("input_tokens")
+REQUEST_USAGE_CACHED_INPUT_TOKENS = REQUEST_USAGE.child("cached_input_tokens")
+REQUEST_USAGE_OUTPUT_TOKENS = REQUEST_USAGE.child("output_tokens")
 
 # --- movie: cross-endpoint movie attributes (shared by both TMDB endpoints) ---
 MOVIE = Name("movie")
@@ -128,7 +161,9 @@ CACHE_WRITE_OK = CACHE.child("write_ok")                  # cache.write_ok
 TITLE_SEARCH = Name("title_search")
 TITLE_SEARCH_QUERY = TITLE_SEARCH.child("query")
 TITLE_SEARCH_LIMIT = TITLE_SEARCH.child("limit")
-TITLE_SEARCH_RESULT_COUNT = TITLE_SEARCH.child("result_count")
+# The delivered-card count is the cross-endpoint `request.result_count` (above).
+# `fuzzy_result_count` stays endpoint-owned — it's the typo/gap signal specific
+# to the trigram fallback, not a generic per-request rollup.
 TITLE_SEARCH_FUZZY_RESULT_COUNT = TITLE_SEARCH.child("fuzzy_result_count")
 
 # --- query_search: request-boundary input attributes ---
@@ -143,24 +178,16 @@ QUERY_SEARCH_QUERY = QUERY_SEARCH.child("query")
 QUERY_SEARCH_QUERY_CHARS = QUERY_SEARCH.child("query_chars")
 QUERY_SEARCH_CLARIFICATION = QUERY_SEARCH.child("clarification")
 QUERY_SEARCH_CLARIFICATION_CHARS = QUERY_SEARCH.child("clarification_chars")
-# Request-level cost rollup, written on the server span at stream end: the sum
-# of every LLM + embedding call's USD cost incurred by the request (all billed
-# attempts, including retried/failed ones — see observability/cost_tracking.py).
-# Stays flat (rule C): there is no second `cost.*` sibling on the roadmap, so a
-# leaf with the established `_usd` unit suffix (mirroring `llm.cost_usd`) is
-# correct. A continuous measure — span-attr-only, never a metric label (rule F).
-QUERY_SEARCH_COST_USD = QUERY_SEARCH.child("cost_usd")
-# Request-level token rollup, written on the server span at stream end beside
-# `cost_usd`: the summed token usage across every LLM + embedding call (all
-# billed attempts, mirroring cost). `usage` earns a dot (rule C): it groups
-# three emitted siblings and mirrors the standard `gen_ai.usage.*` triad. Each
-# is a continuous count — span-attr-only, never a metric label (rule F).
-# `cached_input_tokens` is a SUBSET of `input_tokens` (cached ⊆ input), never
-# additive to it.
-QUERY_SEARCH_USAGE = QUERY_SEARCH.child("usage")
-QUERY_SEARCH_USAGE_INPUT_TOKENS = QUERY_SEARCH_USAGE.child("input_tokens")
-QUERY_SEARCH_USAGE_CACHED_INPUT_TOKENS = QUERY_SEARCH_USAGE.child("cached_input_tokens")
-QUERY_SEARCH_USAGE_OUTPUT_TOKENS = QUERY_SEARCH_USAGE.child("output_tokens")
+# Request-level cost / token / result-count rollups moved to the cross-endpoint
+# `request.*` root (REQUEST_COST_USD / REQUEST_USAGE_* / REQUEST_RESULT_COUNT
+# above): they mean the same thing on every endpoint, so the owner is the request,
+# not query_search. The branch counts stay here — "branch" is a branch-plan
+# concept only query_search and /rerun_query_search have (rerun REUSES these keys,
+# the same rule-B move as reusing the branch spans). They back the
+# `request.success` verdict (success = >= 1 branch executed without a
+# branch_error). Low-cardinality counts, metric-label-eligible.
+QUERY_SEARCH_SUCCEEDED_BRANCH_COUNT = QUERY_SEARCH.child("succeeded_branch_count")  # int
+QUERY_SEARCH_FAILED_BRANCH_COUNT = QUERY_SEARCH.child("failed_branch_count")        # int
 
 # --- query_search: Step 0 / Step 1 pipeline spans (1c-1 Bite 3) ---
 # Step 0 (flow routing) and Step 1 (spin generation) run as a parallel LLM
@@ -219,6 +246,21 @@ QUERY_SEARCH_STEP_2_TRAIT_COUNT = QUERY_SEARCH.child(
 QUERY_SEARCH_STEP_2_CONTEXTUALIZED_PHRASES = QUERY_SEARCH.child(
     "step_2_contextualized_phrases"
 )                                                                    # attr (str[])
+# Group-A cost leaf. Flat `step_2_*` form to sit beside the existing step_2
+# attrs (this span predates the dotted-namespace Stage-4 style). Sums the
+# Step-2 LLM call's USD cost, mirroring the request-level `query_search.cost_usd`
+# and per-call `llm.cost_usd` unit suffix.
+QUERY_SEARCH_STEP_2_COST_USD = QUERY_SEARCH.child("step_2_cost_usd")  # attr (float)
+
+# decomposition (Group B) — one span per branch bracketing the whole Step-3
+# fan-out: every per-trait `trait` span (Step 3 + query generation) plus the
+# sibling `implicit_expectations` span nest under it. Earns a dotted namespace
+# (rule C). `decomposition.cost_usd` is the group's LLM cost rollup (Step 3 +
+# handler query-generation + implicit-expectations calls).
+QUERY_SEARCH_DECOMPOSITION = QUERY_SEARCH.child("decomposition")      # span + ns
+QUERY_SEARCH_DECOMPOSITION_COST_USD = QUERY_SEARCH_DECOMPOSITION.child(
+    "cost_usd"
+)                                                                    # attr (float)
 
 # trait (one per Step-2 trait, brackets that trait's Step 3 + query generation).
 # Its attributes identify the trait; combine_mode / categories live on the nested
@@ -341,70 +383,115 @@ QUERY_SEARCH_BRANCH_TOP_TIER_COUNT = QUERY_SEARCH.child(
     "branch_top_tier_count"
 )                                                                            # int
 
-# person: one child span per named person (parallel resolution across role
-# tables), so per-person resolution latency is visible and its Postgres calls
-# nest correctly. No aliases (LLM-free flow).
-QUERY_SEARCH_PERSON_RESOLUTION = QUERY_SEARCH.child("person_resolution")      # span
-
-# similarity: the branch span is organized around four questions a reader asks —
-# (1) which traits mattered, (2) which avenues fetched candidates and how many
-# each returned, (3) how strong the scoring weights were, (4) which paths were
-# active in the final weave. Map-shaped signals are emitted as single JSON-string
-# attributes (label + number side by side) rather than index-aligned parallel
-# arrays: OTel span attributes can't hold a dict (it's dropped), but a JSON string
-# is kept and renders readably in Tempo/Grafana. Tradeoff: no numeric TraceQL
-# filter on an individual key inside the JSON — acceptable, these are for reading
-# traces, not per-lane alerting. Plus a manual Qdrant span (the gRPC
-# auto-instrumentation gap) around the shape-search `query_points` call.
+# --- person: flow-neutral per-person resolution span (shared engine) ---
+# One person → prominence-bucket resolution (`fetch_person_buckets` in
+# search_v2/person_search.py) is reached two ways — the /query_search person
+# BRANCH (`run_person_search`, which resolves Step 0's named references) and the
+# pure /attribute_search ENDPOINT (caller-supplied names, no LLM). The span +
+# attributes below are produced INSIDE the shared wrapper `resolve_person_traced`,
+# so they belong to neither caller: they hang off a `person` root (rule B — the
+# domain that conceptually owns the work), NOT `query_search`. On the branch path
+# the span lands under the `query_search.branch` span (the current span while the
+# wrapper runs); on the endpoint path it lands under the FastAPI server span.
+# Caller-specific facts stay on their own roots: the branch keeps its
+# `query_search.branch_*` aggregate skeleton (branch_entities, the index-aligned
+# branch_entity_resolved_counts, branch_top_tier); the endpoint adds
+# `attribute_search.*` (see the ATTRIBUTE_SEARCH root below). This mirrors the
+# SIMILARITY split above.
 #
-# Single vs multi split: `branch_shape_modifiers` + scalar `branch_anchor_shape`
-# are single-anchor only (the one anchor's additive weight deltas + its
-# reach×quality shape); `branch_anchor_shape_cohesion` / `branch_lane_cohesion` /
-# `branch_vector_space_cohesion` are multi-anchor only (per-shape / per-lane /
-# per-vector-space cohort agreement). Everything else is set in both flows.
+# `resolve` earns a dotted namespace (rule C: it groups >= 2 emitted attributes).
+# `name` is high-cardinality → span-attr-only (rule F); `movie_count` is a measure
+# (rule D `_count` suffix), 0 == the person resolved to no filter-eligible credits
+# (the silent-drop signal, also flagged by the `"person unresolved"` span event);
+# `best_bucket` is the most-prominent bucket reached (1=lead … 4=minor), omitted
+# when movie_count is 0 — an all-bucket-4 result for a well-known name is the
+# fingerprint of a resolution collision.
+PERSON = Name("person")
+PERSON_RESOLVE = PERSON.child("resolve")                                     # span
+PERSON_RESOLVE_NAME = PERSON_RESOLVE.child("name")                           # str
+PERSON_RESOLVE_MOVIE_COUNT = PERSON_RESOLVE.child("movie_count")             # int
+PERSON_RESOLVE_BEST_BUCKET = PERSON_RESOLVE.child("best_bucket")             # int 1-4
+
+# --- similarity: flow-neutral engine spans + signal attributes (1c-3) ---
+# The similar-movies engine (`run_similar_movies_for_ids` in
+# search_v2/similar_movies.py) is reached two ways — the /query_search similarity
+# BRANCH (`run_similarity_search`, which resolves NL reference titles to anchors)
+# and the pure /similarity_search ENDPOINT (caller-supplied anchor IDs, no LLM). The
+# spans and signal attributes below are produced INSIDE the shared engine, so they
+# belong to neither caller: they hang off a `similarity` root (rule B — the domain
+# that conceptually owns the work), NOT `query_search`. On the branch path they land
+# on the `query_search.branch` span (the current span while the engine runs); on the
+# endpoint path they land on the FastAPI server span. Caller-specific facts stay on
+# their own roots: the branch keeps its `query_search.branch_*` attrs (branch_type,
+# the reference-resolution entity skeleton, branch_result_count); the endpoint adds
+# `similarity_search.*` (see the SIMILARITY_SEARCH root below).
+SIMILARITY = Name("similarity")
+
+# anchor_count: number of anchor movies driving the search — the single-vs-multi-
+# anchor discriminator that selects the two engine pipelines and governs how every
+# signal below reads. On the endpoint path it stands in for the query_search entity
+# skeleton (which counted resolved reference titles); low-cardinality small int,
+# label-eligible. Set by the engine, so both callers get it.
+SIMILARITY_ANCHOR_COUNT = SIMILARITY.child("anchor_count")                   # int
+
+# The signal attributes are organized around four questions a reader asks — (1)
+# which traits mattered, (2) which avenues fetched candidates and how many each
+# returned, (3) how strong the scoring weights were, (4) which paths were active in
+# the final weave. Map-shaped signals are emitted as single JSON-string attributes
+# (label + number side by side) rather than index-aligned parallel arrays: OTel span
+# attributes can't hold a dict (it's dropped), but a JSON string is kept and renders
+# readably in Tempo/Grafana. Tradeoff: no numeric TraceQL filter on an individual
+# key inside the JSON — acceptable, these are for reading traces, not per-lane
+# alerting.
+#
+# Single vs multi split: `shape_modifiers` + scalar `anchor_shape` are single-anchor
+# only (the one anchor's additive weight deltas + its reach×quality shape);
+# `anchor_shape_cohesion` / `lane_cohesion` / `vector_space_cohesion` are
+# multi-anchor only (per-shape / per-lane / per-vector-space cohort agreement).
+# Everything else is set in both flows.
 
 # (1) Traits marked important.
 # Single-anchor: the additive lane-weight-delta anchor types that were enacted
 # (cult_garbage / prestige / franchise_dominant / source_material — NOT
 # standard_shape / studio_lineage / director_signature, which carry no delta).
 # Always set, `"[]"` when none.
-QUERY_SEARCH_BRANCH_SHAPE_MODIFIERS = QUERY_SEARCH.child(
-    "branch_shape_modifiers"
+SIMILARITY_SHAPE_MODIFIERS = SIMILARITY.child(
+    "shape_modifiers"
 )                                                                            # json array
 # Single-anchor reach×quality shape bucket, scalar; `"none"` when shapeless (the
 # common reception-50–80, sub-100K-reach middle cell).
-QUERY_SEARCH_BRANCH_ANCHOR_SHAPE = QUERY_SEARCH.child("branch_anchor_shape")  # str
+SIMILARITY_ANCHOR_SHAPE = SIMILARITY.child("anchor_shape")                   # str
 # Multi-anchor cohort shape composition {shape: M_s/N}, with a `"none"` key for
 # the shapeless fraction so it sums to 1.
-QUERY_SEARCH_BRANCH_ANCHOR_SHAPE_COHESION = QUERY_SEARCH.child(
-    "branch_anchor_shape_cohesion"
+SIMILARITY_ANCHOR_SHAPE_COHESION = SIMILARITY.child(
+    "anchor_shape_cohesion"
 )                                                                            # json map
 # Multi-anchor per-metadata-lane cohort cohesion {lane: cohesion}.
-QUERY_SEARCH_BRANCH_LANE_COHESION = QUERY_SEARCH.child(
-    "branch_lane_cohesion"
+SIMILARITY_LANE_COHESION = SIMILARITY.child(
+    "lane_cohesion"
 )                                                                            # json map
 # Multi-anchor per-vector-space cohort cohesion {space: cohesion}.
-QUERY_SEARCH_BRANCH_VECTOR_SPACE_COHESION = QUERY_SEARCH.child(
-    "branch_vector_space_cohesion"
+SIMILARITY_VECTOR_SPACE_COHESION = SIMILARITY.child(
+    "vector_space_cohesion"
 )                                                                            # json map
 
 # (2) Candidate-fetch avenues. {lane: result_count} for every retrieval query that
 # actually ran (seed non-empty); a fired-but-empty lane is present at 0, a gated-off
-# lane is absent. `branch_retrieval_total` is the deduped union size.
-QUERY_SEARCH_BRANCH_RETRIEVAL_LANES = QUERY_SEARCH.child(
-    "branch_retrieval_lanes"
+# lane is absent. `retrieval_total` is the deduped union size.
+SIMILARITY_RETRIEVAL_LANES = SIMILARITY.child(
+    "retrieval_lanes"
 )                                                                            # json map
-QUERY_SEARCH_BRANCH_RETRIEVAL_TOTAL = QUERY_SEARCH.child(
-    "branch_retrieval_total"
+SIMILARITY_RETRIEVAL_TOTAL = SIMILARITY.child(
+    "retrieval_total"
 )                                                                            # int
 
 # (3) Scoring weight strengths. {lane: normalized_weight} for the additive lanes,
 # {space: weight} for the 8-space mix inside the shape lane.
-QUERY_SEARCH_BRANCH_LANE_WEIGHTS = QUERY_SEARCH.child(
-    "branch_lane_weights"
+SIMILARITY_LANE_WEIGHTS = SIMILARITY.child(
+    "lane_weights"
 )                                                                            # json map
-QUERY_SEARCH_BRANCH_VECTOR_SPACE_WEIGHTS = QUERY_SEARCH.child(
-    "branch_vector_space_weights"
+SIMILARITY_VECTOR_SPACE_WEIGHTS = SIMILARITY.child(
+    "vector_space_weights"
 )                                                                            # json map
 
 # (4) Final-weave paths. {bucket: target_slots} — the DESIRED per-bucket allocation
@@ -412,24 +499,25 @@ QUERY_SEARCH_BRANCH_VECTOR_SPACE_WEIGHTS = QUERY_SEARCH.child(
 # bucket that cleared the instantiation threshold), NOT the realized draw. A signal
 # bucket absent from the map didn't instantiate; multi-bucket credit means an
 # instantiated bucket can still draw 0 actual seats (its films entered via
-# best_overall). `branch_low_cohesion_fallback` (multi-anchor centroid was noise →
+# best_overall). `low_cohesion_fallback` (multi-anchor centroid was noise →
 # per-anchor round-robin; trivially false single-anchor).
-QUERY_SEARCH_BRANCH_WEAVE_TARGETS = QUERY_SEARCH.child("branch_weave_targets")  # json map
-QUERY_SEARCH_BRANCH_LOW_COHESION_FALLBACK = QUERY_SEARCH.child(
-    "branch_low_cohesion_fallback"
+SIMILARITY_WEAVE_TARGETS = SIMILARITY.child("weave_targets")                 # json map
+SIMILARITY_LOW_COHESION_FALLBACK = SIMILARITY.child(
+    "low_cohesion_fallback"
 )                                                                            # bool
 # Multiplier/boost paths not recoverable from the additive weights or the fetch
 # map — currently just `director_signature` (the auteur multiplier: the director
 # lane is weight-0 and fires on any director, so neither lane_weights nor the
 # retrieval map can reveal an active auteur boost). Omitted entirely when empty.
-QUERY_SEARCH_BRANCH_ADDITIONAL_BOOSTS = QUERY_SEARCH.child(
-    "branch_additional_boosts"
+SIMILARITY_ADDITIONAL_BOOSTS = SIMILARITY.child(
+    "additional_boosts"
 )                                                                            # json array
 
-# similarity Qdrant probes: closes the gRPC auto-instrumentation gap for the
-# similarity flow's TWO Qdrant calls, discriminated by `probe_kind` (rule E value
-# lives in `SimilarityQdrantProbeKind` in similar_movies.py) exactly like
-# `semantic_qdrant` splits its three primitives under one name:
+# similarity Qdrant probes (`similarity.qdrant`): closes the gRPC
+# auto-instrumentation gap for the engine's TWO Qdrant calls, discriminated by
+# `probe_kind` (rule E value lives in `SimilarityQdrantProbeKind` in
+# similar_movies.py) exactly like `semantic_qdrant` splits its three primitives
+# under one name:
 #   - `anchor_vectors` — the `retrieve` that loads the anchors' stored vectors
 #     (records `requested_count` / `returned_count`; returned < requested = an
 #     anchor absent from Qdrant, a silent gap).
@@ -440,56 +528,133 @@ QUERY_SEARCH_BRANCH_ADDITIONAL_BOOSTS = QUERY_SEARCH.child(
 #     and `hits_by_space` (JSON {space:count}, per-space recall — a space starved by
 #     the filter shows here). Leaf vocab (`probe_kind`/`filter_active`/`hit_count`)
 #     matches `semantic_qdrant` so a reader query spans both.
-QUERY_SEARCH_SIMILARITY_QDRANT = QUERY_SEARCH.child("similarity_qdrant")      # span
-QUERY_SEARCH_SIMILARITY_QDRANT_PROBE_KIND = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT = SIMILARITY.child("qdrant")                               # span
+SIMILARITY_QDRANT_PROBE_KIND = SIMILARITY_QDRANT.child(
     "probe_kind"
 )                                                                            # str
-QUERY_SEARCH_SIMILARITY_QDRANT_REQUESTED_COUNT = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT_REQUESTED_COUNT = SIMILARITY_QDRANT.child(
     "requested_count"
 )                                                                            # int (anchor_vectors)
-QUERY_SEARCH_SIMILARITY_QDRANT_RETURNED_COUNT = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT_RETURNED_COUNT = SIMILARITY_QDRANT.child(
     "returned_count"
 )                                                                            # int (anchor_vectors)
-QUERY_SEARCH_SIMILARITY_QDRANT_SPACE_COUNT = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT_SPACE_COUNT = SIMILARITY_QDRANT.child(
     "space_count"
 )                                                                            # int (shape)
-QUERY_SEARCH_SIMILARITY_QDRANT_SPACES = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT_SPACES = SIMILARITY_QDRANT.child(
     "spaces"
 )                                                                            # json array (shape)
-QUERY_SEARCH_SIMILARITY_QDRANT_LIMIT_PER_SPACE = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT_LIMIT_PER_SPACE = SIMILARITY_QDRANT.child(
     "limit_per_space"
 )                                                                            # int (shape)
-QUERY_SEARCH_SIMILARITY_QDRANT_FILTER_ACTIVE = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT_FILTER_ACTIVE = SIMILARITY_QDRANT.child(
     "filter_active"
 )                                                                            # bool (shape)
-QUERY_SEARCH_SIMILARITY_QDRANT_HIT_COUNT = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT_HIT_COUNT = SIMILARITY_QDRANT.child(
     "hit_count"
 )                                                                            # int (shape)
-QUERY_SEARCH_SIMILARITY_QDRANT_HITS_BY_SPACE = QUERY_SEARCH_SIMILARITY_QDRANT.child(
+SIMILARITY_QDRANT_HITS_BY_SPACE = SIMILARITY_QDRANT.child(
     "hits_by_space"
 )                                                                            # json map (shape)
 
-# similarity per-lane candidate fetch: one span per Postgres retrieval lane that
-# actually ran (director / franchise / studio / source / quality / themes_recall /
-# rare_medium). The qdrant shape probe is deliberately NOT wrapped — its params
-# never vary and it already has `similarity_qdrant`. Each span names the `lane` and
-# records the concrete `match` values the lane queried on (the bound IN-list IDs the
-# auto-instrumented SQL span parameterizes away, so a reader can see WHY a lane
-# returned what it did) plus its `result_count`. `similarity_fetch` earns a dotted
-# namespace (rule C: it groups >= 2 emitted attributes). `match` is a JSON-string
-# object because its keys vary by lane (lineage_entry_ids for franchise, company_ids
-# for studio, bucket+limit for quality, …) — OTel can't hold a dict, a JSON string
-# renders readably; the ID lists inside are high-cardinality span-only values.
-QUERY_SEARCH_SIMILARITY_FETCH = QUERY_SEARCH.child("similarity_fetch")        # span
-QUERY_SEARCH_SIMILARITY_FETCH_LANE = QUERY_SEARCH_SIMILARITY_FETCH.child(
+# similarity per-lane candidate fetch (`similarity.fetch`): one span per Postgres
+# retrieval lane that actually ran (director / franchise / studio / source /
+# quality / themes_recall / rare_medium). The qdrant shape probe is deliberately NOT
+# wrapped — its params never vary and it already has `similarity.qdrant`. Each span
+# names the `lane` and records the concrete `match` values the lane queried on (the
+# bound IN-list IDs the auto-instrumented SQL span parameterizes away, so a reader
+# can see WHY a lane returned what it did) plus its `result_count`. `fetch` earns a
+# dotted namespace (rule C: it groups >= 2 emitted attributes). `match` is a
+# JSON-string object because its keys vary by lane (lineage_entry_ids for franchise,
+# company_ids for studio, bucket+limit for quality, …) — OTel can't hold a dict, a
+# JSON string renders readably; the ID lists inside are high-cardinality span-only
+# values.
+SIMILARITY_FETCH = SIMILARITY.child("fetch")                                 # span
+SIMILARITY_FETCH_LANE = SIMILARITY_FETCH.child(
     "lane"
 )                                                                            # str
-QUERY_SEARCH_SIMILARITY_FETCH_MATCH = QUERY_SEARCH_SIMILARITY_FETCH.child(
+SIMILARITY_FETCH_MATCH = SIMILARITY_FETCH.child(
     "match"
 )                                                                            # json map
-QUERY_SEARCH_SIMILARITY_FETCH_RESULT_COUNT = QUERY_SEARCH_SIMILARITY_FETCH.child(
+SIMILARITY_FETCH_RESULT_COUNT = SIMILARITY_FETCH.child(
     "result_count"
 )                                                                            # int
+
+# --- similarity_search: endpoint-owned facts on the /similarity_search server span ---
+# The pure endpoint (`api/main.py`) reuses the shared engine (so it inherits every
+# `similarity.*` span/attr above), but two facts are known only to the handler and
+# so are owned by the endpoint (rule B): whether the response was served from the
+# Redis result cache (`cache_hit` — set True on the warm return, False on a cold
+# compute; mirrors the movie.payload_source honesty rule by being set on both
+# success paths). The delivered-card count is the cross-endpoint
+# `request.result_count` (above), not an endpoint-owned leaf. `cache_hit` is
+# low-cardinality and label-eligible.
+SIMILARITY_SEARCH = Name("similarity_search")
+SIMILARITY_SEARCH_CACHE_HIT = SIMILARITY_SEARCH.child("cache_hit")           # bool
+
+# --- attribute_search: endpoint-owned facts on the /attribute_search server span ---
+# The deterministic browse endpoint (`api/main.py`) reuses two shared engines — the
+# neutral-prior seed fetch (no-people path) and the `person.resolve` wrapper (per
+# supplied name, so it inherits every `person.*` span/attr above) — plus the shared
+# `filters.*` request-input attributes. The facts below are the ones known only to
+# this handler / its orchestrator (`run_attribute_search`), so they are owned by the
+# endpoint (rule B). Leaves stay flat with `_` (mirroring the `query_search.branch_*`
+# grouped-facts precedent, not a `people.*` sub-namespace): each is one measured fact
+# and `people` won't sub-expand into its own emitted telemetry tree.
+#   path:                   browse | people — which ranking path ran (low-card,
+#                           label-eligible; the single discriminator for slicing).
+#   people_requested_count: named people received (post blank-strip at the boundary);
+#                           always set (0 on the browse path). Low-card measure.
+#   people_names:           the raw supplied names (per-element truncated) — high-card,
+#                           span-attr-only (rule F); set only when people were sent.
+#   people_searched_count:  names actually resolved after normalize + dedupe (==
+#                           number of `person.resolve` spans). requested - searched =
+#                           blank/duplicate names dropped.
+#   people_unresolved_count: searched names that resolved to zero credits — the
+#                           silent-drop signal in aggregate (alertable). searched -
+#                           unresolved = names that contributed to the pool.
+#   pool_count:             union pool size before hydration (people path); 0 here with
+#                           searched_count > 0 is the "empty pool" case (distinct from
+#                           the all-blank return where searched_count == 0).
+# The delivered-card count is the cross-endpoint `request.result_count` (above),
+# not an endpoint-owned leaf.
+ATTRIBUTE_SEARCH = Name("attribute_search")
+ATTRIBUTE_SEARCH_PATH = ATTRIBUTE_SEARCH.child("path")                        # str
+ATTRIBUTE_SEARCH_PEOPLE_REQUESTED_COUNT = ATTRIBUTE_SEARCH.child(
+    "people_requested_count"
+)                                                                            # int
+ATTRIBUTE_SEARCH_PEOPLE_NAMES = ATTRIBUTE_SEARCH.child("people_names")        # str[]
+ATTRIBUTE_SEARCH_PEOPLE_SEARCHED_COUNT = ATTRIBUTE_SEARCH.child(
+    "people_searched_count"
+)                                                                            # int
+ATTRIBUTE_SEARCH_PEOPLE_UNRESOLVED_COUNT = ATTRIBUTE_SEARCH.child(
+    "people_unresolved_count"
+)                                                                            # int
+ATTRIBUTE_SEARCH_POOL_COUNT = ATTRIBUTE_SEARCH.child("pool_count")            # int
+
+# --- rerun_query_search: request-boundary input attributes on the server span ---
+# /rerun_query_search replays a prior search's branch set with a fresh filter
+# set, bypassing Steps 0/1, so it REUSES every shared query_search.* span (branch,
+# step_2, Stage 4, …) and the cross-endpoint request.* / filters.*
+# rollups. The attrs below are the facts unique to rerun: its input IS the
+# replayed branch plan (there is no raw user query or clarification to capture,
+# unlike query_search), so these are rerun's analog of the query_search raw-query
+# capture — owned by the endpoint (rule B), written at handler entry from the raw
+# wire body before translation so a rejected trace still carries its input.
+#   branch_count:     total fetches replayed (int, low-cardinality, label-eligible).
+#   branch_types:     the `type` tag of each replayed branch (standard /
+#                     exact_title / similarity / … — closed set, str[]); the rerun
+#                     analog of step_0_flows ("what shape was replayed").
+#   standard_queries: the up-to-3 standard branch queries (str[], high-cardinality,
+#                     span-attr-only per rule F). Entity anchor names are NOT
+#                     duplicated here — they already land on the entity branch
+#                     spans (Bite 8), and branch_types shows which flows fired.
+RERUN_QUERY_SEARCH = Name("rerun_query_search")
+RERUN_QUERY_SEARCH_BRANCH_COUNT = RERUN_QUERY_SEARCH.child("branch_count")    # int
+RERUN_QUERY_SEARCH_BRANCH_TYPES = RERUN_QUERY_SEARCH.child("branch_types")    # str[]
+RERUN_QUERY_SEARCH_STANDARD_QUERIES = RERUN_QUERY_SEARCH.child(
+    "standard_queries"
+)                                                                            # str[]
 
 # --- query_search: semantic-endpoint Qdrant probes (1c-1 Bite 6) ---
 # The gRPC auto-instrumentation gap for the SEMANTIC endpoint. One manual span
@@ -613,6 +778,219 @@ QUERY_SEARCH_FRANCHISE_RESOLUTION = QUERY_SEARCH.child(
 QUERY_SEARCH_CHARACTER_RESOLUTION = QUERY_SEARCH.child(
     "character_resolution"
 )                                                                            # span
+
+# --- query_search: implicit-prior spans (1c-1 Bite 4 [deferred] + Bite 7) ---
+# The implicit-prior mechanism is a TWO-location flow, so it gets two spans,
+# both per STANDARD branch (entity flows never run it), both under the
+# query_search.branch span:
+#
+#   implicit_expectations (GENERATION) — brackets the policy LLM call
+#     (search_v2/implicit_expectations.py) inside _run_implicit_expectations_for_branch.
+#     No manual attributes of its own by design: the router's `llm.generate`
+#     child already carries tokens/cost/prompt-hash/full payload, and the policy
+#     OUTPUT is recorded on the application span below (beside what actually
+#     fired). This span exists to name that llm.generate child's parent, time
+#     the call (it sits on Stage 4's critical path — Stage 4 awaits it), and
+#     anchor the `implicit_expectations_failed` soft-fail EVENT (its message +
+#     error.type are call-site strings, not Names).
+#
+#   implicit_prior_rerank (APPLICATION) — brackets the post-Stage-4 rerank in
+#     _apply_implicit_prior_rerank_for_branch: gate -> single-axis selection ->
+#     Postgres signal fetch (which nests here) -> per-movie boost -> resort.
+#     Earns a dotted namespace (rule C): it groups many emitted attributes.
+#     Per ADR-087 the rerank is SINGLE-AXIS (popularity primary, quality
+#     fallback), so `boost_axis` names the one axis that fired (or none). Both
+#     priors' direction+strength are recorded so the LLM's proposal sits beside
+#     the code's selection (caps + active flags) in ONE span — divergence
+#     between "proposed" and "applied" is a single read. All attributes are
+#     low-cardinality (label-eligible) except the two float caps and the
+#     signal_missing_count measure (span-attr-only, rule F).
+#       boost_axis:            which axis fired — popularity | quality | none
+#                              (BoostAxis str-enum, rule E, owned by the rerank
+#                              module).
+#       popularity_direction / popularity_strength / quality_direction /
+#       quality_strength:      the policy OUTPUT per axis (PriorDirection /
+#                              PriorStrength values — none/positive/inverse,
+#                              none/light/normal/strong).
+#       popularity_cap / quality_cap:  the strength->boost-ceiling the code
+#                              resolved (float; 0 disables the axis).
+#       popularity_active / quality_active:  the selection variables — which axis
+#                              the code chose to fire (bool predicates).
+#       inverse_applied:       the fired axis used the inverse direction (rewards
+#                              LOW popularity / LOW reception). False when
+#                              boost_axis=none. Derivable from boost_axis + the
+#                              direction attrs, recorded directly for legibility
+#                              (cf. step_1_unused).
+#       noop_reason:           set ONLY when boost_axis=none — why the prior did
+#                              nothing (PriorNoopReason str-enum): policy_unavailable
+#                              (generation soft-failed / no branch) | branch_error |
+#                              empty_pool | both_axes_off. Disambiguates the four
+#                              no-op causes the active flags alone can't (the first
+#                              three return from the gate before caps/active exist).
+#       signal_missing_count:  candidates whose FIRED-axis signal was NULL in
+#                              Postgres (-> 0 boost for that movie): the
+#                              data-coverage risk, since obscure films are the
+#                              likeliest to lack popularity/reception. Rule D
+#                              `_count` suffix.
+QUERY_SEARCH_IMPLICIT_EXPECTATIONS = QUERY_SEARCH.child(
+    "implicit_expectations"
+)                                                                            # span
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK = QUERY_SEARCH.child(
+    "implicit_prior_rerank"
+)                                                                            # span + ns
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_BOOST_AXIS = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "boost_axis"
+)                                                                            # str
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_POPULARITY_DIRECTION = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "popularity_direction"
+)                                                                            # str
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_POPULARITY_STRENGTH = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "popularity_strength"
+)                                                                            # str
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_QUALITY_DIRECTION = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "quality_direction"
+)                                                                            # str
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_QUALITY_STRENGTH = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "quality_strength"
+)                                                                            # str
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_POPULARITY_CAP = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "popularity_cap"
+)                                                                            # float
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_QUALITY_CAP = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "quality_cap"
+)                                                                            # float
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_POPULARITY_ACTIVE = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "popularity_active"
+)                                                                            # bool
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_QUALITY_ACTIVE = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "quality_active"
+)                                                                            # bool
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_INVERSE_APPLIED = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "inverse_applied"
+)                                                                            # bool
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_NOOP_REASON = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "noop_reason"
+)                                                                            # str
+QUERY_SEARCH_IMPLICIT_PRIOR_RERANK_SIGNAL_MISSING_COUNT = QUERY_SEARCH_IMPLICIT_PRIOR_RERANK.child(
+    "signal_missing_count"
+)                                                                            # int
+
+# --- query_search: Stage 4 execution spans (Phase B pool definition + Phase C/D
+# reranker dispatch). All are children of `query_search.branch` and cover the
+# execution that turns generated endpoint specs into a scored candidate pool.
+# Each earns a dotted namespace (rule C): every span groups >= 2 emitted
+# attributes, mirroring `semantic_qdrant`.
+#
+# `candidate_generation` (Group C) is the branch-level wrapper over the whole
+# pool-definition phase — the `generators` / `promotion` / `neutral_seed` /
+# `auxiliary_shorts_exclusion` spans below all nest under it. `rerankers`
+# (Group D) now covers BOTH positive and negative reranker dispatch, run in
+# parallel; polarity is recorded per dispatch (see `dispatch.polarity`), so
+# there is no separate `negatives` span.
+QUERY_SEARCH_CANDIDATE_GENERATION = QUERY_SEARCH.child(
+    "candidate_generation"
+)                                                                            # span + ns (Group C)
+QUERY_SEARCH_CANDIDATE_GENERATION_FETCH_COUNT = QUERY_SEARCH_CANDIDATE_GENERATION.child(
+    "fetch_count"
+)                                                                            # int (dispatch calls issued, post-dedup)
+QUERY_SEARCH_CANDIDATE_GENERATION_CANDIDATE_COUNT = QUERY_SEARCH_CANDIDATE_GENERATION.child(
+    "candidate_count"
+)                                                                            # int (deduped union size)
+QUERY_SEARCH_CANDIDATE_GENERATION_COST_USD = QUERY_SEARCH_CANDIDATE_GENERATION.child(
+    "cost_usd"
+)                                                                            # float (semantic-generator embeddings)
+
+QUERY_SEARCH_GENERATORS = QUERY_SEARCH.child("generators")                   # span + ns
+QUERY_SEARCH_GENERATORS_RAW_UNION_COUNT = QUERY_SEARCH_GENERATORS.child(
+    "raw_union_count"
+)                                                                            # int (pre-shorts)
+QUERY_SEARCH_GENERATORS_SHORTS_REMOVED_COUNT = QUERY_SEARCH_GENERATORS.child(
+    "shorts_removed_count"
+)                                                                            # int
+QUERY_SEARCH_GENERATORS_FINAL_POOL_COUNT = QUERY_SEARCH_GENERATORS.child(
+    "final_pool_count"
+)                                                                            # int (post-shorts)
+
+QUERY_SEARCH_PROMOTION = QUERY_SEARCH.child("promotion")                     # span + ns
+QUERY_SEARCH_PROMOTION_TIER = QUERY_SEARCH_PROMOTION.child("tier")           # str (PromotionTier.name)
+QUERY_SEARCH_PROMOTION_POOL_COUNT_BEFORE = QUERY_SEARCH_PROMOTION.child(
+    "pool_count_before"
+)                                                                            # int
+QUERY_SEARCH_PROMOTION_PROMOTED_SPEC_COUNT = QUERY_SEARCH_PROMOTION.child(
+    "promoted_spec_count"
+)                                                                            # int
+QUERY_SEARCH_PROMOTION_POOL_COUNT_AFTER = QUERY_SEARCH_PROMOTION.child(
+    "pool_count_after"
+)                                                                            # int
+QUERY_SEARCH_PROMOTION_SHORTS_REMOVED_COUNT = QUERY_SEARCH_PROMOTION.child(
+    "shorts_removed_count"
+)                                                                            # int
+
+QUERY_SEARCH_NEUTRAL_SEED = QUERY_SEARCH.child("neutral_seed")               # span + ns
+QUERY_SEARCH_NEUTRAL_SEED_REASON = QUERY_SEARCH_NEUTRAL_SEED.child("reason") # str (NeutralSeedReason)
+QUERY_SEARCH_NEUTRAL_SEED_SEED_COUNT = QUERY_SEARCH_NEUTRAL_SEED.child(
+    "seed_count"
+)                                                                            # int (0 = fetch failed)
+
+# rerankers (Group D) — positive AND negative reranker dispatch, run in
+# parallel against the finalized union. `call_count` spans both polarities'
+# dispatches; `cost_usd` is the group's embedding cost (semantic rerankers).
+QUERY_SEARCH_RERANKERS = QUERY_SEARCH.child("rerankers")                     # span + ns
+QUERY_SEARCH_RERANKERS_CALL_COUNT = QUERY_SEARCH_RERANKERS.child("call_count")  # int (positive + negative dispatches)
+QUERY_SEARCH_RERANKERS_POOL_COUNT = QUERY_SEARCH_RERANKERS.child("pool_count")  # int
+QUERY_SEARCH_RERANKERS_COST_USD = QUERY_SEARCH_RERANKERS.child("cost_usd")      # float
+
+QUERY_SEARCH_DISPATCH = QUERY_SEARCH.child("dispatch")                       # span + ns
+QUERY_SEARCH_DISPATCH_ROUTE = QUERY_SEARCH_DISPATCH.child("route")           # str (EndpointRoute.value)
+QUERY_SEARCH_DISPATCH_OPERATION_TYPE = QUERY_SEARCH_DISPATCH.child(
+    "operation_type"
+)                                                                            # str (OperationType.value)
+# Positive vs negative reranker dispatch — both run as POOL_RERANKER, so
+# `operation_type` alone can't tell them apart once they share the `rerankers`
+# span. Closed value set (Polarity.value: positive | negative), safe as a
+# future metric label (rule F). Defaults to positive on generator/promotion/
+# shorts dispatches (already distinguished by `operation_type`).
+QUERY_SEARCH_DISPATCH_POLARITY = QUERY_SEARCH_DISPATCH.child("polarity")     # str (Polarity.value)
+QUERY_SEARCH_DISPATCH_WAS_PROMOTED = QUERY_SEARCH_DISPATCH.child("was_promoted")  # bool
+QUERY_SEARCH_DISPATCH_RESULT_COUNT = QUERY_SEARCH_DISPATCH.child("result_count")  # int
+# The committed query params the executor actually runs — the endpoint spec
+# serialized to compact JSON with the LLM analysis/reasoning scaffolding
+# (thinking / *_exploration / *_candidates / *_intent / request_overview /
+# keyword `attributes` walk, …) stripped, so the span shows *what* was queried
+# without the generation-assist noise or the movie-ID bloat the SQL child spans
+# carry. High-cardinality span attr — never a metric label (rule F).
+QUERY_SEARCH_DISPATCH_QUERY_PARAMS = QUERY_SEARCH_DISPATCH.child("query_params")  # str (JSON)
+# The default shorts-exclusion fetch reuses the dispatch machinery (`_dispatch_call`)
+# but gets its own span NAME so it reads as the auxiliary shorts exclusion in the
+# waterfall rather than an anonymous `dispatch`. It carries the same `dispatch.*`
+# attributes (route = media_type, result_count = shorts fetched, timeout handling).
+QUERY_SEARCH_AUXILIARY_SHORTS_EXCLUSION = QUERY_SEARCH.child(
+    "auxiliary_shorts_exclusion"
+)                                                                            # span
+
+# --- query_search: Stage 4 scoring/aggregation (Group E) + hydration (Group F)
+# spans. Children of `query_search.branch`, siblings of the execution spans above.
+# `scoring` covers the per-trait combine/weight fold + branch aggregation over
+# the already-dispatched reranker scores (positive AND negative dispatch now runs
+# in the `rerankers` span; scoring only consumes the score maps). The
+# `implicit_prior_rerank` span nests under `scoring` — the post-relevance boost
+# is part of turning the scored pool into the final ranked list. `hydration`
+# covers the bulk movie_card lookup that turns ranked ids into display cards.
+# Each earns a dotted namespace (rule C): >= 2 emitted attrs.
+QUERY_SEARCH_SCORING = QUERY_SEARCH.child("scoring")                          # span + ns
+QUERY_SEARCH_SCORING_TRAIT_WEIGHTS = QUERY_SEARCH_SCORING.child(
+    "trait_weights"
+)                                                                            # str (JSON array)
+QUERY_SEARCH_SCORING_RANKED_COUNT = QUERY_SEARCH_SCORING.child("ranked_count")    # int
+QUERY_SEARCH_SCORING_TOP_SCORE = QUERY_SEARCH_SCORING.child("top_score")          # float
+
+QUERY_SEARCH_HYDRATION = QUERY_SEARCH.child("hydration")                      # span + ns
+QUERY_SEARCH_HYDRATION_REQUESTED_COUNT = QUERY_SEARCH_HYDRATION.child(
+    "requested_count"
+)                                                                            # int
+QUERY_SEARCH_HYDRATION_RETURNED_COUNT = QUERY_SEARCH_HYDRATION.child(
+    "returned_count"
+)                                                                            # int
 
 # --- filters: cross-endpoint hard-filter input attributes (raw wire values) ---
 # `filters` earns a root (rule C): eleven emitted siblings, and the same wire

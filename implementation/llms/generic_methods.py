@@ -957,7 +957,7 @@ async def generate_llm_response_async(
     events; only an exhausted retry marks the span ERROR). Full prompt/response
     ride sample-gated `llm.payload` events. Each billed attempt (including
     retried/failed ones) also self-accounts its cost into the request-level
-    rollup (query_search.cost_usd) via _account_llm_call_cost.
+    rollup (request.cost_usd) via _account_llm_call_cost.
 
     Returns a tuple of (parsed_response, input_tokens, output_tokens).
     """
@@ -1051,7 +1051,7 @@ async def generate_llm_response_async(
                     _GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, cached_input_tokens
                 )
                 # This span's `llm.cost_usd` reflects the SUCCESSFUL attempt.
-                # The request-level rollup (query_search.cost_usd) is the
+                # The request-level rollup (request.cost_usd) is the
                 # superset: each provider self-accounts every billed attempt —
                 # including ones that then failed and were retried — into the
                 # request accumulator (see _account_llm_call_cost). The router

@@ -432,7 +432,7 @@ a restatement of it.
   labels.** Ids, raw query text, and other unbounded values are fine on
   a span (`movie.tmdb_id`, `title_search.query`) but must never become
   metric label keys — only low-cardinality dimensions
-  (`outcome.success`, `movie.payload_source`) are label-eligible. This
+  (`request.success`, `movie.payload_source`) are label-eligible. This
   keeps future metric cardinality bounded by construction.
 - **Request-scoped facts go on the server span; child spans are for
   genuine sub-units of work.** Capture the server span once at the top
@@ -444,8 +444,8 @@ a restatement of it.
   child span. Never mutate an auto-instrumentation span
   (FastAPI/httpx/psycopg/redis own theirs).
 - **One per-request outcome, recorded once, via bubble-up.** A boundary
-  handler reports a single uniform verdict — `outcome.success` (every
-  path) plus `outcome.failure_reason` (only on failure) — written in
+  handler reports a single uniform verdict — `request.success` (every
+  path) plus `request.failure_reason` (only on failure) — written in
   exactly one place (the `@record_outcome` decorator in
   `api/outcome.py`), never at each exit site. A known failure site
   raises a typed, reason-carrying exception

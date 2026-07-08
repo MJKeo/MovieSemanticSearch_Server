@@ -14,12 +14,21 @@ span vs child span, error contract, cardinality) and
 are **indicative** — finalize each against the registry ruleset when its bite
 is implemented.
 
-**Last updated:** 2026-07-07 · **Status:** in progress. Bite 1 (LLM router) and
+**Last updated:** 2026-07-08 · **Status:** in progress. Bite 1 (LLM router) and
 Bite 3 (Steps 0 + 1 spans) are landed + verified; Bite 2 is partial (request
-boundary + `query_search.cost_usd` + the Step-0-fatal failure verdict done; the
+boundary + the request-cost rollup + the Step-0-fatal failure verdict done; the
 success verdict + remaining rollups + the OQ #5 walkthrough remain). Check off
 bites in §5 as they land and keep `observability_architecture.md` §6 in sync per
 bite.
+
+> **Naming note (post-1c-2):** the request-level rollups this doc calls
+> `query_search.cost_usd` / `query_search.usage.*` / total-result-count were later
+> promoted to a generic cross-endpoint `request.*` root (`request.cost_usd`,
+> `request.usage.*`, `request.result_count`) when `/rerun_query_search` (1c-2) was
+> instrumented, so `result_count` unifies across every result-returning endpoint.
+> Branch counts stayed `query_search.*` (rerun reuses them). Historical mentions
+> below keep the old names; see `observability_architecture.md` §6 for the current
+> catalog.
 
 ---
 
@@ -166,7 +175,7 @@ the FastAPI server span stays open for the full stream duration.
    attributes — size limits, and events are what the sampling dial drops).
    Behind a config flag; capture 100% now; design the flag as a sample *rate*
    (future: always-on-error + small random %), not an on/off boolean.
-5. **SSE outcome semantics.** `outcome.success = false` in exactly two cases:
+5. **SSE outcome semantics.** `request.success = false` in exactly two cases:
    - Phase-0 validation rejection (400/422) → `invalid_parameters`.
    - Step 0 fatal failure (the `error` SSE event path).
    Everything else is success — **including all-branches-empty**: an empty
@@ -227,7 +236,7 @@ the FastAPI server span stays open for the full stream duration.
 > `api/outcome.py` (new `INVALID_FILTERS` member +
 > `record_outcome(success_on_return=False)` failure-only mode). The endpoint is
 > decorated `@record_outcome(success_on_return=False)`, so the two rejection
-> paths + pre-stream crashes record `outcome.*` but a clean return does NOT
+> paths + pre-stream crashes record the request verdict but a clean return does NOT
 > (the `success=true` verdict + stream-end rollups remain Bite 2). Verified in
 > Tempo: valid / 400 / 422 traces all carry the expected attrs + events, and
 > `/title_search` still records `success=true` (bare-decorator form intact).
@@ -252,7 +261,7 @@ trace still carries the full input that caused it.
 the numeric filter fields (`min/max_release_ts`, `min/max_runtime`,
 `min/max_maturity_rank`) have **no validation at all** — a wrong-unit
 timestamp or min>max range sails through and yields an empty-result trace
-with `outcome.success = true`. There is no error path to capture on, so raw
+with `request.success = true`. There is no error path to capture on, so raw
 filters must be always-on. Additionally, Stage 4's tier-promotion /
 candidate-floor edge cases fire only when a filter is active — cross-trace
 analysis needs filter facts on every trace. Tests for always-on: (1) would a
@@ -266,11 +275,11 @@ cardinality-safe.
 | Clarification text + raw length | attrs, always-on when sent | identical treatment to query — clarification has its own independent 200-char cap + rejection path (MAX_CLARIFICATION_CHARS, `query_input_validation.py`) and is equally unbounded at the Pydantic layer, so every query-side argument applies |
 | Per-field `filters.*` typed attrs | attrs, always-on, each set only when the client sent that field | **resolves OQ #4.** One typed attr per wire field: 6 ints (`filters.min_release_ts`, …) + 4 string arrays (`filters.genres`, …), raw wire values pre-translation. Existence = "filter active" (queryable per field), typed values = debuggable and range-queryable (`min_runtime > 180`). Subsumes both a names array and a JSON blob — see note below |
 | `filters.active_count` | attr (int), always-on (0 = none) | one cheap key so "any filter active?" isn't a ten-way `!= nil` OR |
-| Rejection detail | **span event, error path only** | at the 400/422 raise site, carrying the exception detail (already names the offending field + value). `outcome.failure_reason` classifies; the event pinpoints |
-| Filter-translation failure flag | via `outcome.failure_reason` = **`INVALID_FILTERS`** (new member, decided 2026-07-06) | the 422 from `_to_metadata_filters` gets its own FailureReason member rather than sharing `invalid_parameters` with the free-text 400s. Rationale: distinct actionable classes per the enum's own design rule — a bad query is user behavior, an unknown filter enum value is UI/server taxonomy drift (filters come from UI dropdowns), i.e. *our* bug and alertable. Don't rely on the implicit 400-vs-422 status split. Unexpected crashes inside translation still fall through to `internal_error` |
+| Rejection detail | **span event, error path only** | at the 400/422 raise site, carrying the exception detail (already names the offending field + value). `request.failure_reason` classifies; the event pinpoints |
+| Filter-translation failure flag | via `request.failure_reason` = **`INVALID_FILTERS`** (new member, decided 2026-07-06) | the 422 from `_to_metadata_filters` gets its own FailureReason member rather than sharing `invalid_parameters` with the free-text 400s. Rationale: distinct actionable classes per the enum's own design rule — a bad query is user behavior, an unknown filter enum value is UI/server taxonomy drift (filters come from UI dropdowns), i.e. *our* bug and alertable. Don't rely on the implicit 400-vs-422 status split. Unexpected crashes inside translation still fall through to `internal_error` |
 | Total result count | attr | sum of cards across ALL fetches (standard + entity), written at stream end |
 | Fetch count / failed-branch count | attrs | the degradation signals per decision §2.5 |
-| `outcome.success` / `outcome.failure_reason` | attrs | via an SSE-adapted outcome mechanism — see OQ #3 |
+| `request.success` / `request.failure_reason` | attrs | via an SSE-adapted outcome mechanism — see OQ #3 |
 
 **Why per-field typed attrs, not names-array + JSON-blob (the earlier
 lean):** Tempo treats JSON inside an attribute as an opaque string —
@@ -331,7 +340,7 @@ itself is the bug.
 
 ### Phase 2 — Entity flows
 
-- **Uniform per-fetch span** (mirrors how `outcome.*` unified the read
+- **Uniform per-fetch span** (mirrors how the per-request verdict unified the read
   endpoints): `fetch.type`, result count, error state, and an **explicit
   zero-results flag** — routing to an entity flow means Step 0 believed a
   match exists, so zero results is actionable (taxonomy gap / resolution
@@ -411,11 +420,11 @@ phase gets designed until then.
 3. **How the outcome mechanism adapts to SSE.** **PARTIALLY RESOLVED
    (2026-07-06) — failure path only.** The stream consumer (`event_stream()`
    in `api/main.py`) watches the `(event_name, payload)` stream and, on the
-   terminal `error` event, writes `outcome.success=false` +
+   terminal `error` event, writes `request.success=false` +
    `query_understanding_failed` on the server span (the handle it already
    holds) — the orchestrator stays transport-agnostic and keeps emitting the
    same `error` event. **Still open:** the *success* verdict
-   (`outcome.success=true`) + the stream-end rollups (total result count,
+   (`request.success=true`) + the stream-end rollups (total result count,
    fetch/failed-branch counts), which must be written at clean generator
    completion including the client-disconnect path. Do that as the rest of
    Bite 2, reusing the generator-`finally` write point that
@@ -489,12 +498,12 @@ Check off as landed; after each bite update `observability_architecture.md`
       `record_outcome(success_on_return=False)`. **The Step-0-fatal failure
       verdict is also DONE + verified (2026-07-07):** `event_stream()` watches
       the SSE stream and, on the terminal `error` event, writes
-      `outcome.success=false` + the new `query_understanding_failed`
+      `request.success=false` + the new `query_understanding_failed`
       `FailureReason` (OQ #2 resolved) on the server span — the failure half of
       the SSE-adapted outcome mechanism (OQ #3). **Remaining in this bite:**
       the OQ #5 walkthrough (understand Phase 4; verify the server span
       covers the full stream), then the SSE-adapted *success* mechanism
-      (OQ #3) that writes `outcome.success=true` + the stream-end rollups
+      (OQ #3) that writes `request.success=true` + the stream-end rollups
       (total result count, fetch/failed-branch counts) at generator
       completion. **One stream-end rollup landed early
       (2026-07-06): `query_search.cost_usd`** — the summed LLM + embedding cost
@@ -537,19 +546,39 @@ Check off as landed; after each bite update `observability_architecture.md`
       no span for EXPLICIT_NO_OP / NO_LLM_PURE_CODE). Built with plain
       `start_as_current_span` in `full_pipeline_orchestrator.py` +
       `handler.py` (both gained a module tracer; they already run under the
-      branch span). **Still pending in this bite:** `implicit_expectations`
-      span (skipped for now per the user), and the branch-level
+      branch span). **`implicit_expectations` generation span landed + verified
+      (2026-07-08)** — its policy output is recorded on the Bite-7 rerank span,
+      not the generation span (see Bite 7). **Still pending
+      in this bite:** the branch-level
       `branch_error` / result-count attrs (deferred with Bite 5). Verify:
       per-trait pipelining visible (a trait's generation bar starts before
       sibling step-3 bars end); `step_3_categories` shows the trimmed set +
       `"solo trim"` event on a SOLO-with-extras trait; forced Step-3 failure
       shows `trait_step_3_error` + step_3 ERROR with the request still
       succeeding; no `query_generation` span for a NO_LLM_PURE_CODE category.
-- [ ] **Bite 5 — Stage 4 execution.** `stage_4` span + Phase B/C child
-      spans + edge-case attrs (neutral seed, tier promotion, floor) +
-      per-spec dispatch spans with route/operation_type/`timed_out` and the
-      timeout span event. Verify: per-route breakdown queryable in Tempo;
-      artificially low timeout produces the event.
+- [~] **Bite 5 — Stage 4 execution.** *(execution slice code landed; awaiting
+      Tempo verification.)* Final shape diverged from the sketch below: **no
+      wrapping `stage_4` span** — the phase spans sit directly under
+      `query_search.branch`, and **each tiered-promotion round is its own
+      `query_search.promotion` span** (not a single Phase-B span). Landed:
+      `query_search.generators` (raw/shorts/final pool counts + `generator_dedup`
+      / `aux_shorts_exclusion` events), `query_search.promotion` per round
+      (tier + before/after/promoted counts + `reranker_fallback_promotion`
+      event), `query_search.neutral_seed` (reason + seed_count, both empty-pool
+      arms), `query_search.rerankers`, `query_search.negatives` (pulled into
+      this bite — dispatch gather only, sequential after Phase C), and
+      `query_search.dispatch` per unique call (route/operation_type/was_promoted/
+      result_count; `dispatch_soft_fail` event splitting timeout from other
+      drops). Plus branch-span events `reranker_fallback_promotion`
+      (no-candidate-generators, via the `fallback_outcome` side channel from the
+      orchestrator) and `thin_pool_accepted`. **Deferred to a later bite** (still
+      out of scope here): the Phase D/E **scoring** span, which owns the
+      per-branch `result_count`. Verify: per-route breakdown queryable in Tempo;
+      artificially low `EXECUTOR_TIMEOUT_SECONDS` produces `dispatch_soft_fail`
+      with `error.type=timeout`; filter-active thin pool shows escalating
+      promotion rounds + `thin_pool_accepted` (or a `neutral_seed` span on
+      empty); all-reranker branch shows the branch-span no-generator promotion
+      event or a `neutral_seed` span.
 - [x] **Bite 6 — Qdrant primitives.** *(code landed; verified via
       `search_v2/test_semantic_qdrant_span.ipynb` — spans reach Tempo with the
       right per-space fan-out and attributes.)* Manual `query_search.semantic_qdrant`
@@ -563,9 +592,18 @@ Check off as landed; after each bite update `observability_architecture.md`
       and will nest under the Bite-5 dispatch span once it exists — at which point
       the branch-level `branch_error` attribute + failed-branch count get wired
       there (deliberately out of scope for Bite 6).
-- [ ] **Bite 7 — Scoring + rerank.** Phase D/E scoring span,
-      implicit-prior rerank span (`boost_axis`). Verify: CPU bar visible
-      on a large-union query; boost_axis matches the implicit policy.
+- [~] **Bite 7 — Scoring + rerank.** **Implicit-prior spans landed + verified
+      (2026-07-08):** `implicit_expectations` (generation, no
+      manual attrs — the `llm.generate` child carries the payload) +
+      `implicit_prior_rerank` (application) with `boost_axis`, both priors'
+      direction+strength, `*_cap`/`*_active` selection vars, `inverse_applied`,
+      `noop_reason` (4 no-op causes), `signal_missing_count`; failure events
+      `implicit_expectations_failed` (schema_mismatch vs provider) +
+      `implicit_prior_apply_failed`. Both per standard branch under the branch
+      span, on the shared per-branch functions (covers streaming + batch).
+      **Still pending:** the Phase D/E scoring span. Verify: CPU bar visible on
+      a large-union query; `boost_axis` matches the implicit policy; no-op
+      variants carry the right `noop_reason`.
 - [x] **Bite 8 — Entity flows.** *(code landed; awaiting Tempo verification via
       `search_v2/testing_nonstandard_flows.ipynb`.)* Attributes hang on the
       existing `query_search.branch` span, set INSIDE each entity-flow entry

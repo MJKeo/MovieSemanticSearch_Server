@@ -78,9 +78,15 @@ prompt version, and prompt/response payloads. Payload capture notes:
   blob), so it isn't measurable. Use `gen_ai.usage.output_tokens` vs.
   total span duration as the thinking-vs-writing proxy instead.
 - **Payloads:** capture 100% now, but behind a config flag and as a
-  dial-able sample rate (not an on/off boolean). Large payloads go on span
-  **events**, not attributes. Standard at scale = always-on-error + 1–5%
-  random sample. (Prompts are movie queries, not PII.)
+  dial-able sample rate (not an on/off boolean). ~~Large payloads go on span
+  **events**, not attributes.~~ **SUPERSEDED (2026-07-08):** span events do NOT
+  exempt attribute values from size limits — Tempo truncates every attribute
+  value (span and event alike) at `max_attribute_bytes` (default 2 KB), so
+  event-borne payloads are silently cut off in Grafana. Payloads move to OTel
+  **log records** (Loki, 256 KB line limit) correlated by trace/span id — see
+  Phase 4 (implementation order #4) and `observability_todos.md`. Standard at
+  scale = always-on-error + 1–5% random sample. (Prompts are movie queries, not
+  PII.)
 
 Expected first actionable finding: query understanding fans out parallel
 LLM calls across providers and the slowest call gates the whole stage — a
@@ -172,7 +178,11 @@ Question #2.)
    dashboards + a small number of alerts (p95 latency, error rate,
    memory saturation).
 4. **Structured logs** — JSON logs with trace ID correlation, shipped
-   to Loki (or PostHog logs — see Open Question #2).
+   to Loki (or PostHog logs — see Open Question #2). **Includes migrating LLM
+   prompt/response payload capture off the `llm.payload` span event onto a
+   correlated log record** (the span-event approach is truncated at ~2 KB by
+   Tempo — see the superseded payload note above and `observability_todos.md`
+   Phase 4).
 5. **Frontend / PostHog** — when frontend work begins. Cheap to add: W3C
    Trace Context lets the frontend mint traces the backend continues with no
    code change, provided we use standard OTel propagation and don't strip

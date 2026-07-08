@@ -44,13 +44,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal, TypeVar
 
-from db.postgres import fetch_quality_popularity_signals
 from schemas.enums import (
     EndpointRoute,
     OperationType,
-    PopularityMode,
     Polarity,
-    ReceptionMode,
     ReleaseFormat,
     TraitCombineMode,
 )
@@ -70,10 +67,6 @@ from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec impor
 )
 from search_v2.endpoint_fetching.category_handlers.handler import (
     run_query_generation,
-)
-from search_v2.endpoint_fetching.metadata_query_execution import (
-    score_popularity_prior,
-    score_reception_prior,
 )
 from search_v2.promotion_tiers import (
     PromotionTier,
@@ -113,10 +106,14 @@ from search_v2.implicit_expectations import run_implicit_expectations
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from observability.cost_tracking import track_stage_cost
 from observability.names import (
     QUERY_SEARCH_STEP_2,
+    QUERY_SEARCH_STEP_2_COST_USD,
     QUERY_SEARCH_STEP_2_TRAIT_COUNT,
     QUERY_SEARCH_STEP_2_CONTEXTUALIZED_PHRASES,
+    QUERY_SEARCH_DECOMPOSITION,
+    QUERY_SEARCH_DECOMPOSITION_COST_USD,
     QUERY_SEARCH_TRAIT,
     QUERY_SEARCH_TRAIT_PHRASE,
     QUERY_SEARCH_TRAIT_POLARITY,
@@ -125,6 +122,7 @@ from observability.names import (
     QUERY_SEARCH_STEP_3,
     QUERY_SEARCH_STEP_3_COMBINE_MODE,
     QUERY_SEARCH_STEP_3_CATEGORIES,
+    QUERY_SEARCH_IMPLICIT_EXPECTATIONS,
 )
 
 logger = logging.getLogger(__name__)
@@ -147,19 +145,9 @@ tracer = trace.get_tracer(__name__)
 # `_call_with_retry` below, which is now a transparent passthrough so
 # callers and tests keep their existing call shape.
 
-QUALITY_PRIOR_BOOSTS: dict[str, float] = {
-    "none": 0.0,
-    "light": 0.025,
-    "normal": 0.06,
-    "strong": 0.10,
-}
-
-POPULARITY_PRIOR_BOOSTS: dict[str, float] = {
-    "none": 0.0,
-    "light": 0.05,
-    "normal": 0.12,
-    "strong": 0.20,
-}
+# Implicit-prior post-reranking (the boost tables, telemetry enums, and the
+# rerank pass itself) now lives in `search_v2/implicit_prior_rerank.py` and is
+# applied inside Stage 4's scoring span — see `stage_4_execution._run_branch`.
 
 
 # Step 2 branch identifiers. Match the labels the upstream UI uses so
@@ -459,7 +447,11 @@ async def _run_step2_for_branch(
     # The step_2 span closes at the Step-2 LLM return (the trait spans start
     # after), so its duration is just this call. It nests under the branch span
     # (current context) and parents the router's `llm.generate` child.
-    with tracer.start_as_current_span(QUERY_SEARCH_STEP_2) as step2_span:
+    # Group-A cost scope wraps the Step-2 LLM call so `step_2.cost_usd` isolates
+    # this branch's Step-2 spend from sibling branches running concurrently.
+    with tracer.start_as_current_span(
+        QUERY_SEARCH_STEP_2
+    ) as step2_span, track_stage_cost() as step2_cost:
         try:
             qa, _, _, _ = await _call_with_retry(
                 lambda: run_step_2(query),
@@ -471,6 +463,9 @@ async def _run_step2_for_branch(
             # the request verdict is untouched.
             step2_span.record_exception(exc)
             step2_span.set_status(Status(StatusCode.ERROR))
+            step2_span.set_attribute(
+                QUERY_SEARCH_STEP_2_COST_USD, step2_cost.total_usd
+            )
             return (
                 Step2BranchResult(
                     kind=kind,
@@ -488,6 +483,9 @@ async def _run_step2_for_branch(
         step2_span.set_attribute(
             QUERY_SEARCH_STEP_2_CONTEXTUALIZED_PHRASES,
             [t.contextualized_phrase for t in qa.traits],
+        )
+        step2_span.set_attribute(
+            QUERY_SEARCH_STEP_2_COST_USD, step2_cost.total_usd
         )
 
     partial = Step2BranchResult(
@@ -512,21 +510,33 @@ async def _finish_branch_after_step2(
     the implicit-expectations coroutine here (rather than passing one
     in) keeps cancellation correct — `asyncio.gather` cancels its inner
     coroutines when the outer task is cancelled.
+
+    Group B (`decomposition`) span wraps the whole fan-out: every per-trait
+    `trait` span (Step 3 + query generation) and the `implicit_expectations`
+    span nest under it, and `decomposition.cost_usd` rolls up their combined
+    LLM spend. Covers both orchestrator paths — the streaming orchestrator also
+    funnels Step 3 through this function.
     """
-    trait_task = asyncio.gather(
-        *(
-            _decompose_and_generate(
-                trait,
-                siblings=[s for s in qa.traits if s is not trait],
-                branch_label=kind,
+    with tracer.start_as_current_span(
+        QUERY_SEARCH_DECOMPOSITION
+    ) as decomp_span, track_stage_cost() as decomp_cost:
+        trait_task = asyncio.gather(
+            *(
+                _decompose_and_generate(
+                    trait,
+                    siblings=[s for s in qa.traits if s is not trait],
+                    branch_label=kind,
+                )
+                for trait in qa.traits
             )
-            for trait in qa.traits
         )
-    )
-    trait_results, (implicit, implicit_error) = await asyncio.gather(
-        trait_task,
-        _run_implicit_expectations_for_branch(partial.query, qa, kind),
-    )
+        trait_results, (implicit, implicit_error) = await asyncio.gather(
+            trait_task,
+            _run_implicit_expectations_for_branch(partial.query, qa, kind),
+        )
+        decomp_span.set_attribute(
+            QUERY_SEARCH_DECOMPOSITION_COST_USD, decomp_cost.total_usd
+        )
     partial.traits = trait_results
     partial.implicit_expectations = implicit
     partial.implicit_expectations_error = implicit_error
@@ -544,14 +554,48 @@ async def _run_implicit_expectations_for_branch(
     endpoint generation or result assembly. The branch keeps the error
     for diagnostics and proceeds with no implicit policy attached.
     """
-    try:
-        response, _, _, _ = await _call_with_retry(
-            lambda: run_implicit_expectations(query, qa),
-            label=f"implicit_expectations[{branch_label}]",
-        )
-    except Exception as exc:  # noqa: BLE001 — soft-fail per branch
-        return None, repr(exc)
+    # Generation span: brackets the policy LLM call so the router's
+    # `llm.generate` child (tokens/cost/prompt-hash/full payload) nests under a
+    # semantically-named parent, the call's latency is visible (it sits on
+    # Stage 4's critical path — Stage 4 awaits it), and the soft-fail has an
+    # anchor. The policy OUTPUT (direction/strength/boost_axis) is recorded on
+    # the application span instead, beside what actually fired with it.
+    with tracer.start_as_current_span(QUERY_SEARCH_IMPLICIT_EXPECTATIONS) as span:
+        try:
+            response, _, _, _ = await _call_with_retry(
+                lambda: run_implicit_expectations(query, qa),
+                label=f"implicit_expectations[{branch_label}]",
+            )
+        except Exception as exc:  # noqa: BLE001 — soft-fail per branch
+            # The prior silently vanishes for this branch (the rerank gate
+            # treats a None policy as skip). Mark ERROR + emit a failure event
+            # classifying schema-mismatch (a bad LLM output shape — a
+            # prompt/model regression) apart from the provider/timeout class
+            # (infra), since the two need different responses.
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR))
+            span.add_event(
+                "implicit_expectations_failed",
+                {"error.type": _classify_implicit_expectations_error(exc)},
+            )
+            return None, repr(exc)
     return response, None
+
+
+def _classify_implicit_expectations_error(exc: Exception) -> str:
+    """Normalize an implicit-expectations failure for the span event.
+
+    `schema_mismatch` = the model produced the wrong output shape — either
+    run_implicit_expectations's post-validation raised (wrong number of
+    explicit_signals, or a query_span that doesn't match the trait
+    surface_text) or Pydantic rejected the structured output (its
+    ValidationError subclasses ValueError). Everything else is the
+    provider/timeout class: the exception class name, matching the
+    `error.type` convention on the llm.generate span.
+    """
+    if isinstance(exc, ValueError):
+        return "schema_mismatch"
+    return type(exc).__name__
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +865,8 @@ def _build_auxiliary_specs(
 
 def _apply_reranker_only_candidate_fallback(
     branch: Step2BranchResult,
+    *,
+    fallback_outcome: dict | None = None,
 ) -> list[GeneratedEndpointSpec]:
     """Per-branch reranker-only fallback.
 
@@ -837,6 +883,14 @@ def _apply_reranker_only_candidate_fallback(
     Auxiliary specs (shorts exclusion, neutral seed) are deliberately
     ignored when deciding whether to promote — only user-derived
     calls drive fallback.
+
+    ``fallback_outcome`` is an opt-in observability side channel: when a
+    dict is supplied and a tier is promoted, this records
+    ``fallback_outcome["tier"] = <PromotionTier.name>`` so the caller can
+    stamp the promoted tier on the branch span. The tier can't be
+    re-derived downstream (once the spec flips to CANDIDATE_GENERATOR,
+    ``determine_promotion_tier`` returns ``NEVER_PROMOTE``), so it must be
+    captured at the promotion site. Default ``None`` → no behavior change.
     """
     endpoint_refs: list[
         tuple[CategoryName, GeneratedEndpointSpec, Polarity]
@@ -870,6 +924,8 @@ def _apply_reranker_only_candidate_fallback(
         return [_build_neutral_seed_spec()]
 
     lowest_tier = min(promotable_tiers)
+    if fallback_outcome is not None:
+        fallback_outcome["tier"] = lowest_tier.name
     for tier, spec in tiered_refs:
         if tier is lowest_tier:
             spec.operation_type = OperationType.CANDIDATE_GENERATOR
@@ -883,6 +939,8 @@ def _apply_reranker_only_candidate_fallback(
 
 def _compute_branch_auxiliary(
     branch: Step2BranchResult,
+    *,
+    fallback_outcome: dict | None = None,
 ) -> list[GeneratedEndpointSpec]:
     """Convenience: full per-branch auxiliary list.
 
@@ -890,151 +948,17 @@ def _compute_branch_auxiliary(
     branch's own specs in place) and the shorts-exclusion check.
     Order matches the previous global call sites so behavior stays
     stable for a single-branch case.
+
+    ``fallback_outcome`` threads through to
+    ``_apply_reranker_only_candidate_fallback`` as an opt-in observability
+    side channel (see that function); default ``None`` → no behavior change.
     """
     return (
-        _apply_reranker_only_candidate_fallback(branch)
+        _apply_reranker_only_candidate_fallback(
+            branch, fallback_outcome=fallback_outcome
+        )
         + _build_auxiliary_specs(branch)
     )
-
-
-# ---------------------------------------------------------------------------
-# Implicit-prior post-reranking
-# ---------------------------------------------------------------------------
-
-
-async def _apply_implicit_prior_rerank(
-    branches: list[Step2BranchResult],
-    branch_results: list[BranchRankedResults],
-) -> list[BranchRankedResults]:
-    """Apply the implicit popularity boost, falling back to quality.
-
-    Stage 4 owns base relevance scoring. This pass applies a single-axis
-    post-score boost:
-
-        boosted_score = base_score + prior_base * boost
-
-    Popularity is the primary axis. The quality axis only fires when
-    popularity is inactive (direction=none) — typically because the
-    query already commits to popularity explicitly and the implicit
-    policy turned it off. Treating popularity as the implicit-prior
-    default keeps it from competing with quality when both are on; in
-    saturated-popularity pools (e.g. tentpole franchise queries) the
-    quality axis used to dominate by accident.
-
-    `prior_base` is the movie's positive relevance contribution, or
-    1.0 when no positive contribution exists. Missing axis data
-    contributes 0.0 so absence of data has no effect.
-    """
-    if not branches or not branch_results:
-        return branch_results
-
-    branches_by_kind = {branch.kind: branch for branch in branches}
-    return list(
-        await asyncio.gather(
-            *(
-                _apply_implicit_prior_rerank_for_branch(
-                    branches_by_kind.get(result.kind),
-                    result,
-                )
-                for result in branch_results
-            )
-        )
-    )
-
-
-async def _apply_implicit_prior_rerank_for_branch(
-    branch: Step2BranchResult | None,
-    result: BranchRankedResults,
-) -> BranchRankedResults:
-    if (
-        branch is None
-        or branch.implicit_expectations is None
-        or result.branch_error is not None
-        or not result.ranked
-    ):
-        return result
-
-    policy = branch.implicit_expectations
-    quality_cap = QUALITY_PRIOR_BOOSTS[policy.quality_prior.strength]
-    popularity_cap = POPULARITY_PRIOR_BOOSTS[policy.popularity_prior.strength]
-
-    # Popularity is the primary axis. Quality only activates when the
-    # implicit policy has set popularity_prior.direction = "none" —
-    # typically because explicit query coverage already owns the
-    # popularity axis. This avoids the saturated-popularity-pool case
-    # where quality used to silently dominate the boost.
-    popularity_active = (
-        policy.popularity_prior.direction != "none" and popularity_cap > 0.0
-    )
-    quality_active = (
-        not popularity_active
-        and policy.quality_prior.direction != "none"
-        and quality_cap > 0.0
-    )
-    if not popularity_active and not quality_active:
-        return result
-
-    movie_ids = [movie_id for movie_id, _ in result.ranked]
-    signals = await fetch_quality_popularity_signals(movie_ids)
-
-    reranked: list[tuple[int, float]] = []
-    for movie_id, base_score in result.ranked:
-        popularity_raw, reception_raw = signals.get(movie_id, (None, None))
-        if popularity_active:
-            popularity_signal = _popularity_signal(
-                popularity_raw,
-                direction=policy.popularity_prior.direction,
-            )
-            boost = popularity_cap * popularity_signal
-        else:
-            quality_signal = _quality_signal(
-                reception_raw,
-                direction=policy.quality_prior.direction,
-            )
-            boost = quality_cap * quality_signal
-        breakdown = result.score_breakdowns.get(movie_id)
-        prior_base = (
-            breakdown.positive_total
-            if breakdown is not None and breakdown.positive_total > 0.0
-            else 1.0
-        )
-        reranked.append((movie_id, base_score + (prior_base * boost)))
-        if breakdown is not None:
-            breakdown.implicit_prior_boost = boost
-
-    reranked.sort(key=lambda mid_score: mid_score[1], reverse=True)
-    result.ranked = reranked
-    return result
-
-
-def _quality_signal(
-    reception_score: float | None,
-    *,
-    direction: str,
-) -> float:
-    if direction == "none" or reception_score is None:
-        return 0.0
-    # Keep implicit-prior shape aligned with explicit metadata-prior
-    # scoring. The metadata endpoint owns these sigmoid parameters.
-    if direction == "inverse":
-        return score_reception_prior(
-            reception_score, ReceptionMode.POORLY_RECEIVED
-        )
-    return score_reception_prior(reception_score, ReceptionMode.WELL_RECEIVED)
-
-
-def _popularity_signal(
-    popularity_score: float | None,
-    *,
-    direction: str,
-) -> float:
-    if direction == "none" or popularity_score is None:
-        return 0.0
-    # Keep implicit-prior shape aligned with explicit metadata-prior
-    # scoring. The metadata endpoint owns these sigmoid parameters.
-    if direction == "inverse":
-        return score_popularity_prior(popularity_score, PopularityMode.NICHE)
-    return score_popularity_prior(popularity_score, PopularityMode.POPULAR)
 
 
 # ---------------------------------------------------------------------------
@@ -1092,12 +1016,10 @@ async def run_full_pipeline(
         # One branch → one auxiliary list. Same helper as the
         # multi-branch standard path uses, just trivially scalar.
         auxiliary_per_branch = [_compute_branch_auxiliary(branch_list[0])]
+        # Stage 4 applies the implicit-prior post-rerank internally (inside its
+        # scoring span), so execute_branches returns already-reranked results.
         branch_results = await execute_branches(
             branch_list, auxiliary_per_branch
-        )
-        branch_results = await _apply_implicit_prior_rerank(
-            branch_list,
-            branch_results,
         )
         return FullPipelineResult(
             query=query,
@@ -1286,12 +1208,10 @@ async def run_full_pipeline(
         _compute_branch_auxiliary(branch) for branch in branches
     ]
     # Each branch runs its own Stage 4 in parallel — no cross-branch
-    # gate, since auxiliary is now per-branch.
+    # gate, since auxiliary is now per-branch. Stage 4 applies the
+    # implicit-prior post-rerank internally (inside its scoring span), so these
+    # results are already reranked.
     branch_results = await execute_branches(branches, auxiliary_per_branch)
-    branch_results = await _apply_implicit_prior_rerank(
-        branches,
-        branch_results,
-    )
     return FullPipelineResult(
         query=query,
         skipped_steps_0_1=False,

@@ -25,7 +25,7 @@ invisible in traces (flagged as an open gap in `observability_architecture.md`
   silently dropped.
 - Added an app-level `@app.exception_handler(RequestValidationError)`
   (`_on_request_validation_error` in `api/main.py`) that stamps
-  `outcome.success=false` + `FailureReason.INVALID_PARAMETERS` and a
+  `request.success=false` + `FailureReason.INVALID_PARAMETERS` and a
   `request rejected` span event naming the offending field(s)/error
   type(s) (`loc` + `msg` + `type` only — never the input value, so no PII
   or oversized payloads land on the span; capped at 5 errors), then
@@ -65,7 +65,7 @@ invisible in traces (flagged as an open gap in `observability_architecture.md`
   caller currently relying on lenient parsing. No known callers depended
   on this, per the diff-context testing notes.
 - Every endpoint (not just the four with `@record_outcome`) now records
-  an `outcome.success=false` / `invalid_parameters` verdict on a
+  a `request.success=false` / `invalid_parameters` verdict on a
   framework-level 422, closing the observability blind spot noted in
   `observability_architecture.md` §8.
 - Establishes the pattern for future request models: default to

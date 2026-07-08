@@ -834,7 +834,11 @@ OTel spans through most of the pipeline: `query_search.step_0`/`.step_1`
 (also emitted on rerun, which shares `_stream_from_branch_plan`), the
 standard-branch trait pipeline (`full_pipeline_orchestrator.py` /
 `category_handlers/handler.py`: `.step_2`/`.trait`/`.step_3`/`.query_generation`),
-the six entity-flow executors' `branch_*` attributes + per-flow child spans, and
+the six entity-flow executors' `branch_*` attributes + per-flow child spans,
+the Stage 4 execution spans (`stage_4_execution.py`: `query_search.generators`
+/ `.promotion` / `.neutral_seed` / `.rerankers` / `.negatives` and a per-call
+`.dispatch` span, plus fallback/dedup/shorts/timeout events — the pool-definition
++ reranker/negative-dispatch half; scoring/aggregation is a later bite), and
 manual Qdrant probe spans (`semantic_query_execution.py`'s
 `query_search.semantic_qdrant`, `similar_movies.py`'s `similarity_qdrant`) that
 close the gRPC auto-instrumentation gap. Every routed LLM call

@@ -55,7 +55,7 @@ locally in Tempo. Within **1c**, the three read endpoints are **done and tested*
 spans + semantic attributes built and runtime-verified, including error recording. Two
 cross-cutting refactors have since landed on those three endpoints (both done):
 **centralized naming** (`observability/names.py`) and a **universal request-outcome**
-attribute pair (`outcome.success` / `outcome.failure_reason`, replacing the old
+attribute pair (`request.success` / `request.failure_reason`, replacing the old
 per-endpoint `*.not_found_reason`) — see the naming/outcome note under 1c below and
 `observability_architecture.md` §5–§7 for the current catalog. **The remaining Phase 1
 work is 1c-1 through 1c-4** (`/query_search`, `/rerun_query_search`, `/similarity_search`,
@@ -116,11 +116,11 @@ it names a real unit of work or covers Qdrant's gRPC gap).
 >    `movie_credits.*`; the over-nested `movie.payload.source` flattened →
 >    `movie.payload_source`.
 > 2. **Universal request outcome (`api/outcome.py`).** Every endpoint's server span
->    now carries **`outcome.success`** (bool, every path) + **`outcome.failure_reason`**
+>    now carries **`request.success`** (bool, every path) + **`request.failure_reason`**
 >    (only when false), written **once** by the `@record_outcome` decorator; each
 >    failure site raises `EndpointFailure(failure_reason=…)` and the reason bubbles
 >    up. This **replaced** the per-endpoint `*.not_found_reason` attribute: the two
->    404 reasons are now `outcome.failure_reason` = `not_indexed` / `tmdb_removed`,
+>    404 reasons are now `request.failure_reason` = `not_indexed` / `tmdb_removed`,
 >    joined by `invalid_parameters` (422), `tmdb_fetch_failed` (502), and
 >    `internal_error` (500). "Failure" is broader than "span error" — a 404 is a
 >    failure but not a span error.
@@ -152,6 +152,12 @@ reuses these spans. This is the highest-value item in Phase 1.
       payloads on span **events**, not attributes. **DONE — Bite 1**:
       `LLM_PAYLOAD_CAPTURE_SAMPLE_RATE` (float; default 1.0) → `llm.payload`
       span events; always-on-error prompt capture when rate > 0.
+      > ⚠️ **Known limitation (2026-07-08):** span events do NOT dodge attribute
+      > size limits — Tempo truncates every attribute value (span AND event) to
+      > `max_attribute_bytes` (default 2048 bytes), so payloads are silently cut
+      > off at ~2 KB in Grafana. Decided fix: migrate the payload to an OTel log
+      > record (Loki) in **Phase 4** (see the Phase 4 item + Open Question #2).
+      > Interim dev workaround: raise Tempo's `max_attribute_bytes` locally.
 - [ ] Lexical search (Postgres entity matching).
 - [ ] Vector search (Qdrant, across the 8 vector spaces) — consider a span per
       vector space or at least the 5-stage scoring pipeline boundaries.
@@ -162,30 +168,84 @@ reuses these spans. This is the highest-value item in Phase 1.
 - [ ] Confirm parallel stages actually render as overlapping spans in the
       Tempo waterfall (validates that asyncio fan-out is truly concurrent).
 
-#### 1c-2. `POST /rerun_query_search` — replay with new filters [ ]
-Re-runs prior branches with a new filter set (`api/main.py:826`), bypassing
+#### 1c-2. `POST /rerun_query_search` — replay with new filters [~]
+Re-runs prior branches with a new filter set (`api/main.py`), bypassing
 Steps 0/1 and re-entering at Step 2 (entity flows re-enter at their executor).
 Same SSE shape as /query_search. Mostly reuses the Step 2 → Stage 4 spans from
-1c-1.
-- [ ] Span around the rerun-plan / filter translation boundary
-      (`_to_rerun_plan`, `_to_metadata_filters`).
-- [ ] Confirm the shared Step 2 → Stage 4 spans attach under this endpoint's
-      request span (not orphaned), and that entity-flow re-entry is spanned.
+1c-1. **Code landed (awaiting Tempo verification):**
+- [x] Server-span parity with /query_search: `@record_outcome(success_on_return=False)`,
+      input capture (`rerun_query_search.branch_count`/`branch_types`/`standard_queries`
+      + shared `filters.*`), the `event_stream` scaffold (`track_request_cost` →
+      `trace.use_span` → branch-results accumulation → `finally` rollup) writing the
+      cross-endpoint `request.*` (cost/usage/result_count + verdict) +
+      the reused `query_search.{succeeded,failed}_branch_count`. No Step-0 fatal path.
+- [x] **Orphaning fix** — the `trace.use_span(request_span)` wrapper keeps the
+      reused Step 2 → Stage 4 + entity-flow + `llm.generate` spans nested under
+      the rerun server span (the whole reason this item existed; verify in Tempo).
+- [x] Boundary rejections raise `EndpointFailure` (via `_rerun_rejection`,
+      `invalid_parameters`) + `request rejected` events, so `@record_outcome`
+      classifies them instead of `internal_error`.
+- [ ] (Deferred, low value) an explicit span around the `_to_rerun_plan` /
+      `_to_metadata_filters` boundary translation — pure Python validation; the
+      rejection events currently hang on the server span.
+- [ ] Tempo verification (see the plan's verification section).
 
-#### 1c-3. `POST /similarity_search` — anchor-set vector flow, no LLM [ ]
+**Companion change (cross-cutting):** the request-level rollups moved off
+`query_search.*` to a generic cross-endpoint `request.*` root (`cost_usd`,
+`usage.*`, `result_count`), unifying `result_count` across all five
+result-returning endpoints; branch counts stay `query_search.*` (rerun reuses).
+
+#### 1c-3. `POST /similarity_search` — anchor-set vector flow, no LLM [x]
 Ranked "similar to" from a caller-supplied TMDB-ID anchor set
-(`api/main.py:870`). No NLP/LLM. Introduces the Qdrant span that
-auto-instrumentation can't provide (its client is gRPC).
-- [ ] Vector search span(s) over the anchor set (Qdrant — the gRPC gap).
-- [ ] Candidate-generation lane(s) + scoring / merge span.
-- [ ] Hard-filter application + MovieCard hydration span.
+(`api/main.py`, `similarity_search`). No NLP/LLM. The engine spans/attrs are
+shared with `/query_search`'s similarity branch, so the work was mostly making
+those flow-neutral rather than writing new instrumentation.
+- [x] Vector search span(s) over the anchor set (Qdrant — the gRPC gap): the
+      engine's `similarity.qdrant` (anchor-vector retrieve + shape probe) and
+      `similarity.fetch` (per-lane) child spans already fire here; renamed off the
+      `query_search.similarity_*` root to a flow-neutral `similarity.*` root
+      (rule B) so they read correctly on this endpoint.
+- [x] Candidate-generation lane(s) + scoring / merge: the full `similarity.*`
+      signal set (`retrieval_lanes` / `lane_weights` / `anchor_shape` / cohesion
+      maps / `weave_targets` / …) + `similarity.anchor_count` is now recorded by
+      the engine onto the current span, so both the branch and this endpoint's
+      server span carry it (relocated `_record_similarity_signals` into
+      `run_similar_movies_for_ids`). The reference-resolution skeleton stays
+      `query_search.branch_*` (N/A for supplied anchors).
+- [x] Hard-filter application + MovieCard hydration: endpoint-owned
+      `similarity_search.cache_hit` (Redis disposition), `similarity_search.result_count`
+      (post-hydration cards), and the raw `filters.*` inputs (shared
+      `_record_filter_attributes` helper); `@record_outcome` verdict with
+      `EndpointFailure` on the anchor/filter error paths; `cache read/write failed`
+      span events for the swallowed Redis degradations.
 
-#### 1c-4. `POST /attribute_search` — hard-attribute browse + person ranking [ ]
-Filters + person-prominence ranking, no LLM/vector (`api/main.py:959`). Mostly
-Postgres (auto-traced) + in-memory ranking.
-- [ ] Person resolution span (reuses the Step 0 person model / resolver).
-- [ ] Attribute query + prominence ranking span.
-- [ ] MovieCard hydration span (`fetch_movie_card_summaries`).
+#### 1c-4. `POST /attribute_search` — hard-attribute browse + person ranking [x]
+Filters + person-prominence ranking, no LLM/vector (`api/main.py`,
+`attribute_search`). Mostly Postgres (auto-traced) + in-memory ranking. Like
+1c-3, the person-resolution span was made **flow-neutral and shared** with the
+`/query_search` person branch rather than written twice.
+- [x] Person resolution span: extracted the per-person span out of
+      `run_person_search`'s local `_resolve_person_traced` into a shared
+      `resolve_person_traced` wrapper beside `fetch_person_buckets`
+      (`search_v2/person_search.py`), renamed off the `query_search.person_resolution`
+      root to a flow-neutral `person.resolve` root (rule B). Carries the intrinsic
+      facts the resolution knows — `person.resolve.name`, `.movie_count`,
+      `.best_bucket` (omitted when movie_count is 0) — plus a `"person unresolved"`
+      event on a zero-credit miss. `fetch_person_buckets` stays tracer-free; both
+      callers get identical per-person telemetry from one definition.
+- [x] Attribute query + prominence ranking: the orchestrator
+      (`run_attribute_search`) stamps the endpoint-owned skeleton on the server
+      span — `attribute_search.path` (browse|people, `AttributeSearchPath` enum),
+      `.people_searched_count`, `.people_unresolved_count`, `.pool_count`. No
+      wrapper span around the pure-CPU ranking / the single-call signal fetch
+      (auto-traced psycopg; same ruling as the query_search hydration).
+- [x] MovieCard hydration + boundary: hydration stays a single auto-traced
+      `fetch_movie_card_summaries` call (no manual span); the endpoint adds the
+      raw `filters.*` inputs (shared `_record_filter_attributes` helper), the
+      people-input attrs (`attribute_search.people_requested_count`,
+      `.people_names`), `attribute_search.result_count` (post-hydration cards),
+      and the `@record_outcome` verdict (`invalid_filters` via the existing
+      `_to_metadata_filters` `EndpointFailure`).
 
 #### 1c-5. `GET /title_search` — trigram typeahead [x]
 Single trigram Postgres query (`api/main.py:1029`), already auto-traced. Both
@@ -394,6 +454,32 @@ Goal: JSON logs correlated to traces via trace ID.
       jump from a slow trace to its logs.
 - [ ] Ship logs to the chosen destination.
 - [ ] Verify trace→logs navigation works end to end in the UI.
+- [ ] **Migrate LLM payload capture from span events to log records
+      (decided 2026-07-08).** The `llm.payload` span event (`system_prompt` /
+      `user_prompt` / `response`, emitted in
+      `implementation/llms/generic_methods.py::_emit_payload_event`) is silently
+      truncated at ~2 KB by Tempo's `max_attribute_bytes` default — span events do
+      NOT exempt attribute values from size limits. This reverses the
+      "large payloads go on span events" tactic in `observability_logs_plan.md`.
+      Plan:
+  - [ ] Add a logs bootstrap in `observability/tracing.py` mirroring the traces
+        one: `LoggerProvider` + `BatchLogRecordProcessor` + OTLP gRPC
+        `OTLPLogExporter`, reusing the same `Resource` and endpoint. **Caveat:**
+        the OTel Python logs SDK is still experimental (`opentelemetry.sdk._logs`,
+        underscore namespace) — API may shift.
+  - [ ] Change `_emit_payload_event` to emit an OTel `LogRecord` (payload in the
+        body/attributes) instead of `span.add_event(...)`. Emitted inside the
+        `llm.generate` span, the record auto-captures trace_id/span_id for
+        correlation. Keep a short preview + `llm.prompt_version` on the span so
+        the trace stays self-describing; the full text lives in Loki (256 KB line
+        limit). Preserve the existing sample-rate + always-on-error semantics.
+  - [ ] Configure Grafana trace→logs correlation (Tempo datasource "Trace to
+        logs" / Loki derived fields on trace_id) so the trace pivots to the
+        payload log.
+  - [ ] Interim (pre-Phase-4) dev unblock, if payloads are needed sooner: raise
+        `max_attribute_bytes` in the local `otel-lgtm` Tempo config. Keeps the
+        current architecture; bounded by `max_bytes_per_trace` + the 4 MB gRPC
+        message size, so treat as dev-only, not the fix.
 
 ---
 
