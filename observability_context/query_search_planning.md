@@ -14,9 +14,12 @@ span vs child span, error contract, cardinality) and
 are **indicative** — finalize each against the registry ruleset when its bite
 is implemented.
 
-**Last updated:** 2026-07-06 · **Status:** planning — nothing below is
-implemented yet. Check off bites in §5 as they land and keep
-`observability_architecture.md` §6 in sync per bite.
+**Last updated:** 2026-07-07 · **Status:** in progress. Bite 1 (LLM router) and
+Bite 3 (Steps 0 + 1 spans) are landed + verified; Bite 2 is partial (request
+boundary + `query_search.cost_usd` + the Step-0-fatal failure verdict done; the
+success verdict + remaining rollups + the OQ #5 walkthrough remain). Check off
+bites in §5 as they land and keep `observability_architecture.md` §6 in sync per
+bite.
 
 ---
 
@@ -358,11 +361,18 @@ itself is the bug.
   must become queryable.
 - **Qdrant manual spans at exactly the three primitives** in
   `semantic_query_execution.py` (`_run_corpus_topn`,
-  `_run_corpus_topn_filtered`, `_run_filtered_score`): attrs vector-space
-  name, probe kind, limit, filter-active, hit count. **No wrapper spans per
-  vector space** — the probe spans already render the fan-out, and the
-  per-request span budget (~130–150 spans for a 3-branch/4-trait query) is
-  healthy only if we don't double-wrap.
+  `_run_corpus_topn_filtered`, `_run_filtered_score`). One span name
+  (`query_search.semantic_qdrant`) discriminated by a `probe_kind` attribute.
+  As-built attrs (finalized against `names.py`): `probe_kind`
+  (`calibration`/`pool`/`hasid_score`), `vector_space`, `query_params` (the
+  space body as `model_dump_json(exclude_defaults=True)` — only the populated
+  fields that feed `embedding_text`, so each probe is self-describing),
+  `limit`, `filter_active`, `hit_count`. **`filter_active` = the USER HARD
+  FILTER was applied** (True only on the pool probe; False on calibration and
+  on the HasId reranker, whose `HasIdCondition` is a pool restriction, not the
+  hard filter). **No wrapper spans per vector space** — the probe spans already
+  render the fan-out, and the per-request span budget (~130–150 spans for a
+  3-branch/4-trait query) is healthy only if we don't double-wrap.
 - **Scoring span** around Phase D/E (pure CPU/numpy — the one place a big
   union stalls the *event loop*, invisible to network spans).
 - **Implicit-prior rerank span**: attr `boost_axis`
@@ -382,24 +392,34 @@ phase gets designed until then.
 
 ## 4. Open questions
 
-1. **Namespace root for the shared pipeline spans.** `/rerun_query_search`
-   (1c-2) reuses the Step 2 → Stage 4 spans, so per the naming ruleset
-   ("home endpoint even when running under another"), the pipeline spans
-   likely deserve a pipeline-owned root rather than `query_search.*`.
-   Decide against `names.py`'s docstring when Bite 3/4 lands.
-2. **`FailureReason` vocabulary for Step 0 fatal failure.** Reuse
-   `internal_error`, or add a member (e.g. `query_understanding_failed`)?
-   Lean: new member — it's an actionable class distinct from "our code
-   crashed" (upstream LLM exhausted retries), and the enum is deliberately
-   one-member-per-actionable-class. (Note: a second new member,
-   `INVALID_FILTERS` for the `_to_metadata_filters` 422, is already
-   **decided** — see the Phase 0 table in §3 — so Bite 2 adds both.)
-3. **How the outcome mechanism adapts to SSE.** `@record_outcome` assumes
-   failures raise and bubble; here HTTP 200 starts before the pipeline
-   runs and the fatal path is an SSE `error` event, so the verdict must be
-   written when the *generator* finishes (including the client-disconnect
-   path). Design the mechanism (wrap the generator / write from its
-   `finally`) as part of Bite 2.
+1. **Namespace root for the shared pipeline spans.** **PARTIALLY RESOLVED
+   (2026-07-06, Bite 3)** — the Step 0/1 routing spans are owned by
+   `query_search` (`query_search.step_0` / `.step_1`), because
+   `/rerun_query_search` (1c-2) reuses the **Step 2 → Stage 4** spans, *not*
+   routing, so per rule B query_search is routing's home endpoint. The open
+   part is the genuinely shared Step 2 → Stage 4 spans (Bites 4–7): those may
+   still deserve a pipeline-owned root rather than `query_search.*` — decide
+   against `names.py`'s docstring when Bite 4 lands.
+2. **`FailureReason` vocabulary for Step 0 fatal failure.** **RESOLVED
+   (2026-07-06)** — new member `query_understanding_failed` added to
+   `api/outcome.py::FailureReason`, per the lean: an actionable class distinct
+   from "our code crashed" (`internal_error`) — a fatal Step 0 is an upstream
+   LLM/provider exhaustion. Written on the server span from `event_stream()`
+   when the pipeline emits its terminal SSE `error` event (see OQ #3). (The
+   other new member, `INVALID_FILTERS`, already landed with the Phase 0
+   boundary work.)
+3. **How the outcome mechanism adapts to SSE.** **PARTIALLY RESOLVED
+   (2026-07-06) — failure path only.** The stream consumer (`event_stream()`
+   in `api/main.py`) watches the `(event_name, payload)` stream and, on the
+   terminal `error` event, writes `outcome.success=false` +
+   `query_understanding_failed` on the server span (the handle it already
+   holds) — the orchestrator stays transport-agnostic and keeps emitting the
+   same `error` event. **Still open:** the *success* verdict
+   (`outcome.success=true`) + the stream-end rollups (total result count,
+   fetch/failed-branch counts), which must be written at clean generator
+   completion including the client-disconnect path. Do that as the rest of
+   Bite 2, reusing the generator-`finally` write point that
+   `query_search.cost_usd` already uses.
 4. ~~**Active-filters attribute shape.**~~ **RESOLVED (2026-07-06)** — see
    the Phase 0 table in §3: per-field typed `filters.*` attributes (raw
    wire values, always-on, each present only when sent — existence =
@@ -466,13 +486,17 @@ Check off as landed; after each bite update `observability_architecture.md`
       per-field `filters.*` typed attrs + `active_count`, the `request
       rejected` span event, and the 400/422 failure verdicts
       (`invalid_parameters` / `invalid_filters`) all landed via
-      `record_outcome(success_on_return=False)`. **Remaining in this bite:**
+      `record_outcome(success_on_return=False)`. **The Step-0-fatal failure
+      verdict is also DONE + verified (2026-07-07):** `event_stream()` watches
+      the SSE stream and, on the terminal `error` event, writes
+      `outcome.success=false` + the new `query_understanding_failed`
+      `FailureReason` (OQ #2 resolved) on the server span — the failure half of
+      the SSE-adapted outcome mechanism (OQ #3). **Remaining in this bite:**
       the OQ #5 walkthrough (understand Phase 4; verify the server span
       covers the full stream), then the SSE-adapted *success* mechanism
       (OQ #3) that writes `outcome.success=true` + the stream-end rollups
       (total result count, fetch/failed-branch counts) at generator
-      completion, plus the Step-0-fatal failure verdict (OQ #2 — new
-      `FailureReason` member). **One stream-end rollup landed early
+      completion. **One stream-end rollup landed early
       (2026-07-06): `query_search.cost_usd`** — the summed LLM + embedding cost
       (all billed attempts) written on the server span from `event_stream()`'s
       `finally` via `observability/cost_tracking.py`. It rides the same
@@ -483,31 +507,100 @@ Check off as landed; after each bite update `observability_architecture.md`
       Verify: success case, forced Step-0 failure case, and a forced
       single-branch failure (success stays true, count increments). (400/422
       already verified.)
-- [ ] **Bite 3 — Steps 0 + 1 spans.** `step_0` (flows, branch count) +
-      `step_1` (`unused`). Resolve the namespace-root question (OQ #1)
-      here since these are the first pipeline spans. Verify: waterfall
-      shows the two overlapping; `unused=true` on an entity-only query.
-- [ ] **Bite 4 — Standard-branch skeleton.** Branch span (query text,
-      kind, result count, error, categories array), `step_2`
-      (trait counts), `implicit_expectations` (prior outcomes), `step_3`
-      per trait, `query_generation` per handler call (category). Verify:
+- [x] **Bite 3 — Steps 0 + 1 spans.** *(landed + verified 2026-07-07.)*
+      `query_search.step_0` (`step_0_flows` — SearchFlow
+      values + `standard`; `step_0_standard_branch_count` — always-set budget)
+      + `query_search.step_1` (`step_1_unused`, recorded directly at the user's
+      request rather than derived). **OQ #1 resolved:** query_search owns these
+      (rerun reuses Step 2 → Stage 4, not routing); attrs flat under the
+      query_search root. Spans started non-current + `use_span(end_on_exit=False)`
+      inside each task so the `llm.generate` child nests and step_1's span
+      outlives its call (unused known only post-Step-0); fatal Step 0 → span
+      ERROR; try/finally closes spans on disconnect. `api/main.py` wraps the
+      stream loop in `use_span(request_span)` so the server span parents the
+      whole pipeline. Added `_standard_branch_count` as the single budget source
+      (`_step1_needed` / `_plan_step2_branches` now read it). Rejected in design:
+      int-enum flows, spin-text attr, `[step0 ‖ step1]` wrapper span. Verify:
+      waterfall shows the two overlapping under the server span with an
+      `llm.generate` child nested in each; `unused=true` on an entity-only query;
+      forced Step-0 failure shows step_0 ERROR + green request span.
+- [~] **Bite 4 — Standard-branch skeleton.** Branch span landed earlier
+      (kind + uses_original_text). **Trait pipeline landed + verified:**
+      `step_2` span (`step_2_trait_count` +
+      `step_2_contextualized_phrases`; negative_trait_count dropped per the
+      user), a per-`trait` span (`trait_phrase` / `trait_polarity` /
+      `trait_commitment`, `trait_step_3_error` on soft-fail, `"solo trim"`
+      event) bracketing step 3 → generation, `step_3` span
+      (`step_3_combine_mode` + `step_3_categories` recorded **POST-SOLO-trim**,
+      not pre-trim), and `query_generation` per handler-LLM call (`category` +
+      `query_generation_endpoints` — the EndpointRoute names that fired;
+      no span for EXPLICIT_NO_OP / NO_LLM_PURE_CODE). Built with plain
+      `start_as_current_span` in `full_pipeline_orchestrator.py` +
+      `handler.py` (both gained a module tracer; they already run under the
+      branch span). **Still pending in this bite:** `implicit_expectations`
+      span (skipped for now per the user), and the branch-level
+      `branch_error` / result-count attrs (deferred with Bite 5). Verify:
       per-trait pipelining visible (a trait's generation bar starts before
-      sibling step-3 bars end); implicit priors overlap the step-3 chain.
+      sibling step-3 bars end); `step_3_categories` shows the trimmed set +
+      `"solo trim"` event on a SOLO-with-extras trait; forced Step-3 failure
+      shows `trait_step_3_error` + step_3 ERROR with the request still
+      succeeding; no `query_generation` span for a NO_LLM_PURE_CODE category.
 - [ ] **Bite 5 — Stage 4 execution.** `stage_4` span + Phase B/C child
       spans + edge-case attrs (neutral seed, tier promotion, floor) +
       per-spec dispatch spans with route/operation_type/`timed_out` and the
       timeout span event. Verify: per-route breakdown queryable in Tempo;
       artificially low timeout produces the event.
-- [ ] **Bite 6 — Qdrant primitives.** Manual spans on the three
-      `query_points` call sites. Verify: SEMANTIC-heavy query shows probe
-      fan-out across spaces nested under its dispatch span; the gRPC gap
-      is closed.
+- [x] **Bite 6 — Qdrant primitives.** *(code landed; verified via
+      `search_v2/test_semantic_qdrant_span.ipynb` — spans reach Tempo with the
+      right per-space fan-out and attributes.)* Manual `query_search.semantic_qdrant`
+      span on each of the three `query_points` call sites (attrs: `probe_kind`,
+      `vector_space`, `query_params`, `limit`, `filter_active`, `hit_count`);
+      throwing probes auto-mark ERROR. Also converted the previously log-only
+      soft-fail in `execute_semantic_query` into queryable `semantic_query_retry`
+      / `semantic_query_failed` span **events** on the ambient span. Built ahead
+      of Bite 5: the probes nest under whatever span is current (the notebook's
+      parent span standalone; today the server/Step span in the live pipeline),
+      and will nest under the Bite-5 dispatch span once it exists — at which point
+      the branch-level `branch_error` attribute + failed-branch count get wired
+      there (deliberately out of scope for Bite 6).
 - [ ] **Bite 7 — Scoring + rerank.** Phase D/E scoring span,
       implicit-prior rerank span (`boost_axis`). Verify: CPU bar visible
       on a large-union query; boost_axis matches the implicit policy.
-- [ ] **Bite 8 — Entity flows.** Uniform per-fetch span + zero-results
-      flag + per-flow resolution/bucket signals. Verify: one query per
-      flow type; force a zero-result entity query and confirm the flag.
+- [x] **Bite 8 — Entity flows.** *(code landed; awaiting Tempo verification via
+      `search_v2/testing_nonstandard_flows.ipynb`.)* Attributes hang on the
+      existing `query_search.branch` span, set INSIDE each entity-flow entry
+      executor (`run_*_search`, which runs under the branch span) — not the
+      shared Stage-4 executors, so standard branches / attribute_search stay
+      unpolluted. **Universal skeleton:** `branch_entities`,
+      `branch_entity_resolved_counts` (per-entity pre-union), `branch_unresolved_entity_count`
+      (set in executors); `branch_result_count` + an `entity flow empty` span
+      **event** (set post-hydration in the orchestrator wrappers via
+      `_stamp_branch_outcome`). Aliases are **always-on**. **Per flow:** person —
+      per-entity resolution child spans + `branch_top_tier`/`_count`; similarity —
+      redesigned into JSON-string maps organized by four reader questions
+      (`branch_retrieval_lanes`/`branch_retrieval_total`, `branch_lane_weights`/
+      `branch_vector_space_weights`, `branch_weave_targets` as one `{bucket:slots}`
+      desired-allocation map (the pre-weave target ratio, not the realized draw),
+      `branch_low_cohesion_fallback`, `branch_additional_boosts`; single-only
+      `branch_shape_modifiers` + scalar `branch_anchor_shape`; multi-only
+      `branch_anchor_shape_cohesion` + `branch_lane_cohesion` +
+      `branch_vector_space_cohesion`) — see observability_architecture.md §6 for the
+      full catalog — + a manual **Qdrant span** on the shape probe + one
+      **`similarity_fetch` span per Postgres candidate lane that ran** (lane +
+      the concrete match IDs/bucket + result_count; qdrant excluded); exact_title —
+      `branch_exact_title_year` + `branch_source.{seed,close,fanout}_count` (always-on)
+      + `branch_source.title_only_count` (conditional on a supplied year); studio —
+      `branch_studio_llm_fallback` + per-ref `branch_studio_entity_paths` /
+      `branch_studio_brand_names` + `branch_studio_{brand,freeform}_match_count`
+      (via a new opt-in `path_match_counts` side channel on `execute_studio_query`);
+      non_character_franchise — aliases + `branch_franchise_llm_fallback` +
+      `branch_top_tier`(primary)/`_count` + `branch_secondary_count`;
+      character_franchise — `branch_character_forms` / `branch_franchise_forms`,
+      `branch_character_franchise_llm_failed`, two resolution child spans
+      (lineage-mainline split folded into the franchise span), `branch_tier_counts`
+      + `branch_top_tier`(tier_1). Verify: one query per flow type via the notebook;
+      force a zero-result entity query and confirm the empty event +
+      `branch_unresolved_entity_count` / studio `brand_match_count==0`.
 - [ ] **Bite 9 — End-to-end validation + docs reconciliation.**
       Representative multi-branch query: single trace ID end to end,
       parallel stages render as overlapping bars (validates the asyncio

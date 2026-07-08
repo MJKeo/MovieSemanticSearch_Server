@@ -205,6 +205,7 @@ async def _execute_any(
     restrict_movie_ids: set[int] | None,
     *,
     metadata_filters: MetadataFilters | None = None,
+    path_match_counts: dict[str, int] | None = None,
 ) -> dict[int, float]:
     """ANY combine — single batched fetch across all refs, per-movie max.
 
@@ -218,6 +219,13 @@ async def _execute_any(
     flattened across refs — cross-ref OR is the same operation as
     cross-variant OR within one ref, so a single freeform fetch
     covers them all.
+
+    ``path_match_counts`` (opt-in side channel, default None so shared
+    standard-branch callers are unaffected): when a mutable dict is passed, it
+    is populated with ``{"brand": n, "freeform": m}`` — the per-path match
+    counts before they union. The studio entity flow reads this for
+    observability, where a nonzero brand-ref set that yields ``brand == 0`` is
+    the silent dead-end (brand wins per ref with no fall-through to freeform).
     """
     brand_ids: set[int] = set()
     freeform_names: list[str] = []
@@ -238,6 +246,10 @@ async def _execute_any(
             metadata_filters=metadata_filters,
         ),
     )
+
+    if path_match_counts is not None:
+        path_match_counts["brand"] = len(brand_scores)
+        path_match_counts["freeform"] = len(freeform_scores)
 
     # Both paths score 1.0 per match, so a set union of their key sets
     # is equivalent to per-movie max(brand_score, freeform_score).
@@ -312,6 +324,7 @@ async def execute_studio_query(
     *,
     restrict_to_movie_ids: set[int] | None = None,
     metadata_filters: MetadataFilters | None = None,
+    path_match_counts: dict[str, int] | None = None,
 ) -> EndpointResult:
     """Execute one StudioQuerySpec.
 
@@ -329,6 +342,10 @@ async def execute_studio_query(
     Args:
         spec: Validated StudioQuerySpec from the Step 4 studio LLM.
         restrict_to_movie_ids: Optional candidate-pool restriction.
+        path_match_counts: Optional mutable dict; in ANY mode it is populated
+            with per-path match counts ({"brand", "freeform"}) for the studio
+            entity flow's observability. Ignored in ALL mode and by callers
+            that don't pass it.
 
     Returns:
         EndpointResult with per-movie scores.
@@ -348,6 +365,7 @@ async def execute_studio_query(
         scores_by_movie = await _execute_any(
             valid_refs, restrict_to_movie_ids,
             metadata_filters=metadata_filters,
+            path_match_counts=path_match_counts,
         )
     else:  # ALL
         scores_by_movie = await _execute_all(

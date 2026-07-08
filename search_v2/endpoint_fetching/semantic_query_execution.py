@@ -78,10 +78,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from typing import Iterable, Union
 
 import numpy as np
 from kneed import KneeLocator
+from opentelemetry import trace
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Filter, HasIdCondition
 
@@ -93,6 +95,15 @@ from db.vector_search import (
 from implementation.classes.enums import VectorName
 from implementation.classes.schemas import MetadataFilters
 from implementation.llms.generic_methods import generate_vector_embedding
+from observability.names import (
+    QUERY_SEARCH_SEMANTIC_QDRANT,
+    QUERY_SEARCH_SEMANTIC_QDRANT_FILTER_ACTIVE,
+    QUERY_SEARCH_SEMANTIC_QDRANT_HIT_COUNT,
+    QUERY_SEARCH_SEMANTIC_QDRANT_LIMIT,
+    QUERY_SEARCH_SEMANTIC_QDRANT_PROBE_KIND,
+    QUERY_SEARCH_SEMANTIC_QDRANT_QUERY_PARAMS,
+    QUERY_SEARCH_SEMANTIC_QDRANT_VECTOR_SPACE,
+)
 from schemas.endpoint_result import EndpointResult
 from schemas.semantic_bodies import (
     NarrativeTechniquesBody,
@@ -116,7 +127,26 @@ from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 logger = logging.getLogger(__name__)
 
+# Manual OTel tracer for the Qdrant probes below. Qdrant's async client speaks
+# gRPC, which the auto-instrumentation doesn't wrap, so these `query_points`
+# calls are otherwise a timing blind spot. Returns a no-op tracer when no
+# provider is configured (standalone imports), making every span a cheap no-op.
+tracer = trace.get_tracer(__name__)
+
 SemanticParams = SemanticParameters | SemanticParametersSubintent
+
+
+class QdrantProbeKind(str, Enum):
+    """Which of the three `query_points` primitives a probe span represents.
+
+    A closed set of low-cardinality values recorded as the `probe_kind` span
+    attribute; owned by this call-site module per the names.py rule that value
+    enums live with their owner, not in the naming registry.
+    """
+
+    CALIBRATION = "calibration"   # _run_corpus_topn         — unfiltered elbow probe
+    POOL = "pool"                 # _run_corpus_topn_filtered — filtered candidate pool
+    HASID_SCORE = "hasid_score"   # _run_filtered_score       — HasId reranker scoring
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +298,7 @@ async def _run_corpus_topn(
     *,
     qdrant_client: AsyncQdrantClient,
     limit: int = CORPUS_PROBE_LIMIT,
+    query_params_json: str | None = None,
 ) -> list[tuple[int, float]]:
     # Unfiltered top-N corpus probe used for elbow calibration. The
     # elbow is an ABSOLUTE bar ("what cosine does it take to be about
@@ -277,17 +308,30 @@ async def _run_corpus_topn(
     # and produce false positives on the filtered set. Candidate-pool
     # fetching uses `_run_corpus_topn_filtered` separately on the
     # generator paths.
-    response = await qdrant_client.query_points(
-        collection_name=COLLECTION_ALIAS,
-        query=embedding,
-        using=vector_name.value,
-        query_filter=None,
-        limit=limit,
-        with_payload=False,
-        with_vectors=False,
-        search_params=QDRANT_SEARCH_PARAMS,
-    )
-    return [(int(p.id), float(p.score)) for p in response.points]
+    with tracer.start_as_current_span(QUERY_SEARCH_SEMANTIC_QDRANT) as span:
+        span.set_attribute(
+            QUERY_SEARCH_SEMANTIC_QDRANT_PROBE_KIND, QdrantProbeKind.CALIBRATION.value
+        )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_VECTOR_SPACE, vector_name.value)
+        if query_params_json is not None:
+            span.set_attribute(
+                QUERY_SEARCH_SEMANTIC_QDRANT_QUERY_PARAMS, query_params_json
+            )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_LIMIT, limit)
+        # Calibration is unfiltered by design — the elbow is a global-corpus bar.
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_FILTER_ACTIVE, False)
+        response = await qdrant_client.query_points(
+            collection_name=COLLECTION_ALIAS,
+            query=embedding,
+            using=vector_name.value,
+            query_filter=None,
+            limit=limit,
+            with_payload=False,
+            with_vectors=False,
+            search_params=QDRANT_SEARCH_PARAMS,
+        )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_HIT_COUNT, len(response.points))
+        return [(int(p.id), float(p.score)) for p in response.points]
 
 
 async def _run_corpus_topn_filtered(
@@ -297,6 +341,7 @@ async def _run_corpus_topn_filtered(
     qdrant_client: AsyncQdrantClient,
     metadata_filters: MetadataFilters,
     limit: int = CORPUS_PROBE_LIMIT,
+    query_params_json: str | None = None,
 ) -> list[tuple[int, float]]:
     # Filtered top-N probe used only for candidate-pool selection on
     # the carver-unrestricted and qualifier-promoted generator paths.
@@ -308,17 +353,34 @@ async def _run_corpus_topn_filtered(
     # callers special-case it to reuse the single calibration probe.
     hard_must = _hard_filter_must(metadata_filters)
     query_filter = Filter(must=hard_must) if hard_must else None
-    response = await qdrant_client.query_points(
-        collection_name=COLLECTION_ALIAS,
-        query=embedding,
-        using=vector_name.value,
-        query_filter=query_filter,
-        limit=limit,
-        with_payload=False,
-        with_vectors=False,
-        search_params=QDRANT_SEARCH_PARAMS,
-    )
-    return [(int(p.id), float(p.score)) for p in response.points]
+    with tracer.start_as_current_span(QUERY_SEARCH_SEMANTIC_QDRANT) as span:
+        span.set_attribute(
+            QUERY_SEARCH_SEMANTIC_QDRANT_PROBE_KIND, QdrantProbeKind.POOL.value
+        )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_VECTOR_SPACE, vector_name.value)
+        if query_params_json is not None:
+            span.set_attribute(
+                QUERY_SEARCH_SEMANTIC_QDRANT_QUERY_PARAMS, query_params_json
+            )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_LIMIT, limit)
+        # True whenever the user hard filter produced conditions. Callers only
+        # invoke this pool probe when a filter is active, but reflect the actual
+        # `query_filter` rather than assuming it.
+        span.set_attribute(
+            QUERY_SEARCH_SEMANTIC_QDRANT_FILTER_ACTIVE, query_filter is not None
+        )
+        response = await qdrant_client.query_points(
+            collection_name=COLLECTION_ALIAS,
+            query=embedding,
+            using=vector_name.value,
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=False,
+            with_vectors=False,
+            search_params=QDRANT_SEARCH_PARAMS,
+        )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_HIT_COUNT, len(response.points))
+        return [(int(p.id), float(p.score)) for p in response.points]
 
 
 async def _run_filtered_score(
@@ -327,6 +389,7 @@ async def _run_filtered_score(
     movie_ids: Iterable[int],
     *,
     qdrant_client: AsyncQdrantClient,
+    query_params_json: str | None = None,
 ) -> dict[int, float]:
     # Score a specific set of movie_ids on a single named vector.
     # Movie_id IS the Qdrant point ID, so HasIdCondition is the right
@@ -343,17 +406,31 @@ async def _run_filtered_score(
     id_list = [int(mid) for mid in movie_ids]
     if not id_list:
         return {}
-    response = await qdrant_client.query_points(
-        collection_name=COLLECTION_ALIAS,
-        query=embedding,
-        using=vector_name.value,
-        query_filter=Filter(must=[HasIdCondition(has_id=id_list)]),
-        limit=len(id_list),
-        with_payload=False,
-        with_vectors=False,
-        search_params=QDRANT_SEARCH_PARAMS,
-    )
-    return {int(p.id): float(p.score) for p in response.points}
+    with tracer.start_as_current_span(QUERY_SEARCH_SEMANTIC_QDRANT) as span:
+        span.set_attribute(
+            QUERY_SEARCH_SEMANTIC_QDRANT_PROBE_KIND, QdrantProbeKind.HASID_SCORE.value
+        )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_VECTOR_SPACE, vector_name.value)
+        if query_params_json is not None:
+            span.set_attribute(
+                QUERY_SEARCH_SEMANTIC_QDRANT_QUERY_PARAMS, query_params_json
+            )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_LIMIT, len(id_list))
+        # The HasIdCondition is a pool restriction, not the user hard filter —
+        # which is intentionally not applied on the reranker path.
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_FILTER_ACTIVE, False)
+        response = await qdrant_client.query_points(
+            collection_name=COLLECTION_ALIAS,
+            query=embedding,
+            using=vector_name.value,
+            query_filter=Filter(must=[HasIdCondition(has_id=id_list)]),
+            limit=len(id_list),
+            with_payload=False,
+            with_vectors=False,
+            search_params=QDRANT_SEARCH_PARAMS,
+        )
+        span.set_attribute(QUERY_SEARCH_SEMANTIC_QDRANT_HIT_COUNT, len(response.points))
+        return {int(p.id): float(p.score) for p in response.points}
 
 
 # ---------------------------------------------------------------------------
@@ -587,9 +664,16 @@ class _CallInputs:
     # guarantees unique spaces, so building a {VectorName: weight}
     # dict is safe. weights are populated regardless of role —
     # carver paths ignore them, qualifier paths read them.
+    #
+    # query_params_json is the per-space body serialized to JSON (only the
+    # populated fields — exclude_defaults), parallel to entries/vector_names.
+    # It rides down to the Qdrant probes purely as span metadata so each
+    # probe span is self-describing: you can read the exact query params that
+    # produced its vector without cross-referencing the request body.
     entries: list[SemanticSpaceEntry]
     vector_names: list[VectorName]
     weights: dict[VectorName, float]
+    query_params_json: list[str]
 
 
 def _unpack_inputs(
@@ -601,7 +685,18 @@ def _unpack_inputs(
         vn: SPACE_WEIGHT_VALUES[wq.weight]
         for wq, vn in zip(space_queries, vector_names)
     }
-    return _CallInputs(entries=entries, vector_names=vector_names, weights=weights)
+    # exclude_defaults keeps only the fields the caller actually set — the same
+    # populated sections that embedding_text() consumes — so the span attribute
+    # mirrors "what fed the embedding" rather than the full defaulted schema.
+    query_params_json = [
+        e.content.model_dump_json(exclude_defaults=True) for e in entries
+    ]
+    return _CallInputs(
+        entries=entries,
+        vector_names=vector_names,
+        weights=weights,
+        query_params_json=query_params_json,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -629,14 +724,21 @@ async def _execute_carver_restricted(
     # across spaces via max().
     n = len(inputs.entries)
     tasks = [
-        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
-        for emb, vn in zip(embeddings, inputs.vector_names)
+        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client, query_params_json=qp)
+        for emb, vn, qp in zip(
+            embeddings, inputs.vector_names, inputs.query_params_json
+        )
     ] + [
         # `_run_filtered_score` is the reranker scoring path; the
         # supplied `candidate_ids` already passed the filter upstream
         # at candidate-generation time, so no filter is needed here.
-        _run_filtered_score(emb, vn, candidate_ids, qdrant_client=qdrant_client)
-        for emb, vn in zip(embeddings, inputs.vector_names)
+        _run_filtered_score(
+            emb, vn, candidate_ids,
+            qdrant_client=qdrant_client, query_params_json=qp,
+        )
+        for emb, vn, qp in zip(
+            embeddings, inputs.vector_names, inputs.query_params_json
+        )
     ]
     results = await asyncio.gather(*tasks)
     probes, filtered_maps = results[:n], results[n:]
@@ -673,8 +775,10 @@ async def _execute_carver_unrestricted(
     )
     n_spaces = len(inputs.vector_names)
     calibration_tasks = [
-        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
-        for emb, vn in zip(embeddings, inputs.vector_names)
+        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client, query_params_json=qp)
+        for emb, vn, qp in zip(
+            embeddings, inputs.vector_names, inputs.query_params_json
+        )
     ]
     pool_tasks = (
         [
@@ -682,8 +786,11 @@ async def _execute_carver_unrestricted(
                 emb, vn,
                 qdrant_client=qdrant_client,
                 metadata_filters=metadata_filters,
+                query_params_json=qp,
             )
-            for emb, vn in zip(embeddings, inputs.vector_names)
+            for emb, vn, qp in zip(
+                embeddings, inputs.vector_names, inputs.query_params_json
+            )
         ]
         if filter_active
         else []
@@ -726,8 +833,13 @@ async def _execute_qualifier_restricted(
     # `_run_filtered_score` is the reranker scoring path — no filter
     # needed; the supplied pool has already passed the filter upstream.
     per_space_lookups = await asyncio.gather(*[
-        _run_filtered_score(emb, vn, candidate_ids, qdrant_client=qdrant_client)
-        for emb, vn in zip(embeddings, inputs.vector_names)
+        _run_filtered_score(
+            emb, vn, candidate_ids,
+            qdrant_client=qdrant_client, query_params_json=qp,
+        )
+        for emb, vn, qp in zip(
+            embeddings, inputs.vector_names, inputs.query_params_json
+        )
     ])
     per_space_scores: dict[VectorName, dict[int, float]] = {
         vn: _pool_relative_rescale(cos_map)
@@ -759,8 +871,10 @@ async def _execute_qualifier_promoted(
     )
     n_spaces = len(inputs.vector_names)
     calibration_tasks = [
-        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
-        for emb, vn in zip(embeddings, inputs.vector_names)
+        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client, query_params_json=qp)
+        for emb, vn, qp in zip(
+            embeddings, inputs.vector_names, inputs.query_params_json
+        )
     ]
     pool_tasks = (
         [
@@ -768,8 +882,11 @@ async def _execute_qualifier_promoted(
                 emb, vn,
                 qdrant_client=qdrant_client,
                 metadata_filters=metadata_filters,
+                query_params_json=qp,
             )
-            for emb, vn in zip(embeddings, inputs.vector_names)
+            for emb, vn, qp in zip(
+                embeddings, inputs.vector_names, inputs.query_params_json
+            )
         ]
         if filter_active
         else []
@@ -895,18 +1012,36 @@ async def execute_semantic_query(
                         qdrant_client=qdrant_client,
                     )
             break
-        except Exception:
+        except Exception as exc:
+            # Surface the otherwise silent retry / soft-fail on the ambient span
+            # (the dispatch/branch span in the live pipeline, the notebook's
+            # parent span standalone) so it becomes queryable in Tempo. The
+            # failing embedding/Qdrant call already marks its own auto-traced
+            # span ERROR; this only records the branch-level retry decision. It
+            # no-ops when no recording span is active. The per-branch failure is
+            # a degradation, not a request failure — it does not flip the
+            # outcome verdict (that rollup is owned by the branch span in a
+            # later bite).
+            ambient_span = trace.get_current_span()
             if attempt == 0:
                 logger.warning(
                     "Semantic query error on first attempt, retrying (%s)",
                     log_context,
                     exc_info=True,
                 )
+                ambient_span.add_event(
+                    "semantic_query_retry",
+                    {"exception.type": type(exc).__name__},
+                )
                 continue
             logger.error(
                 "Semantic query error on retry, returning empty (%s)",
                 log_context,
                 exc_info=True,
+            )
+            ambient_span.add_event(
+                "semantic_query_failed",
+                {"exception.type": type(exc).__name__},
             )
             return EndpointResult()
 

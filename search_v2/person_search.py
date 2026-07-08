@@ -57,6 +57,8 @@ import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from opentelemetry import trace
+
 from db.postgres import (
     PEOPLE_POSTING_TABLES,
     PostingTable,
@@ -67,8 +69,21 @@ from db.postgres import (
 )
 from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
+from observability.names import (
+    QUERY_SEARCH_BRANCH_ENTITIES,
+    QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS,
+    QUERY_SEARCH_BRANCH_TOP_TIER,
+    QUERY_SEARCH_BRANCH_TOP_TIER_COUNT,
+    QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
+    QUERY_SEARCH_PERSON_RESOLUTION,
+)
 from schemas.step_0_flow_routing import PersonFlowData
 from search_v2.actor_zones import zone_cutoffs, zone_relative_position
+
+# Manual instrumentation tracer. When `setup_tracing` hasn't run (offline /
+# attribute_search / test imports) this is a no-op proxy and every span/attr
+# below is a cheap no-op, so instrumenting here never affects non-request use.
+tracer = trace.get_tracer(__name__)
 
 
 # In-zone relative-position split for the minor zone. Below the
@@ -186,14 +201,37 @@ async def run_person_search(
 
     # Stage 1: per-person resolution → {movie_id: bucket} for each
     # named person. Fanned out in parallel — each call issues one
-    # phrase_term_ids lookup plus one fetch per role table.
-    per_person_buckets = await asyncio.gather(
-        *(
-            fetch_person_buckets(
-                ref.canonical_name, metadata_filters=metadata_filters,
+    # phrase_term_ids lookup plus one fetch per role table. Each call is
+    # wrapped in a per-person child span (of the branch span, current here)
+    # so per-person resolution latency is visible and its Postgres calls
+    # nest under the right person — the one entity flow where multiple
+    # entities genuinely resolve as independent parallel tasks.
+    async def _resolve_person_traced(canonical_name: str) -> dict[int, int]:
+        with tracer.start_as_current_span(QUERY_SEARCH_PERSON_RESOLUTION):
+            return await fetch_person_buckets(
+                canonical_name, metadata_filters=metadata_filters,
             )
-            for ref in references
-        )
+
+    per_person_buckets = await asyncio.gather(
+        *(_resolve_person_traced(ref.canonical_name) for ref in references)
+    )
+
+    # Entity-flow observability skeleton on the branch span. `resolved_counts`
+    # is the PRE-union per-person candidate count (index-aligned with
+    # `entities`), so a 0 marks a person Step 0 named but that resolved to no
+    # credits — the silent-drop the branch-level total can't reveal.
+    _branch_span = trace.get_current_span()
+    _resolved_counts = [len(buckets) for buckets in per_person_buckets]
+    _branch_span.set_attribute(
+        QUERY_SEARCH_BRANCH_ENTITIES,
+        [ref.canonical_name for ref in references],
+    )
+    _branch_span.set_attribute(
+        QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS, _resolved_counts
+    )
+    _branch_span.set_attribute(
+        QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
+        sum(1 for c in _resolved_counts if c == 0),
     )
 
     # Stage 2: UNION across people. A movie counts as a match when
@@ -240,7 +278,29 @@ async def run_person_search(
     # first. Preserves bucket ordering — a bucket-1 movie is never
     # dropped to make room for a bucket-2 movie.
     _apply_limit(result, limit)
+
+    # Top populated prominence tier + its size. An all-`bucket_4_minor`
+    # result for a well-known name is the fingerprint of a resolution
+    # collision (matched *someone*, but only deep-cast credits).
+    _record_top_tier(result)
     return result
+
+
+def _record_top_tier(result: PersonSearchResult) -> None:
+    """Set `branch_top_tier` / `branch_top_tier_count` from the first
+    non-empty bucket, in priority order, on the current branch span."""
+    ordered = (
+        ("bucket_1_lead", result.bucket_1_lead),
+        ("bucket_2_major", result.bucket_2_major),
+        ("bucket_3_relevant", result.bucket_3_relevant),
+        ("bucket_4_minor", result.bucket_4_minor),
+    )
+    span = trace.get_current_span()
+    for tier_name, ids in ordered:
+        if ids:
+            span.set_attribute(QUERY_SEARCH_BRANCH_TOP_TIER, tier_name)
+            span.set_attribute(QUERY_SEARCH_BRANCH_TOP_TIER_COUNT, len(ids))
+            return
 
 
 # ---------------------------------------------------------------------------

@@ -93,6 +93,9 @@ from observability.names import (
     QUERY_SEARCH_COST_USD,
     QUERY_SEARCH_QUERY,
     QUERY_SEARCH_QUERY_CHARS,
+    QUERY_SEARCH_USAGE_CACHED_INPUT_TOKENS,
+    QUERY_SEARCH_USAGE_INPUT_TOKENS,
+    QUERY_SEARCH_USAGE_OUTPUT_TOKENS,
     TITLE_SEARCH_FUZZY_RESULT_COUNT,
     TITLE_SEARCH_LIMIT,
     TITLE_SEARCH_QUERY,
@@ -755,18 +758,59 @@ async def query_search(body: QuerySearchBody):
         # partial-failure and client-disconnect paths, so a request that errors
         # mid-stream still reports whatever cost it incurred.
         with track_request_cost() as cost_acc:
-            try:
-                async for event_name, payload in stream_full_pipeline(
-                    query,
-                    clarification=clarification,
-                    metadata_filters=metadata_filters,
-                ):
-                    body = _json_encoder.encode(payload).decode("utf-8")
-                    yield f"event: {event_name}\ndata: {body}\n\n"
-            finally:
-                request_span.set_attribute(
-                    QUERY_SEARCH_COST_USD, cost_acc.total_usd
-                )
+            # Re-activate the server span as the current context for the whole
+            # streamed pipeline, so every manual pipeline span (step_0/step_1
+            # today; the deeper spans in later bites) and the router's
+            # llm.generate spans nest beneath it. During SSE iteration the
+            # server span is alive but not guaranteed to be the current context
+            # — the same reason the cost rollup below writes through a captured
+            # handle — so we set it explicitly. end_on_exit=False leaves the
+            # span's lifecycle to the ASGI instrumentation.
+            with trace.use_span(request_span, end_on_exit=False):
+                try:
+                    async for event_name, payload in stream_full_pipeline(
+                        query,
+                        clarification=clarification,
+                        metadata_filters=metadata_filters,
+                    ):
+                        # A terminal `error` event is a fatal mid-stream failure
+                        # (today: Step 0 exhausted its LLM retries). It is
+                        # delivered as an SSE event AFTER the HTTP 200 + the
+                        # handler's clean return, so `@record_outcome` never sees
+                        # it — write the request verdict on the server span here
+                        # instead. Interim slice of Bite 2's SSE-adapted outcome
+                        # mechanism: only the failure verdict lands today; the
+                        # success verdict + remaining stream-end rollups stay
+                        # deferred, so the happy path is still absent under
+                        # success_on_return=False.
+                        if event_name == "error":
+                            request_span.set_attribute(OUTCOME_SUCCESS, False)
+                            request_span.set_attribute(
+                                OUTCOME_FAILURE_REASON,
+                                FailureReason.QUERY_UNDERSTANDING_FAILED.value,
+                            )
+                        body = _json_encoder.encode(payload).decode("utf-8")
+                        yield f"event: {event_name}\ndata: {body}\n\n"
+                finally:
+                    # Stream-end usage rollup on the server span: total dollar
+                    # cost plus the input / cached-input / output token totals,
+                    # summed across all billed attempts (see
+                    # observability/cost_tracking.py).
+                    request_span.set_attribute(
+                        QUERY_SEARCH_COST_USD, cost_acc.total_usd
+                    )
+                    request_span.set_attribute(
+                        QUERY_SEARCH_USAGE_INPUT_TOKENS,
+                        cost_acc.total_input_tokens,
+                    )
+                    request_span.set_attribute(
+                        QUERY_SEARCH_USAGE_CACHED_INPUT_TOKENS,
+                        cost_acc.total_cached_input_tokens,
+                    )
+                    request_span.set_attribute(
+                        QUERY_SEARCH_USAGE_OUTPUT_TOKENS,
+                        cost_acc.total_output_tokens,
+                    )
 
     return StreamingResponse(
         event_stream(),

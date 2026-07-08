@@ -39,8 +39,19 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from opentelemetry import trace
+
 from db.postgres import fetch_quality_popularity_signals
 from implementation.classes.schemas import MetadataFilters
+from observability.names import (
+    QUERY_SEARCH_BRANCH_ALIASES,
+    QUERY_SEARCH_BRANCH_ENTITIES,
+    QUERY_SEARCH_BRANCH_STUDIO_BRAND_MATCH_COUNT,
+    QUERY_SEARCH_BRANCH_STUDIO_BRAND_NAMES,
+    QUERY_SEARCH_BRANCH_STUDIO_ENTITY_PATHS,
+    QUERY_SEARCH_BRANCH_STUDIO_FREEFORM_MATCH_COUNT,
+    QUERY_SEARCH_BRANCH_STUDIO_LLM_FALLBACK,
+)
 from schemas.enums import ScoringMethod
 from schemas.step_0_flow_routing import StudioFlowData
 from schemas.studio_translation import StudioQuerySpec, StudioRef
@@ -108,15 +119,20 @@ async def run_studio_search(
     # Stage 1: translate canonical_names into a StudioQuerySpec via the
     # Step 3 studio LLM. Soft-fail to a deterministic freeform spec on
     # any LLM failure — that guarantees we always have at least the raw
-    # names to try as freeform tokens.
-    spec = await _translate_studio_query(canonical_names)
+    # names to try as freeform tokens. `llm_fallback` records that degradation.
+    spec, llm_fallback = await _translate_studio_query(canonical_names)
 
     # Stage 2: execute the spec in ANY mode. restrict_to_movie_ids=None
     # gives us the natural match set (one entry per matched movie).
+    # `path_counts` is the opt-in side channel that surfaces the per-path
+    # (brand vs freeform) match counts for observability.
+    path_counts: dict[str, int] = {}
     endpoint_result = await execute_studio_query(
         spec, restrict_to_movie_ids=None,
         metadata_filters=metadata_filters,
+        path_match_counts=path_counts,
     )
+    _record_studio_branch(canonical_names, spec, llm_fallback, path_counts)
     matched_movie_ids = {sc.movie_id for sc in endpoint_result.scores}
     if not matched_movie_ids:
         return StudioSearchResult()
@@ -144,15 +160,15 @@ async def run_studio_search(
 
 async def _translate_studio_query(
     canonical_names: list[str],
-) -> StudioQuerySpec:
+) -> tuple[StudioQuerySpec, bool]:
     """Run the Step 3 studio translator on the canonical_name list.
 
-    Returns a StudioQuerySpec the executor can consume. On any LLM
-    failure (timeout, parse error, etc.) falls back to a deterministic
-    spec built directly from the canonical names — each name becomes
-    its own StudioRef with that name as the sole freeform_names entry.
-    The fallback keeps the entire flow functional when the LLM is
-    unavailable; brand-registry resolution is the only thing lost.
+    Returns ``(spec, llm_fallback)``: a StudioQuerySpec the executor can
+    consume, plus a bool that is True when the LLM call failed and we fell back
+    to the deterministic freeform spec (each name becomes its own StudioRef
+    with that name as the sole freeform_names entry). The fallback keeps the
+    entire flow functional when the LLM is unavailable; brand-registry
+    resolution is the only thing lost — hence it's worth recording.
 
     Scoring_method is forced to ANY post-LLM. The entity-flow surface
     is bare-list semantics ("Pixar and Aardman" reads as "movies from
@@ -163,6 +179,7 @@ async def _translate_studio_query(
     intent_rewrite, description = _synthesize_studio_call_inputs(canonical_names)
     route_rationale = "studio name reference"
 
+    llm_fallback = False
     try:
         spec, _, _ = await generate_studio_query(
             intent_rewrite=intent_rewrite,
@@ -180,10 +197,56 @@ async def _translate_studio_query(
             exc_info=True,
         )
         spec = _build_fallback_spec(canonical_names)
+        llm_fallback = True
 
     # Force ANY regardless of what the LLM committed. See docstring.
     spec.scoring_method = ScoringMethod.ANY
-    return spec
+    return spec, llm_fallback
+
+
+def _record_studio_branch(
+    canonical_names: list[str],
+    spec: StudioQuerySpec,
+    llm_fallback: bool,
+    path_counts: dict[str, int],
+) -> None:
+    """Set the studio flow's observability attributes on the branch span.
+
+    `branch_entities` is the Step 0 identity (the canonical studio names);
+    `entity_paths` / `brand_names` describe how the LLM resolved each StudioRef
+    (brand-registry vs freeform tokens) — a freeform ref on a successful call
+    is normal, NOT a degradation, which is why it's separate from
+    `llm_fallback`. The per-path match counts come from the ANY-mode side
+    channel: brand refs present with a `brand` count of 0 is the silent
+    dead-end (brand wins per ref with no fall-through to freeform).
+    """
+    span = trace.get_current_span()
+    span.set_attribute(QUERY_SEARCH_BRANCH_ENTITIES, canonical_names)
+    span.set_attribute(QUERY_SEARCH_BRANCH_STUDIO_LLM_FALLBACK, llm_fallback)
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_STUDIO_ENTITY_PATHS,
+        ["brand" if ref.brand is not None else "freeform" for ref in spec.studios],
+    )
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_STUDIO_BRAND_NAMES,
+        [ref.name for ref in spec.studios if ref.brand is not None],
+    )
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_STUDIO_BRAND_MATCH_COUNT,
+        path_counts.get("brand", 0),
+    )
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_STUDIO_FREEFORM_MATCH_COUNT,
+        path_counts.get("freeform", 0),
+    )
+    # Aliases: every surface form the LLM emitted (ref name + freeform tokens),
+    # deduped in first-seen order — the resolution detail behind the identity.
+    aliases: list[str] = []
+    for ref in spec.studios:
+        for form in (ref.name, *(ref.freeform_names or ())):
+            if form and form not in aliases:
+                aliases.append(form)
+    span.set_attribute(QUERY_SEARCH_BRANCH_ALIASES, aliases)
 
 
 def _synthesize_studio_call_inputs(

@@ -30,12 +30,15 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from implementation.llms.pricing import compute_llm_cost_usd
-from observability.cost_tracking import add_request_cost
+from observability.cost_tracking import add_request_cost, add_request_tokens
 from observability.names import (
     LLM_GENERATE,
     LLM_COST_USD,
     LLM_PROMPT_VERSION,
     LLM_ATTEMPT_COUNT,
+    EMBEDDING_GENERATE,
+    EMBEDDING_COST_USD,
+    EMBEDDING_INPUT_COUNT,
 )
 
 # Load environment variables (for API key)
@@ -223,12 +226,17 @@ def _account_llm_call_cost(
     billed still counts toward the request total even when it fails and is
     retried (the request rollup is the sum over ALL billed attempts, per the
     /query_search cost-tracking requirement). Outside a tracked request (the
-    offline ingestion / eval paths) `add_request_cost` is a no-op. An unpriced
-    model yields `None` here, which the accumulator ignores.
+    offline ingestion / eval paths) both calls below are no-ops.
+
+    Cost and tokens are accounted separately: an unpriced model yields `None`
+    cost (ignored by the accumulator) but its tokens are still real and are
+    rolled up unconditionally, so the token totals stay honest even when the
+    dollar total under-reports a model the pricing table doesn't know.
     """
     add_request_cost(
         compute_llm_cost_usd(model, input_tokens, output_tokens, cached_input_tokens)
     )
+    add_request_tokens(input_tokens, cached_input_tokens, output_tokens)
 
 
 def generate_openai_response(
@@ -839,6 +847,7 @@ _tracer = trace.get_tracer(__name__)
 # constants purely for typo-safety.
 _GEN_AI_SYSTEM = "gen_ai.system"                      # provider (e.g. "openai")
 _GEN_AI_REQUEST_MODEL = "gen_ai.request.model"        # requested model
+_GEN_AI_OPERATION_NAME = "gen_ai.operation.name"      # e.g. "chat" / "embeddings"
 _GEN_AI_USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
 _GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
 # Cache reads (tokens served from the provider's prompt cache — a subset of
@@ -1118,21 +1127,56 @@ async def generate_vector_embedding(
     inputs per call; callers that need multiple embeddings should
     pass them all in `text` rather than fanning out N single-input
     calls. Returns one embedding vector per input, in the same order.
+
+    Instrumentation: the whole call is wrapped in one `embedding.generate`
+    span — the exact parallel to the router's `llm.generate` span, so every
+    embedding (search and offline ingestion) is visible in the trace
+    waterfall with its model, batch size, input-token count, and USD cost.
+    `_tracer` is a no-op `ProxyTracer` when tracing isn't bootstrapped
+    (offline ingestion/eval), so this adds no overhead there. Unlike the LLM
+    router there is no retry loop here (the embedding client runs
+    max_retries=0), so the span wraps a single attempt: on failure it is
+    marked ERROR + `error.type` and the exception recorded, mirroring the
+    router's terminal-failure contract.
     """
-    try:
-        response = await _embedding_client.embeddings.create(
-            model=model,
-            input=text,
-        )
-        # Account the embedding cost into the request-cost rollup. Embeddings
-        # have no output tokens and no prompt caching, so total_tokens is pure
-        # input. No-op outside a tracked /query_search request; unpriced model
-        # yields None which the accumulator ignores.
-        usage = getattr(response, "usage", None)
-        if usage is not None:
-            add_request_cost(
-                compute_llm_cost_usd(model, usage.total_tokens, 0)
+    # Standard GenAI facts (provider/model/operation) + the batch size are known
+    # before the call, so set them up front — they're present even on a failure.
+    with _tracer.start_as_current_span(
+        EMBEDDING_GENERATE, record_exception=False, set_status_on_exception=False
+    ) as span:
+        span.set_attribute(_GEN_AI_SYSTEM, "openai")
+        span.set_attribute(_GEN_AI_REQUEST_MODEL, model)
+        span.set_attribute(_GEN_AI_OPERATION_NAME, "embeddings")
+        span.set_attribute(EMBEDDING_INPUT_COUNT, len(text))
+        try:
+            response = await _embedding_client.embeddings.create(
+                model=model,
+                input=text,
             )
-        return [item.embedding for item in response.data]
-    except Exception as e:
-        raise ValueError(f"OpenAI failed to generate vector embedding: {e}")
+            # Account the embedding cost + tokens into the request rollup AND set
+            # the per-call span attributes. Embeddings have no output tokens and
+            # no prompt caching, so total_tokens is pure input (cached/output = 0).
+            # The rollup is a no-op outside a tracked /query_search request. Cost
+            # is computed once and feeds both the rollup and the span attribute
+            # (no double-count risk — there is no retry loop here).
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                cost_usd = compute_llm_cost_usd(model, usage.total_tokens, 0)
+                add_request_cost(cost_usd)
+                add_request_tokens(usage.total_tokens, 0, 0)
+                span.set_attribute(_GEN_AI_USAGE_INPUT_TOKENS, usage.total_tokens)
+                if cost_usd is not None:
+                    span.set_attribute(EMBEDDING_COST_USD, cost_usd)
+                else:
+                    # Never fabricate a cost — surface the missing pricing entry
+                    # (mirrors the LLM router). Tokens still roll up regardless.
+                    _llm_logger.warning(
+                        "No pricing for embedding model %r; embedding.cost_usd omitted",
+                        model,
+                    )
+            return [item.embedding for item in response.data]
+        except Exception as e:
+            span.set_attribute(_ERROR_TYPE, _error_type(e))
+            span.set_status(Status(StatusCode.ERROR))
+            span.record_exception(e)
+            raise ValueError(f"OpenAI failed to generate vector embedding: {e}")

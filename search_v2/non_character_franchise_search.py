@@ -51,9 +51,21 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from opentelemetry import trace
+
 from db.postgres import fetch_non_character_franchise_movies
 from implementation.classes.schemas import MetadataFilters
 from implementation.misc.franchise_text import normalize_franchise_string
+from observability.names import (
+    QUERY_SEARCH_BRANCH_ALIASES,
+    QUERY_SEARCH_BRANCH_ENTITIES,
+    QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS,
+    QUERY_SEARCH_BRANCH_FRANCHISE_LLM_FALLBACK,
+    QUERY_SEARCH_BRANCH_SECONDARY_COUNT,
+    QUERY_SEARCH_BRANCH_TOP_TIER,
+    QUERY_SEARCH_BRANCH_TOP_TIER_COUNT,
+    QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
+)
 from schemas.step_0_flow_routing import NonCharacterFranchiseFlowData
 # Reuse the Step-3 category handler's LLM config so the two callers
 # of generate_franchise_query stay in lockstep on model + reasoning
@@ -124,7 +136,8 @@ async def run_non_character_franchise_search(
     # all three from the single canonical_name we have. The LLM's job
     # here is narrow — emit franchise_names — so the synthesized
     # context stays minimal.
-    expanded_names = await _expand_canonical_names(canonical_name)
+    expanded_names, llm_fallback = await _expand_canonical_names(canonical_name)
+    _record_nc_franchise_identity(canonical_name, expanded_names, llm_fallback)
 
     # Stage 2: normalize each expanded form. Empty / blank normalizations
     # are dropped by the DB helper. Use a list (not a set) so insertion
@@ -148,21 +161,58 @@ async def run_non_character_franchise_search(
         else:
             secondary.append(movie_id)
 
+    _record_nc_franchise_buckets(primary, secondary)
     return NonCharacterFranchiseSearchResult(
         primary_franchise=primary,
         secondary_franchise=secondary,
     )
 
 
-async def _expand_canonical_names(canonical_name: str) -> list[str]:
+def _record_nc_franchise_identity(
+    canonical_name: str, expanded_names: list[str], llm_fallback: bool
+) -> None:
+    """Set the entity identity + alias expansion on the branch span. The single
+    canonical name is the identity; the expanded forms are the aliases;
+    `llm_fallback` marks that no useful LLM aliases were obtained (the flow ran
+    on the bare canonical name), which — for a name like "MCU" that needs the
+    abbreviation bridged — typically means empty/thin results."""
+    span = trace.get_current_span()
+    span.set_attribute(QUERY_SEARCH_BRANCH_ENTITIES, [canonical_name])
+    span.set_attribute(QUERY_SEARCH_BRANCH_ALIASES, list(expanded_names))
+    span.set_attribute(QUERY_SEARCH_BRANCH_FRANCHISE_LLM_FALLBACK, llm_fallback)
+
+
+def _record_nc_franchise_buckets(
+    primary: list[int], secondary: list[int]
+) -> None:
+    """Set the bucket sizes on the branch span: primary (lineage) is the top
+    tier; secondary is the universe-only extension. `primary` empty with
+    `secondary` populated means the name matched a universe tag but nothing
+    carries it as core lineage — a tagging/coverage gap. `resolved_counts`
+    carries the total matched-movie count for the (single) entity."""
+    span = trace.get_current_span()
+    total = len(primary) + len(secondary)
+    span.set_attribute(QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS, [total])
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT, 0 if total else 1
+    )
+    span.set_attribute(QUERY_SEARCH_BRANCH_TOP_TIER, "primary")
+    span.set_attribute(QUERY_SEARCH_BRANCH_TOP_TIER_COUNT, len(primary))
+    span.set_attribute(QUERY_SEARCH_BRANCH_SECONDARY_COUNT, len(secondary))
+
+
+async def _expand_canonical_names(canonical_name: str) -> tuple[list[str], bool]:
     """Run the Step 3 franchise translator to get alt canonical forms.
 
-    Returns 1-3 canonical surface forms drawn from the LLM's
-    `franchise_names` axis. On any failure (timeout, parse error, the
-    LLM returning a null axis), falls back to `[canonical_name]` so the
-    deterministic non-LLM path still works. The deterministic fallback
-    is essential: the rest of the pipeline assumes this function always
-    returns at least the user's original canonical_name.
+    Returns ``(names, llm_fallback)``. ``names`` is 1-3 canonical surface forms
+    drawn from the LLM's `franchise_names` axis. On any failure (timeout, parse
+    error, the LLM returning a null axis), falls back to `[canonical_name]` so
+    the deterministic non-LLM path still works, and ``llm_fallback`` is True.
+    The deterministic fallback is essential: the rest of the pipeline assumes
+    this function always returns at least the user's original canonical_name.
+    ``llm_fallback`` covers both the exception path and the null-axis path —
+    in both, no useful LLM aliases were obtained (the abbreviation bridge that
+    makes "MCU" resolve to "marvel cinematic universe" is lost).
 
     Synthesized inputs to generate_franchise_query:
       - intent_rewrite: positive-presence framing of the franchise lookup
@@ -191,7 +241,7 @@ async def _expand_canonical_names(canonical_name: str) -> list[str]:
             canonical_name,
             exc_info=True,
         )
-        return [canonical_name]
+        return [canonical_name], True
 
     names = spec.franchise_names
     if not names:
@@ -199,5 +249,5 @@ async def _expand_canonical_names(canonical_name: str) -> list[str]:
         # when it decides the request is structural-only). For our
         # alias-expansion use case that's effectively a no-op — fall
         # back to the original name.
-        return [canonical_name]
-    return list(names)
+        return [canonical_name], True
+    return list(names), False

@@ -54,8 +54,14 @@ and API endpoints for search and movie detail retrieval.
 - **Telemetry**: **Stage 0 (request boundary) instrumented; pipeline not yet.**
   Wrapped in `@record_outcome(success_on_return=False)` — failure-only mode,
   because the handler returns the `StreamingResponse` before the pipeline runs,
-  so a clean return can't yet mean "succeeded" (the success verdict + stream-end
-  rollups are deferred to a stream-aware mechanism). Request-span attributes,
+  so a clean return can't yet mean "succeeded" (the success verdict + the
+  result-count rollups are deferred to a stream-aware mechanism). One family of
+  stream-end rollups is already live, written on the server span from the
+  streaming generator's `finally`: `query_search.cost_usd` plus
+  `query_search.usage.{input,cached_input,output}_tokens` — the summed cost and
+  token usage across every LLM + embedding call (all billed attempts). Cost skips
+  unpriced models; tokens count unconditionally; `cached_input` ⊆ `input`.
+  Request-span attributes,
   captured at handler entry from the raw wire body *before* validation
   (`_record_query_search_inputs`): `query_search.query` (truncated) +
   `query_search.query_chars`, `query_search.clarification` (+ `_chars`) when

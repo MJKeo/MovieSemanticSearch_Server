@@ -83,7 +83,14 @@ def setup_tracing(app) -> None:
     # SDKs that ride on httpx), the psycopg pool, and the redis pool.
     FastAPIInstrumentor.instrument_app(app)
     HTTPXClientInstrumentor().instrument()
-    PsycopgInstrumentor().instrument()
+    # capture_parameters=True adds `db.statement.parameters` (str(bound params))
+    # to every psycopg query span, so otherwise-identical parameterized statements
+    # (e.g. `SELECT ... FROM public.movie_card WHERE movie_id = ANY($1)` fired for
+    # anchors vs candidates vs hydration) are distinguishable by their bound IDs.
+    # Global switch (all queries, all endpoints); our params are movie/trait IDs
+    # and filter values (no secrets/PII). High-cardinality → span-attr only, never a
+    # metric label. Non-standard attribute (not OTel semconv), intended for debugging.
+    PsycopgInstrumentor().instrument(capture_parameters=True)
     RedisInstrumentor().instrument()
 
     _configured = True

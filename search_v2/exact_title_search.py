@@ -35,6 +35,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from opentelemetry import trace
+
 from db.postgres import (
     fetch_close_title_candidates,
     fetch_franchise_entries_for_movies,
@@ -45,7 +47,20 @@ from db.postgres import (
 from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
+from observability.names import (
+    QUERY_SEARCH_BRANCH_ENTITIES,
+    QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS,
+    QUERY_SEARCH_BRANCH_EXACT_TITLE_YEAR,
+    QUERY_SEARCH_BRANCH_SOURCE_CLOSE_COUNT,
+    QUERY_SEARCH_BRANCH_SOURCE_FANOUT_COUNT,
+    QUERY_SEARCH_BRANCH_SOURCE_SEED_COUNT,
+    QUERY_SEARCH_BRANCH_SOURCE_TITLE_ONLY_COUNT,
+    QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
+)
 from schemas.step_0_flow_routing import ExactTitleFlowData
+
+# Manual instrumentation tracer. A no-op proxy outside a traced request.
+tracer = trace.get_tracer(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +106,25 @@ _SRC_LINEAGE_LINEAGE            = "lineage→lineage"
 _SRC_LINEAGE_UNIVERSE           = "lineage→universe"
 _SRC_UNIVERSE_UNIVERSE          = "universe→universe"
 _SRC_UNIVERSE_LINEAGE           = "universe→lineage"
+
+
+# Score-source labels grouped by RETRIEVAL MECHANISM, for the observability
+# rollup. The three mechanisms differ in trust: a `seed` is an actual title
+# match, a `close` is a fuzzy token-superset, and `fanout` is a franchise
+# sibling of a seed (not the title the user named). `title_only` (a title match
+# whose year didn't match the user's) exists only when a year was supplied.
+_SEED_LABELS = frozenset({_SRC_SEED_YEAR_MATCH, _SRC_SEED_TITLE_MATCH})
+_CLOSE_LABELS = frozenset(
+    {_SRC_CLOSE_TITLE_YEAR_MATCH, _SRC_CLOSE_TITLE_YEAR_MISMATCH}
+)
+_FANOUT_LABELS = frozenset(
+    {
+        _SRC_LINEAGE_LINEAGE,
+        _SRC_LINEAGE_UNIVERSE,
+        _SRC_UNIVERSE_UNIVERSE,
+        _SRC_UNIVERSE_LINEAGE,
+    }
+)
 
 
 @dataclass
@@ -155,6 +189,54 @@ def _apply(
         source[movie_id] = label
 
 
+def _record_exact_title_entities(
+    title: str, release_year: int | None, resolved_count: int
+) -> None:
+    """Set the entity skeleton on the branch span. `resolved_count` is the
+    number of raw title matches (0 = the typed title matched nothing). The
+    year, when Step 0 supplied one, is recorded so a year-mismatch trace is
+    self-explanatory."""
+    span = trace.get_current_span()
+    span.set_attribute(QUERY_SEARCH_BRANCH_ENTITIES, [title])
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS, [resolved_count]
+    )
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
+        0 if resolved_count else 1,
+    )
+    if release_year is not None:
+        span.set_attribute(QUERY_SEARCH_BRANCH_EXACT_TITLE_YEAR, release_year)
+
+
+def _record_exact_title_sources(
+    score_source: dict[int, str], *, has_year: bool
+) -> None:
+    """Set the result-composition-by-retrieval-mechanism rollup on the branch
+    span. seed/close/fanout are always emitted (0-safe); title_only is emitted
+    only when a year was supplied (it's meaningless without one). A
+    `seed_count == 0` with a non-empty result means nothing returned is an
+    actual title match — only franchise fan-out or wrong-year hits."""
+    seed = close = fanout = title_only = 0
+    for label in score_source.values():
+        if label in _SEED_LABELS:
+            seed += 1
+        elif label in _CLOSE_LABELS:
+            close += 1
+        elif label == _SRC_TITLE_ONLY:
+            title_only += 1
+        elif label in _FANOUT_LABELS:
+            fanout += 1
+    span = trace.get_current_span()
+    span.set_attribute(QUERY_SEARCH_BRANCH_SOURCE_SEED_COUNT, seed)
+    span.set_attribute(QUERY_SEARCH_BRANCH_SOURCE_CLOSE_COUNT, close)
+    span.set_attribute(QUERY_SEARCH_BRANCH_SOURCE_FANOUT_COUNT, fanout)
+    if has_year:
+        span.set_attribute(
+            QUERY_SEARCH_BRANCH_SOURCE_TITLE_ONLY_COUNT, title_only
+        )
+
+
 async def run_exact_title_search(
     flow_data: ExactTitleFlowData,
     *,
@@ -212,7 +294,9 @@ async def run_exact_title_search(
     title_match_ids = await fetch_movie_ids_with_title_like(
         pattern, metadata_filters=metadata_filters,
     )
+    _record_exact_title_entities(title, release_year, len(title_match_ids))
     if not title_match_ids:
+        _record_exact_title_sources({}, has_year=release_year is not None)
         return ExactTitleSearchResult()
 
     # ---- 4. Bulk fetch cards for year info -------------------------------
@@ -389,4 +473,5 @@ async def run_exact_title_search(
     # tie-breaking. Python's sort is stable so a single key tuple is
     # enough.
     ranked = sorted(score.items(), key=lambda kv: (-kv[1], kv[0]))
+    _record_exact_title_sources(source, has_year=release_year is not None)
     return ExactTitleSearchResult(ranked=ranked, score_source=source)

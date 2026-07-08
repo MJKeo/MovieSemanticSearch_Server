@@ -57,7 +57,21 @@ from search_v2.endpoint_fetching.trending_query_execution import (
     execute_trending_query,
 )
 
+from opentelemetry import trace
+
+from observability.names import (
+    QUERY_SEARCH_QUERY_GENERATION,
+    QUERY_SEARCH_QUERY_GENERATION_CATEGORY,
+    QUERY_SEARCH_QUERY_GENERATION_ENDPOINTS,
+)
+
 logger = logging.getLogger(__name__)
+
+# Per-module tracer; a no-op ProxyTracer when tracing isn't bootstrapped
+# (offline imports). The query_generation span wraps only the handler-LLM
+# path (the deterministic / no-op buckets return before it), and nests
+# under the current trait span so its `llm.generate` child sits beneath it.
+tracer = trace.get_tracer(__name__)
 
 
 # Timeout / retry / jitter for the handler-LLM call live one layer
@@ -109,26 +123,41 @@ async def run_query_generation(
     if category.bucket is HandlerBucket.NO_LLM_PURE_CODE:
         return _generate_deterministic_specs(category_call, trait=trait)
 
-    output = await _run_handler_llm(
-        category=category,
-        category_call=category_call,
-        sibling_calls=sibling_calls,
-        combine_mode=combine_mode,
-    )
-    if output is None:
-        return []
-
-    fired = extract_fired_endpoints(category, output)
-    return [
-        GeneratedEndpointSpec(
-            route=route,
-            params=params,
-            operation_type=determine_operation_type(
-                category, route, trait.polarity
-            ),
+    # Only the handler-LLM path gets a span (the two buckets above return
+    # first, so deterministic / no-op calls stay span-free per design).
+    with tracer.start_as_current_span(QUERY_SEARCH_QUERY_GENERATION) as span:
+        span.set_attribute(
+            QUERY_SEARCH_QUERY_GENERATION_CATEGORY, category.name
         )
-        for route, params in fired
-    ]
+        output = await _run_handler_llm(
+            category=category,
+            category_call=category_call,
+            sibling_calls=sibling_calls,
+            combine_mode=combine_mode,
+        )
+        if output is None:
+            # No endpoints fired — record the empty set so the span still
+            # shows the handler ran and activated nothing.
+            span.set_attribute(QUERY_SEARCH_QUERY_GENERATION_ENDPOINTS, [])
+            return []
+
+        fired = extract_fired_endpoints(category, output)
+        # Just which endpoints activated — the detailed params ride the
+        # nested `llm.generate` payload, so the span only needs the routes.
+        span.set_attribute(
+            QUERY_SEARCH_QUERY_GENERATION_ENDPOINTS,
+            [route.value for route, _ in fired],
+        )
+        return [
+            GeneratedEndpointSpec(
+                route=route,
+                params=params,
+                operation_type=determine_operation_type(
+                    category, route, trait.polarity
+                ),
+            )
+            for route, params in fired
+        ]
 
 
 async def run_query_execution(

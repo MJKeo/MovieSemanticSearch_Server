@@ -47,6 +47,14 @@ class FailureReason(str, Enum):
     NOT_INDEXED = "not_indexed"                # 404 — absent from our movie_card index
     TMDB_REMOVED = "tmdb_removed"              # 404 — in our index, gone upstream at TMDB
     TMDB_FETCH_FAILED = "tmdb_fetch_failed"    # 502 — TMDB fetch failed after retries
+    # /query_search only — Step 0 (flow routing) exhausted its LLM retries, so the
+    # pipeline has no routing and fatally aborts mid-stream (surfaced as an SSE
+    # `error` event, not an HTTP status). Deliberately distinct from
+    # INTERNAL_ERROR: this is an upstream LLM/provider exhaustion, not a bug in our
+    # code — a different action (check provider health / retry budget vs. read a
+    # stack trace). Recorded on the server span by the stream consumer, since it
+    # never bubbles to `record_outcome`.
+    QUERY_UNDERSTANDING_FAILED = "query_understanding_failed"
     INTERNAL_ERROR = "internal_error"          # 500 — unexpected server-side failure
 
 

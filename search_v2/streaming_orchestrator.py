@@ -84,12 +84,27 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from db.postgres import fetch_movie_card_summaries
 from implementation.classes.schemas import MetadataFilters
+from observability.names import (
+    QUERY_SEARCH_BRANCH,
+    QUERY_SEARCH_BRANCH_RESULT_COUNT,
+    QUERY_SEARCH_BRANCH_TYPE,
+    QUERY_SEARCH_BRANCH_USES_ORIGINAL_TEXT,
+    QUERY_SEARCH_STEP_0,
+    QUERY_SEARCH_STEP_0_FLOWS,
+    QUERY_SEARCH_STEP_0_STANDARD_BRANCH_COUNT,
+    QUERY_SEARCH_STEP_1,
+    QUERY_SEARCH_STEP_1_UNUSED,
+)
 from schemas.api_responses import MovieCard
-from schemas.enums import HandlerBucket
+from schemas.enums import HandlerBucket, SearchFlow
 from schemas.step_0_flow_routing import (
     CharacterFranchiseFlowData,
+    EntityFlow,
     ExactTitleFlowData,
     NonCharacterFranchiseFlowData,
     PersonFlowData,
@@ -123,6 +138,7 @@ from search_v2.full_pipeline_orchestrator import (
     _finish_branch_after_step2,
     _plan_step2_branches,
     _run_step2_for_branch,
+    _standard_branch_count,
     _step1_needed,
 )
 from search_v2.similar_movies import run_similarity_search
@@ -132,6 +148,43 @@ from search_v2.step_0 import run_step_0
 from search_v2.step_1 import run_step_1
 
 logger = logging.getLogger(__name__)
+
+tracer = trace.get_tracer(__name__)
+
+
+async def _run_under_span(span: trace.Span, coro: Any) -> Any:
+    """Await ``coro`` with ``span`` activated as the current span.
+
+    A branch's work is split across independent asyncio tasks (Step 2 ->
+    Step 3 -> Stage 4 for standard branches; one wrapper task for entity
+    flows). Wrapping each task's coroutine here re-activates the branch's
+    span inside the task so the `llm.generate` (and other) child spans it
+    creates nest under the branch span rather than the request span.
+    `end_on_exit=False` because the span outlives any single task — it is
+    closed centrally by the merge loop when the branch's terminal
+    `branch_results` event fires.
+    """
+    with trace.use_span(span, end_on_exit=False):
+        return await coro
+
+
+def _activated_flow_names(step0: Step0Response) -> list[str]:
+    """The flow names Step 0's routing activates, for the step_0 span.
+
+    The chosen entity flow (as its downstream SearchFlow value, e.g.
+    "person", "exact_title") plus "standard" when the standard flow
+    co-fires. Low-cardinality closed set; never empty on success
+    (none_of_the_above always fires standard, and any entity route
+    contributes its own name).
+    """
+    flows: list[str] = []
+    if step0.selected_entity_flow != EntityFlow.NONE_OF_THE_ABOVE:
+        # primary_flow maps the entity flow to its SearchFlow value; it
+        # only falls back to STANDARD for none_of_the_above, excluded here.
+        flows.append(step0.primary_flow.value)
+    if step0.fire_standard_flow:
+        flows.append(SearchFlow.STANDARD.value)
+    return flows
 
 
 # ---------------------------------------------------------------------------
@@ -281,50 +334,99 @@ async def stream_full_pipeline(
     # (no primary flow, or budget=1 because two non-standard flows
     # fire). Saves a full Step-1 wall-clock window on those queries.
     # Step 0 failure is fatal — without routing nothing dispatches.
+    #
+    # Each step runs under its own manual span (query_search.step_0 /
+    # .step_1) so the router's llm.generate child nests beneath the right
+    # step. The spans are started non-current and activated inside each
+    # task via use_span(end_on_exit=False): step_1's `unused` verdict is
+    # only known AFTER Step 0 returns, so its span must outlive the
+    # run_step_1 call for the orchestrator to stamp and close it. A
+    # try/finally guarantees both spans close even if the generator is
+    # cancelled mid-routing (client disconnect).
     # ------------------------------------------------------------------
-    step0_task = asyncio.create_task(
-        _call_with_retry(
-            lambda: run_step_0(query, clarification=clarification),
-            label="step_0",
-        )
-    )
-    step1_task = asyncio.create_task(
-        _call_with_retry(
-            lambda: run_step_1(query, clarification=clarification),
-            label="step_1",
-        )
-    )
+    step0_span = tracer.start_span(QUERY_SEARCH_STEP_0)
+    step1_span = tracer.start_span(QUERY_SEARCH_STEP_1)
 
-    try:
-        step0_result = await step0_task
-    except BaseException as step0_exc:
-        step1_task.cancel()
-        try:
-            await step1_task
-        except BaseException:
-            pass
-        yield ("error", {"stage": "step_0", "message": repr(step0_exc)})
-        yield ("done", {"total_elapsed": time.perf_counter() - t0})
-        return
+    async def _run_step0_traced():
+        with trace.use_span(step0_span, end_on_exit=False):
+            return await _call_with_retry(
+                lambda: run_step_0(query, clarification=clarification),
+                label="step_0",
+            )
 
-    step0_response: Step0Response = step0_result[0]
+    async def _run_step1_traced():
+        with trace.use_span(step1_span, end_on_exit=False):
+            return await _call_with_retry(
+                lambda: run_step_1(query, clarification=clarification),
+                label="step_1",
+            )
+
+    step0_task = asyncio.create_task(_run_step0_traced())
+    step1_task = asyncio.create_task(_run_step1_traced())
 
     step1_response: Step1Response | Step1ClarificationResponse | None
-    if _step1_needed(step0_response):
+    try:
         try:
-            step1_result = await step1_task
-        except BaseException:
-            step1_response = None
+            step0_result = await step0_task
+        except BaseException as step0_exc:
+            # Fatal Step 0 (retries exhausted): mark its span ERROR so the
+            # span containing the failing call never reads green, then
+            # unwind Step 1 (never consumed without routing) as unused.
+            step0_span.record_exception(step0_exc)
+            step0_span.set_status(Status(StatusCode.ERROR))
+            step1_task.cancel()
+            try:
+                await step1_task
+            except BaseException:
+                pass
+            step1_span.set_attribute(QUERY_SEARCH_STEP_1_UNUSED, True)
+            yield ("error", {"stage": "step_0", "message": repr(step0_exc)})
+            yield ("done", {"total_elapsed": time.perf_counter() - t0})
+            return
+
+        step0_response: Step0Response = step0_result[0]
+
+        # Record Step 0's routing verdict, then close its span at its true
+        # completion (before the Step 1 wait, so its duration is accurate).
+        step0_span.set_attribute(
+            QUERY_SEARCH_STEP_0_FLOWS, _activated_flow_names(step0_response)
+        )
+        step0_span.set_attribute(
+            QUERY_SEARCH_STEP_0_STANDARD_BRANCH_COUNT,
+            _standard_branch_count(step0_response),
+        )
+        step0_span.end()
+
+        # Spins feed a branch only when routing left budget for them;
+        # `unused` is the inverse of that decision, stamped here — the one
+        # point the verdict is known. (A needed-but-failed Step 1 is a
+        # separate degradation, visible on the nested llm.generate span's
+        # ERROR status, not via this attribute.)
+        step1_needed = _step1_needed(step0_response)
+        step1_span.set_attribute(QUERY_SEARCH_STEP_1_UNUSED, not step1_needed)
+        if step1_needed:
+            try:
+                step1_result = await step1_task
+            except BaseException:
+                step1_response = None
+            else:
+                step1_response = step1_result[0]
         else:
-            step1_response = step1_result[0]
-    else:
-        # Step 1's spins would not feed any branch — cancel.
-        step1_task.cancel()
-        try:
-            await step1_task
-        except BaseException:
-            pass
-        step1_response = None
+            # Step 1's spins would not feed any branch — cancel.
+            step1_task.cancel()
+            try:
+                await step1_task
+            except BaseException:
+                pass
+            step1_response = None
+    finally:
+        # Safety net for the cancellation path (client disconnect during
+        # routing): end any step span a normal path left open. is_recording()
+        # is False after end(), so this never double-ends.
+        if step0_span.is_recording():
+            step0_span.end()
+        if step1_span.is_recording():
+            step1_span.end()
 
     # ------------------------------------------------------------------
     # Build the fetch list: standard branches + non-standard flows.
@@ -334,6 +436,18 @@ async def stream_full_pipeline(
         step1_response,
         query,
         clarification=clarification,
+    )
+
+    # The first standard branch (`standard:original`) searches the typed
+    # query verbatim only in the non-clarification path — mirrors the
+    # `else` shape of `_plan_step2_branches` (no clarification response and
+    # no raw clarification to merge). Surfaced on that branch's span as
+    # `branch_uses_original_text`. False whenever no standard flow fires,
+    # in clarification mode, or when Step 1 failed under a clarification.
+    original_branch_uses_raw_query = (
+        bool(branch_plan)
+        and not isinstance(step1_response, Step1ClarificationResponse)
+        and not (step1_response is None and clarification)
     )
 
     # Map the new mutually-exclusive entity-flow choice back onto the
@@ -373,6 +487,7 @@ async def stream_full_pipeline(
         studio_flow_data=studio_flow_data,
         person_flow_data=person_flow_data,
         metadata_filters=metadata_filters,
+        original_branch_uses_raw_query=original_branch_uses_raw_query,
         t0=t0,
     ):
         yield event
@@ -445,6 +560,7 @@ async def _stream_from_branch_plan(
     studio_flow_data: StudioFlowData | None = None,
     person_flow_data: PersonFlowData | None = None,
     metadata_filters: MetadataFilters | None = None,
+    original_branch_uses_raw_query: bool = False,
     t0: float,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Shared downstream half of the pipeline: fetches → tasks → merge loop.
@@ -458,6 +574,11 @@ async def _stream_from_branch_plan(
     Both ``stream_full_pipeline`` (after Steps 0/1) and ``stream_rerun_pipeline``
     (which skips them) delegate here. ``t0`` is supplied by the caller so the
     terminal ``done`` event reports elapsed time over the caller's full window.
+
+    ``original_branch_uses_raw_query`` is True only when the first standard
+    branch searches the typed query verbatim (non-clarification path); it drives
+    the ``branch_uses_original_text`` attribute on that branch's span. The rerun
+    caller leaves it False — a replay has no verbatim-typed-query semantics.
     """
     exact_title_firing = exact_title_flow_data is not None
     similarity_firing = similarity_flow_data is not None
@@ -570,6 +691,28 @@ async def _stream_from_branch_plan(
     yield ("fetches_ready", {"fetches": fetches})
 
     # ------------------------------------------------------------------
+    # Per-branch spans. One `query_search.branch` span per fetch, keyed by
+    # fetch_id, started here (non-current) and activated inside each of the
+    # branch's tasks via `_run_under_span` so its work nests beneath it.
+    # Closed centrally in the merge loop when the branch's terminal
+    # `branch_results` fires (see below), with a finally-block safety net
+    # for client-disconnect cancellation. `branch_uses_original_text` is
+    # set on standard branches only — true for exactly the verbatim-query
+    # `standard:original` branch of the non-clarification flow.
+    # ------------------------------------------------------------------
+    branch_spans: dict[str, trace.Span] = {}
+    for fetch in fetches:
+        span = tracer.start_span(QUERY_SEARCH_BRANCH)
+        span.set_attribute(QUERY_SEARCH_BRANCH_TYPE, fetch["type"])
+        if fetch["type"] == "standard":
+            span.set_attribute(
+                QUERY_SEARCH_BRANCH_USES_ORIGINAL_TEXT,
+                original_branch_uses_raw_query
+                and fetch["id"] == _standard_fetch_id("original"),
+            )
+        branch_spans[fetch["id"]] = span
+
+    # ------------------------------------------------------------------
     # Progress queue + per-fetch emit callbacks.
     # ------------------------------------------------------------------
     # Workers that span multiple awaits (Stage 4, similarity, exact-
@@ -621,13 +764,19 @@ async def _stream_from_branch_plan(
     # Maps live tasks → metadata so we can dispatch results by phase.
     task_info: dict[asyncio.Task, _TaskInfo] = {}
 
-    # Launch standard-flow Step 2 tasks.
+    # Launch standard-flow Step 2 tasks. Each runs under its branch span so
+    # the Step 2 LLM work nests beneath it (Step 3 / Stage 4 re-activate the
+    # same span when they launch — see `_handle_finished_task`).
     for kind, branch_query, ui_label in branch_plan:
+        fetch_id = _standard_fetch_id(kind)
         task = asyncio.create_task(
-            _run_step2_for_branch(kind, branch_query, ui_label)
+            _run_under_span(
+                branch_spans[fetch_id],
+                _run_step2_for_branch(kind, branch_query, ui_label),
+            )
         )
         task_info[task] = _TaskInfo(
-            fetch_id=_standard_fetch_id(kind),
+            fetch_id=fetch_id,
             phase=_PHASE_STEP2,
         )
 
@@ -636,12 +785,17 @@ async def _stream_from_branch_plan(
     # + branch_error) so the merge-loop handler serializes one shape.
     # Each wrapper also receives an emitter bound to its fetch_id so it
     # can push `branch_stage` events at its internal phase boundaries.
+    # Each non-standard flow is a single wrapper task; run it under its
+    # branch span so the flow's resolution + hydration work nests beneath.
     if exact_title_firing:
         task = asyncio.create_task(
-            _run_exact_title_with_hydration(
-                exact_title_flow_data,
-                emit_stage=_make_emitter(_FETCH_ID_EXACT_TITLE),
-                metadata_filters=metadata_filters,
+            _run_under_span(
+                branch_spans[_FETCH_ID_EXACT_TITLE],
+                _run_exact_title_with_hydration(
+                    exact_title_flow_data,
+                    emit_stage=_make_emitter(_FETCH_ID_EXACT_TITLE),
+                    metadata_filters=metadata_filters,
+                ),
             )
         )
         task_info[task] = _TaskInfo(
@@ -650,10 +804,13 @@ async def _stream_from_branch_plan(
         )
     if similarity_firing:
         task = asyncio.create_task(
-            _run_similarity_with_hydration(
-                similarity_flow_data,
-                emit_stage=_make_emitter(_FETCH_ID_SIMILARITY),
-                metadata_filters=metadata_filters,
+            _run_under_span(
+                branch_spans[_FETCH_ID_SIMILARITY],
+                _run_similarity_with_hydration(
+                    similarity_flow_data,
+                    emit_stage=_make_emitter(_FETCH_ID_SIMILARITY),
+                    metadata_filters=metadata_filters,
+                ),
             )
         )
         task_info[task] = _TaskInfo(
@@ -662,10 +819,13 @@ async def _stream_from_branch_plan(
         )
     if non_character_franchise_firing:
         task = asyncio.create_task(
-            _run_non_character_franchise_with_hydration(
-                non_character_franchise_flow_data,
-                emit_stage=_make_emitter(_FETCH_ID_NON_CHARACTER_FRANCHISE),
-                metadata_filters=metadata_filters,
+            _run_under_span(
+                branch_spans[_FETCH_ID_NON_CHARACTER_FRANCHISE],
+                _run_non_character_franchise_with_hydration(
+                    non_character_franchise_flow_data,
+                    emit_stage=_make_emitter(_FETCH_ID_NON_CHARACTER_FRANCHISE),
+                    metadata_filters=metadata_filters,
+                ),
             )
         )
         task_info[task] = _TaskInfo(
@@ -674,10 +834,13 @@ async def _stream_from_branch_plan(
         )
     if character_franchise_firing:
         task = asyncio.create_task(
-            _run_character_franchise_with_hydration(
-                character_franchise_flow_data,
-                emit_stage=_make_emitter(_FETCH_ID_CHARACTER_FRANCHISE),
-                metadata_filters=metadata_filters,
+            _run_under_span(
+                branch_spans[_FETCH_ID_CHARACTER_FRANCHISE],
+                _run_character_franchise_with_hydration(
+                    character_franchise_flow_data,
+                    emit_stage=_make_emitter(_FETCH_ID_CHARACTER_FRANCHISE),
+                    metadata_filters=metadata_filters,
+                ),
             )
         )
         task_info[task] = _TaskInfo(
@@ -686,10 +849,13 @@ async def _stream_from_branch_plan(
         )
     if studio_firing:
         task = asyncio.create_task(
-            _run_studio_with_hydration(
-                studio_flow_data,
-                emit_stage=_make_emitter(_FETCH_ID_STUDIO),
-                metadata_filters=metadata_filters,
+            _run_under_span(
+                branch_spans[_FETCH_ID_STUDIO],
+                _run_studio_with_hydration(
+                    studio_flow_data,
+                    emit_stage=_make_emitter(_FETCH_ID_STUDIO),
+                    metadata_filters=metadata_filters,
+                ),
             )
         )
         task_info[task] = _TaskInfo(
@@ -698,10 +864,13 @@ async def _stream_from_branch_plan(
         )
     if person_firing:
         task = asyncio.create_task(
-            _run_person_with_hydration(
-                person_flow_data,
-                emit_stage=_make_emitter(_FETCH_ID_PERSON),
-                metadata_filters=metadata_filters,
+            _run_under_span(
+                branch_spans[_FETCH_ID_PERSON],
+                _run_person_with_hydration(
+                    person_flow_data,
+                    emit_stage=_make_emitter(_FETCH_ID_PERSON),
+                    metadata_filters=metadata_filters,
+                ),
             )
         )
         task_info[task] = _TaskInfo(
@@ -742,8 +911,23 @@ async def _stream_from_branch_plan(
                     task_info=task_info,
                     make_emitter=_make_emitter,
                     metadata_filters=metadata_filters,
+                    branch_span=branch_spans.get(info.fetch_id),
                 ):
                     yield event
+
+                # Close this branch's span once it reaches its terminal
+                # `branch_results`. A branch leaves exactly one live task
+                # per fetch_id on each Step 2 -> 3 -> 4 transition; only the
+                # terminal handlers add no follow-on task. So "no remaining
+                # task for this fetch_id" means the branch is done — for
+                # both multi-task standard branches and single-task entity
+                # flows, on success and soft-fail alike.
+                if not any(
+                    ti.fetch_id == info.fetch_id for ti in task_info.values()
+                ):
+                    finished_span = branch_spans.pop(info.fetch_id, None)
+                    if finished_span is not None:
+                        finished_span.end()
 
         # All worker tasks have drained. Flush any progress events that
         # landed in the queue in the same scheduling tick as the final
@@ -776,6 +960,12 @@ async def _stream_from_branch_plan(
                 await pending_task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+        # End any branch span the happy path left open (client disconnect
+        # mid-stream aborts before the merge loop closes them). is_recording()
+        # is False after end(), so this never double-ends a closed span.
+        for open_span in branch_spans.values():
+            if open_span.is_recording():
+                open_span.end()
 
 
 # ---------------------------------------------------------------------------
@@ -790,6 +980,7 @@ async def _handle_finished_task(
     task_info: dict[asyncio.Task, _TaskInfo],
     make_emitter: Callable[[str], StageEmitter],
     metadata_filters: MetadataFilters | None = None,
+    branch_span: trace.Span | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Process one completed task; may launch follow-on tasks.
 
@@ -799,10 +990,14 @@ async def _handle_finished_task(
     per-branch by `_compute_branch_auxiliary`, so each branch has
     everything it needs to execute on its own as soon as its Step 3
     resolves.
+
+    `branch_span` is this fetch's `query_search.branch` span; any
+    follow-on task launched here (Step 3, Stage 4) runs under it via
+    `_run_under_span` so its work stays nested under the branch.
     """
     if info.phase == _PHASE_STEP2:
         async for event in _handle_step2_done(
-            task, info, task_info=task_info
+            task, info, task_info=task_info, branch_span=branch_span
         ):
             yield event
         return
@@ -864,11 +1059,14 @@ async def _handle_finished_task(
         # Step 3 completes (the task itself emits its later
         # sub-stages: rescoring → hydrating).
         emitter("executing")
+        stage4_coro = _run_stage4_with_implicit_prior(
+            branch_result, auxiliary, emitter,
+            metadata_filters=metadata_filters,
+        )
         stage4_task = asyncio.create_task(
-            _run_stage4_with_implicit_prior(
-                branch_result, auxiliary, emitter,
-                metadata_filters=metadata_filters,
-            )
+            _run_under_span(branch_span, stage4_coro)
+            if branch_span is not None
+            else stage4_coro
         )
         task_info[stage4_task] = _TaskInfo(
             fetch_id=info.fetch_id, phase=_PHASE_STAGE4
@@ -902,8 +1100,13 @@ async def _handle_step2_done(
     info: _TaskInfo,
     *,
     task_info: dict[asyncio.Task, _TaskInfo],
+    branch_span: trace.Span | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    """Emit branch_traits (or a branch_error result), then start Step 3."""
+    """Emit branch_traits (or a branch_error result), then start Step 3.
+
+    `branch_span` is the fetch's `query_search.branch` span; the Step 3
+    task launched here runs under it so its LLM work stays nested.
+    """
     try:
         partial, qa = task.result()
     except Exception as exc:  # noqa: BLE001 — _run_step2_for_branch
@@ -945,10 +1148,13 @@ async def _handle_step2_done(
         },
     )
     yield _stage_event(info.fetch_id, "generating_endpoints")
+    step3_coro = _finish_branch_after_step2(
+        partial, qa, _kind_from_fetch_id(info.fetch_id)
+    )
     step3_task = asyncio.create_task(
-        _finish_branch_after_step2(
-            partial, qa, _kind_from_fetch_id(info.fetch_id)
-        )
+        _run_under_span(branch_span, step3_coro)
+        if branch_span is not None
+        else step3_coro
     )
     task_info[step3_task] = _TaskInfo(
         fetch_id=info.fetch_id, phase=_PHASE_STEP3
@@ -989,6 +1195,31 @@ async def _run_stage4_with_implicit_prior(
     return _FetchOutcome(cards=cards, branch_error=None)
 
 
+# Span-event message for an entity flow that returned zero cards. A call-site
+# constant (not a Name) per observability/names.py's scope note — event messages
+# are human-readable, not queryable keys.
+_ENTITY_FLOW_EMPTY_EVENT = "entity flow empty"
+
+
+def _stamp_branch_outcome(cards: list[MovieCard]) -> None:
+    """Record the entity-flow outcome skeleton on the current branch span.
+
+    Each ``_run_*_with_hydration`` wrapper is launched via ``_run_under_span``,
+    so ``trace.get_current_span()`` here is that fetch's ``query_search.branch``
+    span. We set ``branch_result_count`` and, when the flow came back empty,
+    fire the empty event — zero results from an entity flow is actionable (Step 0
+    already asserted the entity exists), not the neutral empty a standard branch
+    can produce. Entity identity + per-entity resolution counts + flow-specific
+    facts are set upstream inside each executor (where they're known and where
+    the branch span is still current); this helper adds only the post-hydration
+    total the executor can't see.
+    """
+    span = trace.get_current_span()
+    span.set_attribute(QUERY_SEARCH_BRANCH_RESULT_COUNT, len(cards))
+    if not cards:
+        span.add_event(_ENTITY_FLOW_EMPTY_EVENT)
+
+
 async def _run_similarity_with_hydration(
     flow_data: SimilarityFlowData,
     emit_stage: StageEmitter,
@@ -1011,6 +1242,7 @@ async def _run_similarity_with_hydration(
     emit_stage("hydrating")
     movie_ids = [int(r.movie_id) for r in result.ranked]
     cards = await fetch_movie_card_summaries(movie_ids)
+    _stamp_branch_outcome(cards)
     return _FetchOutcome(cards=cards, branch_error=None)
 
 
@@ -1032,6 +1264,7 @@ async def _run_exact_title_with_hydration(
     emit_stage("hydrating")
     movie_ids = [int(mid) for mid, _ in result.ranked]
     cards = await fetch_movie_card_summaries(movie_ids)
+    _stamp_branch_outcome(cards)
     return _FetchOutcome(cards=cards, branch_error=None)
 
 
@@ -1054,6 +1287,7 @@ async def _run_non_character_franchise_with_hydration(
     emit_stage("hydrating")
     movie_ids = result.primary_franchise + result.secondary_franchise
     cards = await fetch_movie_card_summaries(movie_ids)
+    _stamp_branch_outcome(cards)
     return _FetchOutcome(cards=cards, branch_error=None)
 
 
@@ -1086,6 +1320,7 @@ async def _run_character_franchise_with_hydration(
         + result.tier_7_minor_appearance
     )
     cards = await fetch_movie_card_summaries(movie_ids)
+    _stamp_branch_outcome(cards)
     return _FetchOutcome(cards=cards, branch_error=None)
 
 
@@ -1107,6 +1342,7 @@ async def _run_studio_with_hydration(
     )
     emit_stage("hydrating")
     cards = await fetch_movie_card_summaries(result.ranked)
+    _stamp_branch_outcome(cards)
     return _FetchOutcome(cards=cards, branch_error=None)
 
 
@@ -1135,6 +1371,7 @@ async def _run_person_with_hydration(
         + result.bucket_4_minor
     )
     cards = await fetch_movie_card_summaries(movie_ids)
+    _stamp_branch_outcome(cards)
     return _FetchOutcome(cards=cards, branch_error=None)
 
 

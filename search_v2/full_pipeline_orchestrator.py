@@ -110,7 +110,31 @@ from search_v2.step_2 import run_step_2
 from search_v2.step_3 import run_step_3
 from search_v2.implicit_expectations import run_implicit_expectations
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+from observability.names import (
+    QUERY_SEARCH_STEP_2,
+    QUERY_SEARCH_STEP_2_TRAIT_COUNT,
+    QUERY_SEARCH_STEP_2_CONTEXTUALIZED_PHRASES,
+    QUERY_SEARCH_TRAIT,
+    QUERY_SEARCH_TRAIT_PHRASE,
+    QUERY_SEARCH_TRAIT_POLARITY,
+    QUERY_SEARCH_TRAIT_COMMITMENT,
+    QUERY_SEARCH_TRAIT_STEP_3_ERROR,
+    QUERY_SEARCH_STEP_3,
+    QUERY_SEARCH_STEP_3_COMBINE_MODE,
+    QUERY_SEARCH_STEP_3_CATEGORIES,
+)
+
 logger = logging.getLogger(__name__)
+
+# Per-module tracer. A no-op ProxyTracer when `setup_tracing` hasn't run
+# (offline ingestion/eval imports), so the manual spans below are cheap
+# no-ops there. The Step 2/3 spans nest under whatever span is current —
+# in the live pipeline that is the `query_search.branch` span, since each
+# branch task is activated under it in the streaming orchestrator.
+tracer = trace.get_tracer(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -299,19 +323,33 @@ async def _call_with_retry(
 # ---------------------------------------------------------------------------
 
 
+def _standard_branch_count(step0: Step0Response) -> int:
+    """Number of standard-flow branches Step 0's routing budgets for.
+
+    The standard flow shares a fixed 3-branch UI budget with the
+    non-standard flows: it gets whatever slots the entity flows leave
+    (budget = 3 - non-standard flows firing), and 0 when it doesn't
+    fire at all. A pure function of Step 0, so it is the single source
+    of truth for the branch budget — `_step1_needed` and
+    `_plan_step2_branches` both read it, and it doubles as the
+    `query_search.step_0_standard_branch_count` telemetry value.
+    """
+    if not step0.fire_standard_flow:
+        return 0
+    return 3 - _non_standard_firing_count(step0)
+
+
 def _step1_needed(step0: Step0Response) -> bool:
     """True iff Step 0's routing decision could consume Step 1 spins.
 
     Spins are consumed only when the standard flow runs AND its
-    budget leaves room for at least one spin. Budget = 3 - number of
-    non-standard flows firing; spins fire when budget ≥ 2. Anything
-    else means Step 1's output is throw-away work the orchestrator
-    can cancel as soon as Step 0 returns.
+    budget leaves room for at least one spin (branch 1 is the main
+    query/rewrite; spins fill branches 2-3). So spins fire exactly
+    when the standard budget is >= 2. Anything else means Step 1's
+    output is throw-away work the orchestrator can cancel as soon as
+    Step 0 returns.
     """
-    if not step0.fire_standard_flow:
-        return False
-    budget = 3 - _non_standard_firing_count(step0)
-    return budget >= 2
+    return _standard_branch_count(step0) >= 2
 
 
 def _non_standard_firing_count(step0: Step0Response) -> int:
@@ -341,7 +379,7 @@ def _plan_step2_branches(
     if not step0.fire_standard_flow:
         return []
 
-    budget = 3 - _non_standard_firing_count(step0)  # 3, 2, or 1.
+    budget = _standard_branch_count(step0)  # 3, 2, or 1 (see helper).
 
     branches: list[tuple[BranchKind, str, str]] = []
 
@@ -418,21 +456,38 @@ async def _run_step2_for_branch(
     The streaming orchestrator uses this two-phase split so it can emit
     a `branch_traits` event between Step 2 and Step 3 fan-out.
     """
-    try:
-        qa, _, _, _ = await _call_with_retry(
-            lambda: run_step_2(query),
-            label=f"step_2[{kind}]",
+    # The step_2 span closes at the Step-2 LLM return (the trait spans start
+    # after), so its duration is just this call. It nests under the branch span
+    # (current context) and parents the router's `llm.generate` child.
+    with tracer.start_as_current_span(QUERY_SEARCH_STEP_2) as step2_span:
+        try:
+            qa, _, _, _ = await _call_with_retry(
+                lambda: run_step_2(query),
+                label=f"step_2[{kind}]",
+            )
+        except Exception as exc:  # noqa: BLE001 — soft-fail per branch
+            # A per-branch soft-fail: mark the failing span ERROR (the LLM step
+            # genuinely failed) but let the branch degrade via branch_error —
+            # the request verdict is untouched.
+            step2_span.record_exception(exc)
+            step2_span.set_status(Status(StatusCode.ERROR))
+            return (
+                Step2BranchResult(
+                    kind=kind,
+                    query=query,
+                    ui_label=ui_label,
+                    traits=[],
+                    branch_error=repr(exc),
+                ),
+                None,
+            )
+
+        step2_span.set_attribute(
+            QUERY_SEARCH_STEP_2_TRAIT_COUNT, len(qa.traits)
         )
-    except Exception as exc:  # noqa: BLE001 — soft-fail per branch
-        return (
-            Step2BranchResult(
-                kind=kind,
-                query=query,
-                ui_label=ui_label,
-                traits=[],
-                branch_error=repr(exc),
-            ),
-            None,
+        step2_span.set_attribute(
+            QUERY_SEARCH_STEP_2_CONTEXTUALIZED_PHRASES,
+            [t.contextualized_phrase for t in qa.traits],
         )
 
     partial = Step2BranchResult(
@@ -513,74 +568,117 @@ async def _decompose_and_generate(
     *,
     branch_label: str,
 ) -> TraitWithEndpoints:
-    try:
-        decomposition, _, _, _ = await _call_with_retry(
-            lambda: run_step_3(trait, siblings),
-            label=f"step_3[{branch_label}/{trait.surface_text!r}]",
+    # One trait span brackets this trait's whole Step 3 -> query-generation
+    # lifecycle, so the nested step_3 and query_generation spans (and their
+    # `llm.generate` children) render as one trait's work. It nests under the
+    # branch span; the gather one level up runs each trait in its own task, so
+    # each trait span scopes correctly via the copied OTel context.
+    with tracer.start_as_current_span(QUERY_SEARCH_TRAIT) as trait_span:
+        trait_span.set_attribute(QUERY_SEARCH_TRAIT_PHRASE, trait.contextualized_phrase)
+        trait_span.set_attribute(QUERY_SEARCH_TRAIT_POLARITY, trait.polarity.value)
+        # commitment is a Literal[str], already a plain str — set directly.
+        trait_span.set_attribute(QUERY_SEARCH_TRAIT_COMMITMENT, trait.commitment)
+
+        # solo_drop_count > 0 records that the SOLO trim fired; captured inside
+        # the step_3 span and emitted as a trait-span event once it closes.
+        solo_drop_count = 0
+        kept_category: str | None = None
+
+        # The step_3 span wraps just the Step-3 LLM call plus the deterministic
+        # SOLO trim, so it records the POST-trim combine_mode / categories.
+        with tracer.start_as_current_span(QUERY_SEARCH_STEP_3) as step3_span:
+            try:
+                decomposition, _, _, _ = await _call_with_retry(
+                    lambda: run_step_3(trait, siblings),
+                    label=f"step_3[{branch_label}/{trait.surface_text!r}]",
+                )
+            except Exception as exc:  # noqa: BLE001 — soft-fail per trait
+                # Per-trait soft-fail: mark the failing step_3 span ERROR, and
+                # record the degradation as an attribute on the trait span (which
+                # stays UNSET — the request verdict is untouched). The trait
+                # contributes zero in stage-4; combine_mode default is harmless.
+                step3_span.record_exception(exc)
+                step3_span.set_status(Status(StatusCode.ERROR))
+                trait_span.set_attribute(
+                    QUERY_SEARCH_TRAIT_STEP_3_ERROR, repr(exc)
+                )
+                return TraitWithEndpoints(
+                    surface_text=trait.surface_text,
+                    polarity=trait.polarity,
+                    commitment=trait.commitment,
+                    category_calls=[],
+                    step_3_error=repr(exc),
+                )
+
+            all_calls = list(decomposition.category_calls)
+            combine_mode = decomposition.combine_mode
+
+            # SOLO contract: exactly one category commit. The prompt instructs
+            # the LLM to emit only the clean-fit primary, but if extras slip
+            # through (or the model committed SOLO inconsistently with a
+            # multi-call list), trim deterministically to the first listed
+            # entry here so dropped categories never fan out to handler-LLM
+            # calls or endpoint fetches. List ordering is the LLM's commit
+            # surface — we trust the first entry is the intended primary.
+            if combine_mode is TraitCombineMode.SOLO and len(all_calls) > 1:
+                solo_drop_count = len(all_calls) - 1
+                kept_category = all_calls[0].category.name
+                logger.info(
+                    "SOLO trim: trait %r committed SOLO with %d category_calls; "
+                    "keeping only the first (%s) and dropping the rest before "
+                    "retrieval.",
+                    trait.surface_text,
+                    len(all_calls),
+                    kept_category,
+                )
+                all_calls = all_calls[:1]
+
+            # POST-trim state — the calls that actually reach retrieval.
+            step3_span.set_attribute(
+                QUERY_SEARCH_STEP_3_COMBINE_MODE, combine_mode.value
+            )
+            step3_span.set_attribute(
+                QUERY_SEARCH_STEP_3_CATEGORIES,
+                [c.category.name for c in all_calls],
+            )
+
+        if solo_drop_count > 0:
+            trait_span.add_event(
+                "solo trim",
+                {"kept_category": kept_category, "dropped_count": solo_drop_count},
+            )
+
+        # Fan out per CategoryCall in parallel as soon as Step 3 returns
+        # for this trait. Each per-call coroutine soft-fails internally,
+        # so default gather (no return_exceptions) is safe.
+        #
+        # Phase 6 — sibling-task context. Each handler receives the OTHER
+        # CategoryCalls Step 3 committed for this trait (self-category
+        # excluded) plus the trait-level combine_mode, so it can
+        # coordinate commit-vs-abstain decisions against the parallel
+        # siblings under the trait's fold rule. Identity-based filter is
+        # safe because each CategoryCall is a distinct object inside this
+        # decomposition.
+        category_call_results = await asyncio.gather(
+            *(
+                _process_category_call(
+                    cc,
+                    trait,
+                    branch_label=branch_label,
+                    sibling_calls=[s for s in all_calls if s is not cc],
+                    combine_mode=combine_mode,
+                )
+                for cc in all_calls
+            )
         )
-    except Exception as exc:  # noqa: BLE001 — soft-fail per trait
-        # Failure path: the trait will contribute zero in stage-4
-        # regardless, so combine_mode default (FRAMINGS) is harmless.
+
         return TraitWithEndpoints(
             surface_text=trait.surface_text,
             polarity=trait.polarity,
             commitment=trait.commitment,
-            category_calls=[],
-            step_3_error=repr(exc),
+            category_calls=category_call_results,
+            combine_mode=combine_mode,
         )
-
-    # Fan out per CategoryCall in parallel as soon as Step 3 returns
-    # for this trait. Each per-call coroutine soft-fails internally,
-    # so default gather (no return_exceptions) is safe.
-    #
-    # Phase 6 — sibling-task context. Each handler receives the OTHER
-    # CategoryCalls Step 3 committed for this trait (self-category
-    # excluded) plus the trait-level combine_mode, so it can
-    # coordinate commit-vs-abstain decisions against the parallel
-    # siblings under the trait's fold rule. Identity-based filter is
-    # safe because each CategoryCall is a distinct object inside this
-    # decomposition.
-    all_calls = list(decomposition.category_calls)
-    combine_mode = decomposition.combine_mode
-
-    # SOLO contract: exactly one category commit. The prompt instructs
-    # the LLM to emit only the clean-fit primary, but if extras slip
-    # through (or the model committed SOLO inconsistently with a
-    # multi-call list), trim deterministically to the first listed
-    # entry here so dropped categories never fan out to handler-LLM
-    # calls or endpoint fetches. List ordering is the LLM's commit
-    # surface — we trust the first entry is the intended primary.
-    if combine_mode is TraitCombineMode.SOLO and len(all_calls) > 1:
-        logger.info(
-            "SOLO trim: trait %r committed SOLO with %d category_calls; "
-            "keeping only the first (%s) and dropping the rest before "
-            "retrieval.",
-            trait.surface_text,
-            len(all_calls),
-            all_calls[0].category.name,
-        )
-        all_calls = all_calls[:1]
-
-    category_call_results = await asyncio.gather(
-        *(
-            _process_category_call(
-                cc,
-                trait,
-                branch_label=branch_label,
-                sibling_calls=[s for s in all_calls if s is not cc],
-                combine_mode=combine_mode,
-            )
-            for cc in all_calls
-        )
-    )
-
-    return TraitWithEndpoints(
-        surface_text=trait.surface_text,
-        polarity=trait.polarity,
-        commitment=trait.commitment,
-        category_calls=category_call_results,
-        combine_mode=combine_mode,
-    )
 
 
 # ---------------------------------------------------------------------------

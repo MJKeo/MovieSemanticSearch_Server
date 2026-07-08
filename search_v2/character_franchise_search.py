@@ -77,6 +77,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+from opentelemetry import trace
+
 from db.postgres import (
     fetch_character_billing_rows,
     fetch_character_strings_exact,
@@ -86,6 +88,19 @@ from db.postgres import (
 )
 from implementation.classes.schemas import MetadataFilters
 from implementation.misc.helpers import normalize_string
+from observability.names import (
+    QUERY_SEARCH_BRANCH_CHARACTER_FORMS,
+    QUERY_SEARCH_BRANCH_CHARACTER_FRANCHISE_LLM_FAILED,
+    QUERY_SEARCH_BRANCH_ENTITIES,
+    QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS,
+    QUERY_SEARCH_BRANCH_FRANCHISE_FORMS,
+    QUERY_SEARCH_BRANCH_TIER_COUNTS,
+    QUERY_SEARCH_BRANCH_TOP_TIER,
+    QUERY_SEARCH_BRANCH_TOP_TIER_COUNT,
+    QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
+    QUERY_SEARCH_CHARACTER_RESOLUTION,
+    QUERY_SEARCH_FRANCHISE_RESOLUTION,
+)
 from schemas.enums import ReleaseFormat
 from schemas.step_0_flow_routing import CharacterFranchiseFlowData
 from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
@@ -100,6 +115,9 @@ from search_v2.endpoint_fetching.franchise_query_execution import (
 from search_v2.popularity_sort import sort_movie_ids_by_popularity
 
 logger = logging.getLogger(__name__)
+
+# Manual instrumentation tracer. A no-op proxy outside a traced request.
+tracer = trace.get_tracer(__name__)
 
 
 # DEFAULT-mode prominence cutoffs for the character-appearance sub-
@@ -207,32 +225,62 @@ async def run_character_franchise_search(
     """
     canonical_name = flow_data.canonical_name
 
-    # Stage 1: one fanout LLM call returns both form lists.
+    # Stage 1: one fanout LLM call returns both form lists. It has NO fallback —
+    # a failure returns None and the whole flow returns empty, so `llm_failed`
+    # is the signal that distinguishes "the LLM died" from "catalog gap".
     fanout = await _run_fanout(canonical_name)
     if fanout is None:
+        _record_cf_identity(canonical_name, [], [], llm_failed=True)
         return CharacterFranchiseSearchResult()
-
-    # Stage 2: parallel data fetches. Both branches handle empty form
-    # lists internally and degrade to empty results — we never need to
-    # branch on "did the LLM emit forms" here.
-    (lineage_matched, universe_only_matched), character_info = await asyncio.gather(
-        _fetch_franchise_tiers(
-            list(fanout.franchise_forms),
-            metadata_filters=metadata_filters,
-        ),
-        _fetch_character_scores(
-            list(fanout.character_forms),
-            metadata_filters=metadata_filters,
-        ),
+    _record_cf_identity(
+        canonical_name,
+        list(fanout.character_forms),
+        list(fanout.franchise_forms),
+        llm_failed=False,
     )
 
-    # Stage 2b: split lineage into mainline vs ancillary using the
-    # is_spinoff + release_format signals. One extra round-trip on a
-    # known-small set (lineage_matched is typically <100 movies). Done
-    # after the main gather rather than alongside because it depends on
-    # lineage_matched as input.
-    lineage_mainline, lineage_ancillary = await _split_lineage_by_mainline(
-        lineage_matched
+    # Stage 2: parallel data fetches, each under its own child span so the two
+    # independent resolution axes (franchise membership vs character billing)
+    # are separately timed — either can come back empty on its own. The
+    # sequential lineage-mainline split folds into the franchise span (it
+    # depends only on that span's lineage_matched, so it runs there rather than
+    # serially after the gather).
+    async def _resolve_franchise_traced() -> (
+        tuple[set[int], set[int], list[int], list[int]]
+    ):
+        with tracer.start_as_current_span(QUERY_SEARCH_FRANCHISE_RESOLUTION):
+            lineage_matched, universe_only = await _fetch_franchise_tiers(
+                list(fanout.franchise_forms),
+                metadata_filters=metadata_filters,
+            )
+            lineage_mainline, lineage_ancillary = await _split_lineage_by_mainline(
+                lineage_matched
+            )
+            return (
+                lineage_matched,
+                universe_only,
+                lineage_mainline,
+                lineage_ancillary,
+            )
+
+    async def _resolve_character_traced() -> dict[int, CharacterSignals]:
+        with tracer.start_as_current_span(QUERY_SEARCH_CHARACTER_RESOLUTION):
+            return await _fetch_character_scores(
+                list(fanout.character_forms),
+                metadata_filters=metadata_filters,
+            )
+
+    (
+        (
+            lineage_matched,
+            universe_only_matched,
+            lineage_mainline,
+            lineage_ancillary,
+        ),
+        character_info,
+    ) = await asyncio.gather(
+        _resolve_franchise_traced(),
+        _resolve_character_traced(),
     )
 
     # Stage 3: bucket the character signals into the four character-
@@ -282,7 +330,58 @@ async def run_character_franchise_search(
     # room for a tier-2 movie.
     _apply_limit(result, limit)
 
+    _record_cf_tiers(result)
     return result
+
+
+def _record_cf_identity(
+    canonical_name: str,
+    character_forms: list[str],
+    franchise_forms: list[str],
+    *,
+    llm_failed: bool,
+) -> None:
+    """Set the character-franchise identity + alias forms on the branch span.
+    The two form lists are kept separate (they resolve two independent axes:
+    cast-string aliases vs franchise-name aliases). `llm_failed=True` with no
+    forms means the fanout LLM died (empty result cause); `llm_failed=False`
+    with forms present + an empty result means a catalog gap."""
+    span = trace.get_current_span()
+    span.set_attribute(QUERY_SEARCH_BRANCH_ENTITIES, [canonical_name])
+    span.set_attribute(QUERY_SEARCH_BRANCH_CHARACTER_FORMS, character_forms)
+    span.set_attribute(QUERY_SEARCH_BRANCH_FRANCHISE_FORMS, franchise_forms)
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_CHARACTER_FRANCHISE_LLM_FAILED, llm_failed
+    )
+
+
+def _record_cf_tiers(result: CharacterFranchiseSearchResult) -> None:
+    """Set the seven per-tier counts + the top populated tier on the branch
+    span, and the (single-entity) total resolved-movie count. tier_1 is the
+    mainline franchise; an empty tier_1 with lower tiers populated means the
+    character resolved but no mainline lineage film matched."""
+    ordered = (
+        ("tier_1_lineage_mainline", result.tier_1_lineage_mainline),
+        ("tier_2_top_billed_appearance", result.tier_2_top_billed_appearance),
+        ("tier_3_lineage_ancillary", result.tier_3_lineage_ancillary),
+        ("tier_4_universe", result.tier_4_universe),
+        ("tier_5_prominent_appearance", result.tier_5_prominent_appearance),
+        ("tier_6_relevant_appearance", result.tier_6_relevant_appearance),
+        ("tier_7_minor_appearance", result.tier_7_minor_appearance),
+    )
+    counts = [len(ids) for _, ids in ordered]
+    total = sum(counts)
+    span = trace.get_current_span()
+    span.set_attribute(QUERY_SEARCH_BRANCH_TIER_COUNTS, counts)
+    span.set_attribute(QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS, [total])
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT, 0 if total else 1
+    )
+    for tier_name, ids in ordered:
+        if ids:
+            span.set_attribute(QUERY_SEARCH_BRANCH_TOP_TIER, tier_name)
+            span.set_attribute(QUERY_SEARCH_BRANCH_TOP_TIER_COUNT, len(ids))
+            return
 
 
 # ---------------------------------------------------------------------------

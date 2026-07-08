@@ -9,12 +9,16 @@ reranking code is called here.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
+from collections.abc import Awaitable, Sized
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal
+from enum import Enum
+from typing import Literal, TypeVar
 
 import numpy as np
+from opentelemetry import trace
 
 from db.postgres import (
     SimilarityAwardSignals,
@@ -74,6 +78,43 @@ from search_v2.similar_studio_registry import (
     StudioSimilarityEntry,
     studio_entries_by_normalized_string,
 )
+
+from observability.names import (
+    QUERY_SEARCH_BRANCH_ADDITIONAL_BOOSTS,
+    QUERY_SEARCH_BRANCH_ANCHOR_SHAPE,
+    QUERY_SEARCH_BRANCH_ANCHOR_SHAPE_COHESION,
+    QUERY_SEARCH_BRANCH_ENTITIES,
+    QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS,
+    QUERY_SEARCH_BRANCH_LANE_COHESION,
+    QUERY_SEARCH_BRANCH_LANE_WEIGHTS,
+    QUERY_SEARCH_BRANCH_LOW_COHESION_FALLBACK,
+    QUERY_SEARCH_BRANCH_RETRIEVAL_LANES,
+    QUERY_SEARCH_BRANCH_RETRIEVAL_TOTAL,
+    QUERY_SEARCH_BRANCH_SHAPE_MODIFIERS,
+    QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
+    QUERY_SEARCH_BRANCH_VECTOR_SPACE_COHESION,
+    QUERY_SEARCH_BRANCH_VECTOR_SPACE_WEIGHTS,
+    QUERY_SEARCH_BRANCH_WEAVE_TARGETS,
+    QUERY_SEARCH_SIMILARITY_FETCH,
+    QUERY_SEARCH_SIMILARITY_FETCH_LANE,
+    QUERY_SEARCH_SIMILARITY_FETCH_MATCH,
+    QUERY_SEARCH_SIMILARITY_FETCH_RESULT_COUNT,
+    QUERY_SEARCH_SIMILARITY_QDRANT,
+    QUERY_SEARCH_SIMILARITY_QDRANT_FILTER_ACTIVE,
+    QUERY_SEARCH_SIMILARITY_QDRANT_HIT_COUNT,
+    QUERY_SEARCH_SIMILARITY_QDRANT_HITS_BY_SPACE,
+    QUERY_SEARCH_SIMILARITY_QDRANT_LIMIT_PER_SPACE,
+    QUERY_SEARCH_SIMILARITY_QDRANT_PROBE_KIND,
+    QUERY_SEARCH_SIMILARITY_QDRANT_REQUESTED_COUNT,
+    QUERY_SEARCH_SIMILARITY_QDRANT_RETURNED_COUNT,
+    QUERY_SEARCH_SIMILARITY_QDRANT_SPACE_COUNT,
+    QUERY_SEARCH_SIMILARITY_QDRANT_SPACES,
+)
+
+# Manual instrumentation tracer. A no-op proxy when `setup_tracing` hasn't run
+# (offline / the tmdb-facing debug entrypoint / tests), so every span/attr below
+# is a cheap no-op outside a traced request.
+tracer = trace.get_tracer(__name__)
 
 
 LaneName = Literal[
@@ -560,11 +601,27 @@ class SimilarMoviesDebug:
     raw_lane_weights: dict[LaneName, float] = field(default_factory=dict)
     normalized_lane_weights: dict[LaneName, float] = field(default_factory=dict)
     candidate_counts_by_lane: dict[LaneName, int] = field(default_factory=dict)
+    # Retrieval-side counts (distinct from the scoring-side
+    # `candidate_counts_by_lane` above): {lane: result_count} for every
+    # candidate-fetch query that actually ran (seed non-empty), and the
+    # deduped union size. Powers the branch span's `branch_retrieval_lanes` /
+    # `branch_retrieval_total`. A fired-but-empty lane is present at 0; a
+    # gated-off lane is absent.
+    retrieval_counts_by_lane: dict[str, int] = field(default_factory=dict)
+    retrieval_total: int = 0
+    # Multi-anchor per-metadata-lane cohort cohesion (`cohesion_by_lane`),
+    # surfaced for the branch span's `branch_lane_cohesion`. Empty single-anchor.
+    lane_cohesion: dict[str, float] = field(default_factory=dict)
     # V2 additions — non-additive signals and audit trails. All optional so
     # a single-anchor flow can leave the multi-anchor-only fields empty
     # without forcing callers to deal with `None` checks.
     anchor_format_bucket: FormatBucket | None = None
     anchor_medium_tags: list[int] = field(default_factory=list)
+    # Anchor reach×quality shape cohesion: {shape: M_s/N}. Single-anchor is
+    # {shape: 1.0} (or empty when the anchor is shapeless); multi-anchor
+    # carries the per-shape cohort fraction. Surfaced so the branch span can
+    # record the "obscure vs blockbuster" axis that active_anchor_types can't.
+    anchor_shape_cohesion: dict[str, float] = field(default_factory=dict)
     franchise_high_confidence: bool = False
     consensus_countries: list[int | str] = field(default_factory=list)
     low_cohesion_fallback_used: bool = False
@@ -1315,15 +1372,39 @@ def _record_vectors(record: object) -> dict[VectorName, list[float]]:
     return out
 
 
+class SimilarityQdrantProbeKind(str, Enum):
+    """`similarity_qdrant.probe_kind` values — the two Qdrant ops in the flow.
+
+    Mirrors `QdrantProbeKind` on the semantic path: one span name, a `probe_kind`
+    attribute discriminating the operations so a reader can filter either.
+    """
+
+    ANCHOR_VECTORS = "anchor_vectors"  # _load_anchor_vectors — retrieve stored vecs
+    SHAPE = "shape"                    # _query_spaces_batch — batched named-vector probe
+
+
 async def _load_anchor_vectors(
     anchor_ids: list[int],
 ) -> dict[int, dict[VectorName, list[float]]]:
-    records = await qdrant_client.retrieve(
-        collection_name=COLLECTION_ALIAS,
-        ids=anchor_ids,
-        with_payload=False,
-        with_vectors=[space.value for space in VectorName],
-    )
+    # Manual span around the anchor-vector retrieve: Qdrant speaks gRPC (no
+    # auto-instrumentation), so without this the vector-load is an untraced blind
+    # spot — the flow's OTHER Qdrant call (the `shape` probe) was the only visible
+    # one. `returned_count < requested_count` flags an anchor missing from Qdrant.
+    with tracer.start_as_current_span(QUERY_SEARCH_SIMILARITY_QDRANT) as span:
+        span.set_attribute(
+            QUERY_SEARCH_SIMILARITY_QDRANT_PROBE_KIND,
+            SimilarityQdrantProbeKind.ANCHOR_VECTORS.value,
+        )
+        span.set_attribute(
+            QUERY_SEARCH_SIMILARITY_QDRANT_REQUESTED_COUNT, len(anchor_ids)
+        )
+        records = await qdrant_client.retrieve(
+            collection_name=COLLECTION_ALIAS,
+            ids=anchor_ids,
+            with_payload=False,
+            with_vectors=[space.value for space in VectorName],
+        )
+        span.set_attribute(QUERY_SEARCH_SIMILARITY_QDRANT_RETURNED_COUNT, len(records))
     return {int(getattr(record, "id")): _record_vectors(record) for record in records}
 
 
@@ -1363,10 +1444,45 @@ async def _query_spaces_batch(
         )
         for vector_name, query_vector, limit in requests
     ]
-    responses = await qdrant_client.query_batch_points(
-        collection_name=COLLECTION_ALIAS,
-        requests=query_requests,
-    )
+    # Manual span around the Qdrant batch probe: Qdrant speaks gRPC, which the
+    # auto-instrumentation doesn't wrap, so this shape search is otherwise a
+    # timing blind spot. Nests under the branch span when run inside the
+    # similarity flow; a harmless orphan/no-op otherwise. One call fans out across
+    # N named vectors server-side, so the attrs describe the batch (space_count /
+    # spaces / per-space + total recall) rather than a single space.
+    spaces = [vector_name.value for vector_name, _, _ in requests]
+    with tracer.start_as_current_span(QUERY_SEARCH_SIMILARITY_QDRANT) as span:
+        span.set_attribute(
+            QUERY_SEARCH_SIMILARITY_QDRANT_PROBE_KIND,
+            SimilarityQdrantProbeKind.SHAPE.value,
+        )
+        span.set_attribute(QUERY_SEARCH_SIMILARITY_QDRANT_SPACE_COUNT, len(spaces))
+        span.set_attribute(QUERY_SEARCH_SIMILARITY_QDRANT_SPACES, json.dumps(spaces))
+        # Per-space limits are uniform within a call (shape search passes one
+        # effective limit across the batch); record it so the 2× over-fetch under
+        # an active filter is visible.
+        span.set_attribute(
+            QUERY_SEARCH_SIMILARITY_QDRANT_LIMIT_PER_SPACE, requests[0][2]
+        )
+        span.set_attribute(
+            QUERY_SEARCH_SIMILARITY_QDRANT_FILTER_ACTIVE, qdrant_filter is not None
+        )
+        responses = await qdrant_client.query_batch_points(
+            collection_name=COLLECTION_ALIAS,
+            requests=query_requests,
+        )
+        # Per-space recall (a space starved by the filter shows a short count) plus
+        # the total across the batch.
+        hits_by_space = {
+            space: len(response.points)
+            for space, response in zip(spaces, responses, strict=True)
+        }
+        span.set_attribute(
+            QUERY_SEARCH_SIMILARITY_QDRANT_HITS_BY_SPACE, json.dumps(hits_by_space)
+        )
+        span.set_attribute(
+            QUERY_SEARCH_SIMILARITY_QDRANT_HIT_COUNT, sum(hits_by_space.values())
+        )
     return [
         [(int(point.id), float(point.score)) for point in response.points]
         for response in responses
@@ -1981,7 +2097,7 @@ def _build_results(
             )
         )
 
-    woven = _weave_candidates(
+    woven, weave_targets = _weave_candidates(
         candidates,
         limit=limit,
         bucket_signals=bucket_signals,
@@ -1994,6 +2110,13 @@ def _build_results(
         is_franchise_by_movie=is_franchise_by_movie,
         enforce_director_gap_boost=enforce_director_gap_boost,
     )
+    # Surface the weaver's DESIRED per-bucket allocation onto the branch span (the
+    # current span when this runs inside the similarity entity flow; a no-op
+    # otherwise). This is the target ratio `_compute_bucket_targets` set before
+    # weaving — "how many auteur / franchise / lead-actor rows the list was meant
+    # to reserve" — not the realized draw (which multi-bucket credit routes through
+    # best_overall). See `_record_weave_targets` for the seats-vs-targets rationale.
+    _record_weave_targets(weave_targets)
     ranked = [
         SimilarMovieResult(
             movie_id=c.movie_id,
@@ -2222,7 +2345,7 @@ def _weave_candidates(
     is_franchise_by_movie: dict[int, bool] | None = None,
     # V3.4.9 director gap-boost (single-anchor flow only).
     enforce_director_gap_boost: bool = False,
-) -> list[_CandidateScore]:
+) -> tuple[list[_CandidateScore], dict[str, int]]:
     """V3.4 bucket-weaver: greedy slot-by-slot fill with MMR-style
     starvation boost.
 
@@ -2243,9 +2366,19 @@ def _weave_candidates(
 
     Past slot TOP_SECTION_SIZE, append remaining unplaced candidates in
     V3-rank order so the API can still return up to ``limit`` items.
+
+    Returns ``(woven, target)`` where ``target`` is the DESIRED per-bucket slot
+    allocation computed up front by ``_compute_bucket_targets`` (best_overall's
+    floor plus any signal bucket that cleared the instantiation threshold). This
+    is the intended ratio surfaced as similarity observability — deliberately the
+    target, not the realized draw: multi-bucket full credit (below) means a film
+    that belongs to a signal bucket but is picked via best_overall counts toward
+    that bucket's quota without the bucket ever winning a slot, so a per-slot draw
+    tally reads as "best_overall took everything" for franchise-dominant cohorts.
+    The target answers the more useful question — what the weave meant to reserve.
     """
     if not candidates or limit <= 0:
-        return []
+        return [], {}
 
     bucket_signals = bucket_signals or {}
     bucket_memberships_by_movie = bucket_memberships_by_movie or {}
@@ -2254,7 +2387,7 @@ def _weave_candidates(
     base_sorted = sorted(candidates, key=_base_sort_key)
     top_section_cap = min(TOP_SECTION_SIZE, limit)
     if not base_sorted:
-        return []
+        return [], {}
 
     # Targets: best_overall is always present; signal-buckets only when
     # they clear the instantiation threshold.
@@ -2437,15 +2570,41 @@ def _weave_candidates(
             else:
                 non_franchise_count += 1
 
-    return woven[:limit]
+    return woven[:limit], target
 
 
-async def _resolve_similarity_reference(reference: SimilarityReference) -> int | None:
-    """Resolve a single SimilarityReference to its most-popular matching
-    tmdb_id, optionally filtered by an explicitly-stated release_year.
+def _record_weave_targets(target_by_bucket: dict[str, int]) -> None:
+    """Set `branch_weave_targets` on the current span as a JSON `{bucket: slots}` map.
 
-    Returns None when nothing matches — callers in the multi-reference
-    path drop those entries silently per the Step 0 contract.
+    Records the DESIRED allocation `_compute_bucket_targets` set before weaving, NOT
+    the realized per-slot draw. A signal bucket absent from the map never
+    instantiated (its signal was below the gate); a bucket present with N slots was
+    the reservation the weave aimed for. Note this can diverge from what actually
+    landed: multi-bucket full credit lets a signal bucket's films enter via
+    best_overall, so an instantiated bucket can draw 0 real seats while still showing
+    its target here — that's intended, the target is the more useful reader signal.
+    Iterated in `ALL_BUCKETS` order for stable output; best_overall (always present)
+    leads. A no-op outside a traced request (the current span is then non-recording).
+    """
+    span = trace.get_current_span()
+    ordered = {
+        bucket: target_by_bucket[bucket]
+        for bucket in ALL_BUCKETS
+        if bucket in target_by_bucket
+    }
+    span.set_attribute(QUERY_SEARCH_BRANCH_WEAVE_TARGETS, json.dumps(ordered))
+
+
+async def _resolve_similarity_reference(reference: SimilarityReference) -> dict | None:
+    """Resolve a single SimilarityReference to the full signal row of its
+    most-popular matching movie, optionally filtered by an explicitly-stated
+    release_year.
+
+    Returns the winning movie's ``fetch_similarity_signal_rows`` row — the exact
+    shape ``run_similar_movies_for_ids`` needs for an anchor — so the caller hands
+    it straight through instead of discarding it and re-fetching the same row by ID.
+    Returns None when nothing matches; callers in the multi-reference path drop
+    those entries silently per the Step 0 contract.
     """
     title = reference.similar_search_title.strip()
     if not title:
@@ -2479,12 +2638,12 @@ async def _resolve_similarity_reference(reference: SimilarityReference) -> int |
             int(row["movie_id"]),
         )
     )
-    return int(candidates[0]["movie_id"])
+    return candidates[0]
 
 
 async def _resolve_similarity_anchors(
     references: list[SimilarityReference],
-) -> list[int]:
+) -> tuple[list[int], dict[int, dict], list[bool]]:
     """Resolve every reference in input order, dropping unresolvable
     ones, and de-dup the remainder while preserving first-seen order.
 
@@ -2498,18 +2657,33 @@ async def _resolve_similarity_anchors(
     twice), so they run concurrently via ``asyncio.gather``. ``gather``
     preserves argument order in its return list, which is what the
     downstream dedupe relies on to keep first-seen ordering stable.
+
+    Returns ``(anchor_ids, anchor_rows, per_ref_resolved)``: the deduped anchor
+    list; an ``{anchor_id: signal_row}`` map carrying the winning rows already
+    fetched during resolution, so the caller hands them to the engine instead of
+    triggering a redundant re-fetch by ID; and a per-reference bool (index-aligned
+    with ``references``) marking which reference titles resolved to an anchor — the
+    requested-vs-resolved signal that catches a silently-dropped reference (a
+    plausible-looking result set built from fewer anchors than the user named).
     """
-    resolved_ids = await asyncio.gather(
+    resolved_rows = await asyncio.gather(
         *(_resolve_similarity_reference(ref) for ref in references)
     )
     out: list[int] = []
-    seen: set[int] = set()
-    for anchor_id in resolved_ids:
-        if anchor_id is None or anchor_id in seen:
+    anchor_rows: dict[int, dict] = {}
+    for row in resolved_rows:
+        if row is None:
             continue
-        seen.add(anchor_id)
+        anchor_id = int(row["movie_id"])
+        # dict membership doubles as the dedupe set; first-seen order is kept by
+        # the parallel `out` list (a dict preserves insertion order, but `out`
+        # makes the ordering contract explicit for readers).
+        if anchor_id in anchor_rows:
+            continue
+        anchor_rows[anchor_id] = row
         out.append(anchor_id)
-    return out
+    per_ref_resolved = [row is not None for row in resolved_rows]
+    return out, anchor_rows, per_ref_resolved
 
 
 async def run_similarity_search(
@@ -2539,7 +2713,10 @@ async def run_similarity_search(
     # Non-empty references when should_be_searched=True is enforced by
     # the Step 0 schema validator (validate_flow_titles_when_searched),
     # so we trust the contract here.
-    anchor_ids = await _resolve_similarity_anchors(flow_data.references)
+    anchor_ids, anchor_rows, per_ref_resolved = await _resolve_similarity_anchors(
+        flow_data.references
+    )
+    _record_similarity_entities(flow_data.references, per_ref_resolved)
     if not anchor_ids:
         return SimilarMoviesSearchResult(
             anchor_movie_ids=[],
@@ -2547,23 +2724,158 @@ async def run_similarity_search(
             active_anchor_types=[],
             debug=SimilarMoviesDebug(vector_space_weights={}),
         )
-    return await run_similar_movies_for_ids(
+    # Hand the winning rows resolved above straight to the engine; anchor facets
+    # were already fetched while disambiguating each title, so the engine's anchor
+    # load fetches nothing on this path (see `run_similar_movies_for_ids`).
+    result = await run_similar_movies_for_ids(
         anchor_ids,
+        prefetched_anchor_rows=anchor_rows,
         limit=limit,
         qdrant_limit=qdrant_limit,
         metadata_filters=metadata_filters,
     )
+    _record_similarity_signals(result)
+    return result
+
+
+def _record_similarity_entities(
+    references: list[SimilarityReference],
+    per_ref_resolved: list[bool],
+) -> None:
+    """Set the entity skeleton on the branch span: the reference titles, a
+    per-reference resolved count (1 = the title resolved to an anchor, 0 = a
+    silently-dropped reference), and the unresolved total."""
+    span = trace.get_current_span()
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_ENTITIES,
+        [ref.similar_search_title for ref in references],
+    )
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_ENTITY_RESOLVED_COUNTS,
+        [1 if resolved else 0 for resolved in per_ref_resolved],
+    )
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_UNRESOLVED_ENTITY_COUNT,
+        sum(1 for resolved in per_ref_resolved if not resolved),
+    )
+
+
+# Shape token for an anchor (or cohort fraction) that classifies into no
+# reach×quality shape — the common "normal film" middle cell (reception 50–80,
+# sub-100K reach, no award shift). Emitted as the explicit string `"none"`
+# (single-anchor scalar) or a `"none"` key (multi-anchor cohesion map) rather
+# than being omitted, so the shapeless verdict stays a visible, first-class value.
+_ANCHOR_SHAPE_NONE = "none"
+
+# Float-noise guard for the multi-anchor shapeless fraction (1 - sum of shaped
+# fractions). Fractions are exact count/N ratios, so real "none" mass is well
+# above this; the epsilon only suppresses a spurious ~0 key from FP rounding.
+_SHAPE_NONE_EPSILON = 1e-9
+
+# Multiplier/boost paths surfaced on `branch_additional_boosts` — signals that
+# amplify scoring but aren't recoverable from the additive weights or the fetch
+# map. Currently just the auteur multiplier, flagged by `director_signature`
+# appearing in `active_anchor_types`. Extend the tuple as new boosts are added.
+_ADDITIONAL_BOOST_TYPES: tuple[str, ...] = ("director_signature",)
+
+
+def _set_json_map(span: object, name: str, mapping: dict) -> None:
+    """Set a `{label: number}` map on the span as a single JSON-string attribute.
+
+    OTel drops a raw dict attribute; a JSON string is kept and renders readably in
+    Tempo/Grafana with label and value side by side. Keys are sorted for stable,
+    diff-friendly output. Empty maps still emit `"{}"` (a visible non-empty string).
+    """
+    span.set_attribute(name, json.dumps({k: mapping[k] for k in sorted(mapping)}))
+
+
+def _record_similarity_signals(result: SimilarMoviesSearchResult) -> None:
+    """Set similarity-specific flow signals on the branch span, organized around
+    the four reader questions: (1) which traits mattered, (2) which avenues fetched
+    candidates and how many each returned, (3) how strong the scoring weights were,
+    (4) which paths were active in the final weave. Map-shaped signals are single
+    JSON-string attributes (see `_set_json_map`). The (1) block is flow-specific —
+    single-anchor emits its additive weight modifiers + scalar shape, multi-anchor
+    emits per-shape/lane/vector-space cohort cohesion — so the split mirrors how the
+    two flows actually differ. Weave-seat counts are set deeper, in `_build_results`."""
+    span = trace.get_current_span()
+    debug = result.debug
+    is_single = len(result.anchor_movie_ids) == 1
+
+    # (2) Candidate-fetch avenues (fired lanes → result count) + deduped union.
+    _set_json_map(span, QUERY_SEARCH_BRANCH_RETRIEVAL_LANES, debug.retrieval_counts_by_lane)
+    span.set_attribute(QUERY_SEARCH_BRANCH_RETRIEVAL_TOTAL, debug.retrieval_total)
+
+    # (3) Scoring weight strengths: additive lane weights + the 8-space shape mix.
+    _set_json_map(span, QUERY_SEARCH_BRANCH_LANE_WEIGHTS, debug.normalized_lane_weights)
+    _set_json_map(
+        span, QUERY_SEARCH_BRANCH_VECTOR_SPACE_WEIGHTS, debug.vector_space_weights
+    )
+
+    # (4) Final-weave paths: seat map is set in `_build_results`; fallback flag here.
+    span.set_attribute(
+        QUERY_SEARCH_BRANCH_LOW_COHESION_FALLBACK,
+        bool(debug.low_cohesion_fallback_used),
+    )
+
+    # Multiplier boosts invisible in the weights/fetch map (currently the auteur
+    # multiplier). Omit the attribute entirely when nothing fired.
+    boosts = [b for b in _ADDITIONAL_BOOST_TYPES if b in result.active_anchor_types]
+    if boosts:
+        span.set_attribute(QUERY_SEARCH_BRANCH_ADDITIONAL_BOOSTS, json.dumps(boosts))
+
+    # (1) Traits marked important — flow-specific presentation.
+    if is_single:
+        # Additive lane-weight-delta modifiers enacted (cult_garbage / prestige /
+        # franchise_dominant / source_material); derived from the delta table so it
+        # stays in sync. Always set — `"[]"` explicitly signals "no modifiers".
+        modifiers = [
+            t for t in result.active_anchor_types if SINGLE_ANCHOR_ADJUSTMENTS.get(t)
+        ]
+        span.set_attribute(QUERY_SEARCH_BRANCH_SHAPE_MODIFIERS, json.dumps(modifiers))
+        # Scalar reach×quality shape; single-anchor cohesion is {shape: 1.0} or {}.
+        shape_keys = list(debug.anchor_shape_cohesion)
+        span.set_attribute(
+            QUERY_SEARCH_BRANCH_ANCHOR_SHAPE,
+            shape_keys[0] if shape_keys else _ANCHOR_SHAPE_NONE,
+        )
+    else:
+        # Cohort shape composition, dominant fraction first, with an explicit
+        # `"none"` entry for the shapeless fraction so the map sums to 1.
+        cohesion = dict(debug.anchor_shape_cohesion)
+        none_fraction = 1.0 - sum(cohesion.values())
+        # Keep full float precision (not rounded) so `none` matches the shaped
+        # fractions' precision and the map sums to 1 within float epsilon.
+        if none_fraction > _SHAPE_NONE_EPSILON:
+            cohesion[_ANCHOR_SHAPE_NONE] = none_fraction
+        ordered = dict(sorted(cohesion.items(), key=lambda kv: (-kv[1], kv[0])))
+        span.set_attribute(
+            QUERY_SEARCH_BRANCH_ANCHOR_SHAPE_COHESION, json.dumps(ordered)
+        )
+        _set_json_map(span, QUERY_SEARCH_BRANCH_LANE_COHESION, debug.lane_cohesion)
+        _set_json_map(
+            span, QUERY_SEARCH_BRANCH_VECTOR_SPACE_COHESION, debug.vector_space_cohesion
+        )
 
 
 async def run_similar_movies_for_ids(
     tmdb_ids: list[int],
     *,
+    prefetched_anchor_rows: dict[int, dict] | None = None,
     limit: int = 50,
     qdrant_limit: int = DEFAULT_QDRANT_LIMIT,
     quality_limit: int = DEFAULT_QUALITY_LIMIT,
     metadata_filters: MetadataFilters | None = None,
 ) -> SimilarMoviesSearchResult:
     """Run similar-movies search for one or more anchor TMDB IDs.
+
+    This is the shared engine entry point reached two ways: the title flow
+    (``run_similarity_search``) resolves each reference to its signal row and
+    passes those rows via ``prefetched_anchor_rows``; the raw-ID callers (batch
+    runner, direct API endpoint) pass only IDs. ``prefetched_anchor_rows`` lets a
+    caller that already holds anchor signal rows hand them in so the anchor facet
+    load queries only the IDs it wasn't given — on the title path, none — while
+    raw-ID callers fetch every anchor here exactly as before.
 
     ``metadata_filters`` is threaded into every candidate-generation lane
     (Postgres lanes via inline / direct ``movie_card`` filter clauses; the
@@ -2574,20 +2886,34 @@ async def run_similar_movies_for_ids(
     if not anchor_ids:
         raise ValueError("tmdb_ids must contain at least one movie ID.")
 
-    # The four prefetches are independent — collapsing 4×RTT into max(RTT).
-    # anchor_rows is the only one whose absence is fatal (missing → LookupError);
-    # the others are pure inputs we'd need either way.
+    # Reuse any anchor rows the caller already fetched (title path), and query only
+    # the anchors we weren't handed. `fetch_similarity_signal_rows([])` short-circuits
+    # to `{}` with no round-trip, so the title path fetches — and traces — nothing here.
+    anchor_id_set = set(anchor_ids)
+    supplied_rows = {
+        mid: row
+        for mid, row in (prefetched_anchor_rows or {}).items()
+        if mid in anchor_id_set
+    }
+    missing_ids = [mid for mid in anchor_ids if mid not in supplied_rows]
+
+    # The remaining prefetches are independent — collapsing their RTTs into
+    # max(RTT). The anchor-row fetch (empty on the title path) joins the same
+    # gather so raw-ID callers still overlap all four reads.
     (
-        anchor_rows,
+        fetched_rows,
         vectors_by_anchor,
         studio_entries_by_company_id,
         director_terms_by_anchor,
     ) = await asyncio.gather(
-        fetch_similarity_signal_rows(anchor_ids),
+        fetch_similarity_signal_rows(missing_ids),
         _load_anchor_vectors(anchor_ids),
         _load_studio_entries_by_company_id(),
         fetch_director_term_ids_for_movies(anchor_ids),
     )
+    anchor_rows = {**supplied_rows, **fetched_rows}
+    # Fatal if any anchor still lacks a row — a supplied-but-stale ID or a raw ID
+    # with no movie_card row both surface here.
     missing = [mid for mid in anchor_ids if mid not in anchor_rows]
     if missing:
         raise LookupError(f"movie_card rows not found for tmdb_ids={missing}")
@@ -2616,6 +2942,72 @@ async def run_similar_movies_for_ids(
         quality_limit=quality_limit,
         metadata_filters=metadata_filters,
     )
+
+
+# Per-lane candidate-fetch instrumentation. Each Postgres retrieval lane in the
+# similarity flow runs concurrently inside `asyncio.gather`; `gather` wraps every
+# coroutine in its own Task, and a Task copies the current OTel context at creation
+# time (the branch span is current then). So a span started inside a wrapped fetch
+# nests under the branch span, and the fetch's own auto-instrumented SQL span nests
+# under THAT — no cross-lane context bleed. The qdrant shape probe is deliberately
+# excluded (its params never vary; it carries its own `similarity_qdrant` span).
+_FetchResultT = TypeVar("_FetchResultT", bound=Sized)
+
+
+async def _traced_lane_fetch(
+    lane: str,
+    match: dict[str, object],
+    coro: Awaitable[_FetchResultT],
+) -> _FetchResultT:
+    """Wrap one similarity candidate-fetch coroutine in a `similarity_fetch` span.
+
+    Records the target `lane`, the concrete `match` values the lane queried on (the
+    bound IN-list IDs the auto-instrumented SQL span parameterizes away, as a JSON
+    object since the keys vary by lane), and the returned `result_count`, then awaits
+    and returns the fetch result unchanged. Behavior-preserving: the result and any
+    raised exception propagate exactly as the bare `await coro` would.
+    """
+    with tracer.start_as_current_span(QUERY_SEARCH_SIMILARITY_FETCH) as span:
+        span.set_attribute(QUERY_SEARCH_SIMILARITY_FETCH_LANE, lane)
+        span.set_attribute(
+            QUERY_SEARCH_SIMILARITY_FETCH_MATCH, json.dumps(match, sort_keys=True)
+        )
+        result = await coro
+        span.set_attribute(QUERY_SEARCH_SIMILARITY_FETCH_RESULT_COUNT, len(result))
+        return result
+
+
+def _franchise_match(
+    lineage_entry_ids: set[int],
+    shared_universe_entry_ids: set[int],
+    subgroup_entry_ids: set[int],
+) -> dict[str, object]:
+    """Build the franchise-lane `match` object, omitting empty ID dimensions so the
+    span shows only the franchise axes the query actually filtered on."""
+    match: dict[str, object] = {}
+    if lineage_entry_ids:
+        match["lineage_entry_ids"] = sorted(lineage_entry_ids)
+    if shared_universe_entry_ids:
+        match["shared_universe_entry_ids"] = sorted(shared_universe_entry_ids)
+    if subgroup_entry_ids:
+        match["subgroup_entry_ids"] = sorted(subgroup_entry_ids)
+    return match
+
+
+def _themes_recall_match(traits: set[tuple[int, int]]) -> dict[str, object]:
+    """Build the themes-recall `match` object, splitting the (kind, trait_id) pairs
+    into the same per-kind ID legs the recall SQL fires on; empty legs omitted."""
+    keyword_ids = sorted(t for (k, t) in traits if k == TRAIT_KIND_OVERALL_KEYWORD)
+    concept_tag_ids = sorted(t for (k, t) in traits if k == TRAIT_KIND_CONCEPT_TAG)
+    genre_ids = sorted(t for (k, t) in traits if k == TRAIT_KIND_TMDB_GENRE)
+    match: dict[str, object] = {}
+    if keyword_ids:
+        match["keyword_ids"] = keyword_ids
+    if concept_tag_ids:
+        match["concept_tag_ids"] = concept_tag_ids
+    if genre_ids:
+        match["genre_ids"] = genre_ids
+    return match
 
 
 async def _run_single_anchor_similarity(
@@ -2722,6 +3114,44 @@ async def _run_single_anchor_similarity(
         metadata_filters=metadata_filters,
     )
 
+    # Wrap each Postgres candidate lane that actually runs in its own span so the
+    # trace shows the target lane and the concrete IDs it matched on (the qdrant
+    # shape probe is excluded — its params never vary). Gate on the same seed
+    # predicates as `retrieval_counts` below, so a span appears iff that lane's
+    # query fired.
+    if anchor_directors:
+        director_task = _traced_lane_fetch(
+            "director", {"director_term_ids": sorted(anchor_directors)}, director_task
+        )
+    if anchor_lineage or anchor_universe or anchor_subgroups:
+        franchise_task = _traced_lane_fetch(
+            "franchise",
+            _franchise_match(anchor_lineage, anchor_universe, anchor_subgroups),
+            franchise_task,
+        )
+    if anchor_studio_company_ids:
+        studio_task = _traced_lane_fetch(
+            "studio", {"company_ids": sorted(anchor_studio_company_ids)}, studio_task
+        )
+    if anchor_source_ids:
+        source_task = _traced_lane_fetch(
+            "source",
+            {"source_material_type_ids": sorted(anchor_source_ids)},
+            source_task,
+        )
+    if cult_or_prestige:
+        quality_task = _traced_lane_fetch(
+            "quality",
+            {"bucket": quality_bucket, "limit": effective_quality_limit},
+            quality_task,
+        )
+    if anchor_themes_traits:
+        themes_recall_task = _traced_lane_fetch(
+            "themes_recall",
+            _themes_recall_match(anchor_themes_traits),
+            themes_recall_task,
+        )
+
     (
         (shape_scores, vector_space_weights),
         director_candidate_terms,
@@ -2767,8 +3197,12 @@ async def _run_single_anchor_similarity(
         and tag != LIVE_ACTION_TAG_ID
     }
     rare_medium_candidate_ids: set[int] = (
-        await fetch_movie_ids_by_overall_keywords(
-            list(rare_medium_tags), metadata_filters=metadata_filters,
+        await _traced_lane_fetch(
+            "rare_medium",
+            {"medium_tag_ids": sorted(rare_medium_tags)},
+            fetch_movie_ids_by_overall_keywords(
+                list(rare_medium_tags), metadata_filters=metadata_filters,
+            ),
         )
         if rare_medium_tags
         else set()
@@ -2811,6 +3245,27 @@ async def _run_single_anchor_similarity(
     candidate_ids.update(rare_medium_candidate_ids)
     candidate_ids.update(themes_recall_candidate_ids)  # V3.1 themes recall path
     candidate_ids.discard(anchor_id)
+
+    # Retrieval-side pool sizes for the branch span. Key a lane only when its
+    # seed was non-empty (the query actually ran) — a fired-but-empty lane stays
+    # present at 0 (an informative retrieval gap), a lane with no seed is absent.
+    # shape always runs. Mirrors the per-lane fetch conditions above.
+    retrieval_counts: dict[str, int] = {"shape": len(shape_scores)}
+    if anchor_directors:
+        retrieval_counts["director"] = len(director_candidate_terms)
+    if anchor_lineage or anchor_universe or anchor_subgroups:
+        retrieval_counts["franchise"] = len(franchise_candidate_ids)
+    if anchor_studio_company_ids:
+        retrieval_counts["studio"] = len(studio_candidate_ids)
+    if anchor_source_ids:
+        retrieval_counts["source"] = len(source_candidate_ids)
+    if cult_or_prestige:
+        retrieval_counts["quality"] = len(quality_candidate_ids)
+    if anchor_themes_traits:
+        retrieval_counts["themes_recall"] = len(themes_recall_candidate_ids)
+    if rare_medium_tags:
+        retrieval_counts["rare_medium"] = len(rare_medium_candidate_ids)
+    retrieval_total = len(candidate_ids)
 
     # Candidate-side reads run in parallel — independent Postgres
     # queries with no dependency between them. V3.3.2: always fetch
@@ -3050,8 +3505,11 @@ async def _run_single_anchor_similarity(
             raw_lane_weights=raw_lane_weights,
             normalized_lane_weights=lane_weights,
             candidate_counts_by_lane=counts,
+            retrieval_counts_by_lane=retrieval_counts,
+            retrieval_total=retrieval_total,
             anchor_format_bucket=anchor_format_bucket,
             anchor_medium_tags=sorted(anchor_medium_tags),
+            anchor_shape_cohesion=anchor_shape_cohesion,
         ),
     )
 
@@ -3181,8 +3639,12 @@ async def _run_multi_anchor_similarity(
         auteur = await fetch_auteur_term_ids()
         anchor_has_auteur = bool(director_terms & auteur)
         if director_cohesion_active or anchor_has_auteur:
-            director_result = await fetch_director_movie_terms(
-                director_terms, metadata_filters=metadata_filters,
+            director_result = await _traced_lane_fetch(
+                "director",
+                {"director_term_ids": sorted(director_terms)},
+                fetch_director_movie_terms(
+                    director_terms, metadata_filters=metadata_filters,
+                ),
             )
         else:
             director_result = {}
@@ -3190,25 +3652,37 @@ async def _run_multi_anchor_similarity(
 
     director_combo_task = _fetch_auteur_and_director()
     franchise_task = (
-        fetch_similarity_franchise_candidates(
-            lineage_entry_ids=franchise_traits,
-            shared_universe_entry_ids=set(),
-            subgroup_entry_ids=set(),
-            metadata_filters=metadata_filters,
+        _traced_lane_fetch(
+            "franchise",
+            _franchise_match(franchise_traits, set(), set()),
+            fetch_similarity_franchise_candidates(
+                lineage_entry_ids=franchise_traits,
+                shared_universe_entry_ids=set(),
+                subgroup_entry_ids=set(),
+                metadata_filters=metadata_filters,
+            ),
         )
         if cohesion_by_lane["franchise"] > 0.0
         else _empty_set()
     )
     studio_task = (
-        fetch_movie_ids_by_production_company_ids(
-            studio_company_ids, metadata_filters=metadata_filters,
+        _traced_lane_fetch(
+            "studio",
+            {"company_ids": sorted(studio_company_ids)},
+            fetch_movie_ids_by_production_company_ids(
+                studio_company_ids, metadata_filters=metadata_filters,
+            ),
         )
         if cohesion_by_lane["studio"] > 0.0
         else _empty_set()
     )
     source_task = (
-        fetch_similarity_source_candidates(
-            source_ids, metadata_filters=metadata_filters,
+        _traced_lane_fetch(
+            "source",
+            {"source_material_type_ids": sorted(source_ids)},
+            fetch_similarity_source_candidates(
+                source_ids, metadata_filters=metadata_filters,
+            ),
         )
         if cohesion_by_lane["source"] > 0.0
         else _empty_set()
@@ -3220,10 +3694,14 @@ async def _run_multi_anchor_similarity(
         quality_limit * 2 if metadata_filters is not None else quality_limit
     )
     quality_task = (
-        fetch_similarity_quality_candidates(
-            bucket=repeated_quality_bucket,
-            limit=effective_quality_limit,
-            metadata_filters=metadata_filters,
+        _traced_lane_fetch(
+            "quality",
+            {"bucket": repeated_quality_bucket, "limit": effective_quality_limit},
+            fetch_similarity_quality_candidates(
+                bucket=repeated_quality_bucket,
+                limit=effective_quality_limit,
+                metadata_filters=metadata_filters,
+            ),
         )
         if repeated_quality_bucket is not None and cohesion_by_lane["quality"] > 0.0
         else _empty_set()
@@ -3276,20 +3754,24 @@ async def _run_multi_anchor_similarity(
         n,
     )
     themes_recall_candidate_ids: set[int] = (
-        await fetch_movie_ids_by_themes_recall(
-            keyword_ids=[
-                tid for (kind, tid) in themes_recall_consensus
-                if kind == TRAIT_KIND_OVERALL_KEYWORD
-            ],
-            concept_tag_ids=[
-                tid for (kind, tid) in themes_recall_consensus
-                if kind == TRAIT_KIND_CONCEPT_TAG
-            ],
-            genre_ids=[
-                tid for (kind, tid) in themes_recall_consensus
-                if kind == TRAIT_KIND_TMDB_GENRE
-            ],
-            metadata_filters=metadata_filters,
+        await _traced_lane_fetch(
+            "themes_recall",
+            _themes_recall_match(themes_recall_consensus),
+            fetch_movie_ids_by_themes_recall(
+                keyword_ids=[
+                    tid for (kind, tid) in themes_recall_consensus
+                    if kind == TRAIT_KIND_OVERALL_KEYWORD
+                ],
+                concept_tag_ids=[
+                    tid for (kind, tid) in themes_recall_consensus
+                    if kind == TRAIT_KIND_CONCEPT_TAG
+                ],
+                genre_ids=[
+                    tid for (kind, tid) in themes_recall_consensus
+                    if kind == TRAIT_KIND_TMDB_GENRE
+                ],
+                metadata_filters=metadata_filters,
+            ),
         )
         if themes_recall_consensus
         else set()
@@ -3365,6 +3847,25 @@ async def _run_multi_anchor_similarity(
     candidate_ids.update(quality_candidate_ids)
     candidate_ids.update(themes_recall_candidate_ids)  # V3.1 themes recall path
     candidate_ids -= set(anchor_ids)
+
+    # Retrieval-side pool sizes for the branch span. Multi-anchor lanes gate on
+    # cohort agreement (the same predicates guarding each `_empty_set()` above),
+    # so keying on those predicates records a lane only when its query actually
+    # ran — fired-but-empty present at 0, gated-off absent. shape always runs.
+    retrieval_counts: dict[str, int] = {"shape": len(shape_scores)}
+    if cohesion_by_lane["director"] > 0.0 or has_auteur_anchor:
+        retrieval_counts["director"] = len(director_candidate_terms)
+    if cohesion_by_lane["franchise"] > 0.0:
+        retrieval_counts["franchise"] = len(franchise_candidate_ids)
+    if cohesion_by_lane["studio"] > 0.0:
+        retrieval_counts["studio"] = len(studio_candidate_ids)
+    if cohesion_by_lane["source"] > 0.0:
+        retrieval_counts["source"] = len(source_candidate_ids)
+    if repeated_quality_bucket is not None and cohesion_by_lane["quality"] > 0.0:
+        retrieval_counts["quality"] = len(quality_candidate_ids)
+    if themes_recall_consensus:
+        retrieval_counts["themes_recall"] = len(themes_recall_candidate_ids)
+    retrieval_total = len(candidate_ids)
 
     # Candidate-side reads.
     candidate_rows_task = fetch_similarity_signal_rows(list(candidate_ids))
@@ -3678,6 +4179,14 @@ async def _run_multi_anchor_similarity(
         active_anchor_types.append("source_material")
     if repeated_quality_bucket in {"cult_garbage", "prestige"}:
         active_anchor_types.append(repeated_quality_bucket)  # type: ignore[arg-type]
+    # director_signature parity with single-anchor: fire when any anchor's
+    # director is on the curated auteur list. `has_auteur_anchor` mirrors the
+    # single-anchor `anchor_directors & auteur_term_ids` gate over the union of
+    # anchor directors. Without this the multi-anchor branch silently omitted
+    # director_signature from active_anchor_types even for all-auteur cohorts,
+    # so the traced attribute meant different things single vs multi.
+    if has_auteur_anchor:
+        active_anchor_types.append("director_signature")
 
     # Per-anchor active-anchor-types — useful for debugging centroid drift
     # cases (Best Picture trio where Schindler/12YS dominated and pushed
@@ -3699,10 +4208,14 @@ async def _run_multi_anchor_similarity(
             raw_lane_weights=raw_lane_weights,
             normalized_lane_weights=lane_weights,
             candidate_counts_by_lane=counts,
+            retrieval_counts_by_lane=retrieval_counts,
+            retrieval_total=retrieval_total,
+            lane_cohesion=dict(cohesion_by_lane),
             anchor_format_bucket=repeated_format_bucket,
             consensus_countries=sorted(consensus_countries, key=str),
             per_anchor_active_anchor_types=per_anchor_active,
             shorts_dominant=shorts_dominant,
+            anchor_shape_cohesion=anchor_shape_cohesion,
         ),
     )
 
