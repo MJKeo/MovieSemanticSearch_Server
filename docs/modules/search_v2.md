@@ -324,11 +324,14 @@ Phase B — Pool definition: positive generators in parallel → union
             cross-iteration cache so a spec dispatched in an earlier
             tier is not re-dispatched if a later tier holds an
             identical (route, params) spec
-Phase C — Reranker pass: positive rerankers in parallel against the
-          finalized union (no trait-local scoping). Specs that were
-          promoted to generators during the tiered loop are removed
+Phase C — Reranker pass: positive AND negative rerankers dispatch together
+          (one `asyncio.gather`, under the `rerankers` observability span)
+          against the finalized union (no trait-local scoping). Specs that
+          were promoted to generators during the tiered loop are removed
           from this pass so their generator score isn't overwritten
-Phase D — Per-trait scoring (positive + negative), described below
+Phase D — Per-trait scoring (positive + negative): folds the Phase-C
+          dispatch results into gate/fuzzy/combine math, described below
+          (dispatch already happened in Phase C — this phase is pure compute)
 Phase E — Branch aggregation: Σ trait_score × weight × sign
 ```
 
@@ -418,7 +421,11 @@ per-trait prior-axis evidence, an explicit ordering-axis analysis,
 query specificity / prior room, and final quality/popularity
 `PriorDecision`s.
 
-The full orchestrator applies active priors after Stage 4 base scoring.
+Stage 4 applies active priors after base scoring, inside
+`stage_4_execution._run_branch`'s `scoring` span
+(`search_v2/implicit_prior_rerank.py`; moved out of the full
+orchestrator's separate post-Stage-4 pass so `top_score` is captured
+pre-boost).
 **Axis selection**: if `popularity_prior.direction != "none"` and
 `popularity_cap > 0`, use popularity only; otherwise (popularity
 inactive) fall back to quality alone.
@@ -614,7 +621,8 @@ concurrently via `asyncio.gather`.
 | `person_search.py` | PERSON entity-flow executor. Role-agnostic union across actor/director/writer/producer/composer postings. 4-bucket prominence (actor billing only) + (overlap_count DESC, popularity DESC) within-bucket sort. |
 | `actor_zones.py` | Sqrt-adaptive cast-zone primitives shared between person_search (actor table) and entity_query_execution. |
 | `popularity_sort.py` | Shared popularity-sort helper for entity-flow executors. |
-| `implicit_expectations.py` | Implicit-prior state management (quality/popularity priors). |
+| `implicit_expectations.py` | Implicit-prior policy generation (quality/popularity priors). OpenAI `gpt-5.4-mini` with `reasoning_effort="low"`, `verbosity="low"` (swapped from Gemini for consistency with `step_3.py` and the entity/query-generation callsites). |
+| `implicit_prior_rerank.py` | Implicit-prior post-Stage-4 rerank application (extracted from `full_pipeline_orchestrator.py`): `apply_implicit_prior_rerank_for_branch`, the `BoostAxis`/`PriorNoopReason` value enums, and the boost math. Runs inside Stage 4's `scoring` span via `stage_4_execution._run_branch`. |
 | `vague_temporal_vocabulary.py` | Shared vague-time/duration mappings injected into Steps 2/3 and metadata handler. |
 | `attribute_search.py` | Backs `POST /attribute_search`. Deterministic hard-attribute browse; sums Step-0 person-prominence bucket weights across people. No LLM/vector. |
 | `title_search.py` | Backs `GET /title_search`. Deterministic title typeahead over `movie_card.title_normalized` (two exact tiers + `pg_trgm` fuzzy fallback). No LLM/vector/Redis. |
@@ -829,26 +837,60 @@ through every V2 pipeline primitive at retrieval time:
 ## Observability
 
 The `/query_search` streaming path (`streaming_orchestrator.py`) carries manual
-OTel spans through most of the pipeline: `query_search.step_0`/`.step_1`
-(flow routing + spin generation), one `query_search.branch` span per fetch
-(also emitted on rerun, which shares `_stream_from_branch_plan`), the
-standard-branch trait pipeline (`full_pipeline_orchestrator.py` /
-`category_handlers/handler.py`: `.step_2`/`.trait`/`.step_3`/`.query_generation`),
-the six entity-flow executors' `branch_*` attributes + per-flow child spans,
-the Stage 4 execution spans (`stage_4_execution.py`: `query_search.generators`
-/ `.promotion` / `.neutral_seed` / `.rerankers` / `.negatives` and a per-call
-`.dispatch` span, plus fallback/dedup/shorts/timeout events — the pool-definition
-+ reranker/negative-dispatch half; scoring/aggregation is a later bite), and
-manual Qdrant probe spans (`semantic_query_execution.py`'s
-`query_search.semantic_qdrant`, `similar_movies.py`'s `similarity_qdrant`) that
-close the gRPC auto-instrumentation gap. Every routed LLM call
-(`implementation/llms/generic_methods.py`) nests a shared `llm.generate` span
-under whichever step/branch/handler span is current, so cost/tokens/retries
-attribute automatically to the right stage. This module never imports the OTel
-SDK directly for its own logic — spans wrap existing call sites without
-changing return values or control flow. Source of truth for the full span/
-attribute catalog: `observability_context/observability_architecture.md`;
-summary: `docs/modules/api.md`'s Observability section.
+OTel spans through the entire pipeline. Each standard branch's spans collapse
+into six groups under its `query_search.branch` span, with per-stage
+`cost_usd` on groups A-D (a `ContextVar` stack in `observability/cost_tracking.py`,
+generalized from a single request-wide accumulator so concurrent branches/
+stages each isolate their own subtree while the request root still sums
+everything):
+
+- **A `step_2`** — the Step-2 LLM call (`full_pipeline_orchestrator.py`).
+- **B `decomposition`** — wraps the whole post-Step-2 fan-out: every per-trait
+  `trait` span (Step 3 + query generation) and the `implicit_expectations`
+  span (the implicit-prior policy LLM call, `run_implicit_expectations`) nest
+  under it; `decomposition.cost_usd` rolls up their combined spend.
+- **C `candidate_generation`** — Stage 4 Phase B pool definition
+  (`stage_4_execution.py`): the `generators` (initial dispatch), `promotion`
+  (one span per tiered-promotion round), and `neutral_seed` (empty-pool
+  fallback) spans nest under it; carries `fetch_count`/`candidate_count`/
+  `cost_usd`.
+- **D `rerankers`** — Stage 4 Phase C: positive and negative rerankers now
+  dispatch together in one `asyncio.gather` (previously serialized, with
+  negatives as a separate top-level `query_search.negatives` span — retired);
+  each per-call `dispatch` child span carries a `dispatch.polarity` attribute
+  (POSITIVE/NEGATIVE) since dispatch routing itself doesn't otherwise
+  distinguish them.
+- **E `scoring`** — Stage 4 Phase D+E (positive combine/weight fold, negative
+  gate×fuzzy, aggregation): `scoring.trait_weights` (per-trait weight
+  decomposition, incl. corpus-rarity for pure-generator traits),
+  `scoring.ranked_count`, `scoring.top_score` (pre-implicit-prior baseline).
+  The implicit-prior rerank (`search_v2/implicit_prior_rerank.py`'s
+  `query_search.implicit_prior_rerank` span — `boost_axis`, both priors'
+  direction/strength, `*_cap`/`*_active`, `inverse_applied`, `noop_reason`,
+  `signal_missing_count`) now runs INSIDE this span (moved out of the full
+  orchestrator's separate post-Stage-4 pass), so `top_score` is captured
+  before the boost.
+- **F `hydration`** (`streaming_orchestrator.py`) — wraps
+  `fetch_movie_card_summaries`: `requested_count`/`returned_count` + a
+  "hydration missing cards" event for scored ids with no `movie_card` row.
+
+Entity-flow branches skip A-E (they have no standard-branch pipeline) but
+still record their own `branch_*` attributes + per-flow child spans directly
+on `query_search.branch`, and share F via the same `_run_*_with_hydration`
+wrappers. Rerun (`/rerun_query_search`) reuses every one of these spans
+since it shares `_stream_from_branch_plan`.
+
+Every routed LLM call (`implementation/llms/generic_methods.py`) nests a
+shared `llm.generate` span under whichever group span is current, so
+cost/tokens/retries attribute automatically to the right stage. Manual Qdrant
+probe spans (`semantic_query_execution.py`'s `query_search.semantic_qdrant`,
+`similar_movies.py`'s `similarity_qdrant`) close the gRPC auto-instrumentation
+gap and nest under whichever group is current at dispatch time. This module
+never imports the OTel SDK directly for its own logic outside the
+instrumentation call sites — spans wrap existing call sites without changing
+return values or control flow. Source of truth for the full span/attribute
+catalog: `observability_context/observability_architecture.md`; summary:
+`docs/modules/api.md`'s Observability section.
 
 ## Interactions
 

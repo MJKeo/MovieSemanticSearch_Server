@@ -91,35 +91,45 @@ and API endpoints for search and movie detail retrieval.
   by `/rerun_query_search` and — for `result_count` — every
   result-returning endpoint.
 
-  Pipeline-stage spans now cover most of the streaming path: `query_search.step_0`
+  Pipeline-stage spans now cover the full streaming path: `query_search.step_0`
   / `.step_1` (flow routing + spin generation, parallel siblings under the
   server span); one `query_search.branch` span per fetch (`branch_type` +
   `branch_uses_original_text`), closed centrally in the merge loop — also
   emitted on `/rerun_query_search` since it shares the same
-  `_stream_from_branch_plan`; per standard-branch trait pipeline spans
-  `query_search.step_2` / `.trait` / `.step_3` / `.query_generation`; the six
-  entity-flow executors (person / similarity / exact_title / studio /
-  non_character_franchise / character_franchise) record `branch_*` attributes
-  plus per-flow child spans (person per-entity resolution, character-franchise's
-  two parallel resolutions, similarity's Qdrant probes + per-lane candidate
-  fetches) directly onto their `query_search.branch` span; and Stage 4's Qdrant
-  calls carry `query_search.semantic_qdrant` (three primitives, `probe_kind`
-  discriminator) and `similarity.qdrant` (anchor-vector retrieve + shape probe;
-  flow-neutral, emitted by the shared engine — the similarity branch's signal
-  attributes are likewise the `similarity.*` set, not `query_search.branch_*`)
-  spans. The implicit-prior mechanism carries two per-standard-branch spans:
-  `query_search.implicit_expectations` (the policy LLM call) and
-  `query_search.implicit_prior_rerank` (the post-Stage-4 rerank — `boost_axis`,
-  both priors' direction/strength, the `*_cap`/`*_active` selection vars,
+  `_stream_from_branch_plan`. Each standard branch collapses its ~11 sibling
+  spans into six named groups under `query_search.branch` (with per-stage
+  `cost_usd` on the first four): `step_2` (the Step-2 LLM call),
+  `decomposition` (wraps every per-trait `.trait`/`.step_3`/`.query_generation`
+  span plus the implicit-prior policy call `implicit_expectations`),
+  `candidate_generation` (Stage 4 Phase B: wraps `generators`/`promotion`/
+  `neutral_seed`; `fetch_count`/`candidate_count`/`cost_usd`), `rerankers`
+  (Stage 4 Phase C: positive + negative rerankers dispatch together in one
+  `asyncio.gather`, each `.dispatch` child span carrying a `dispatch.polarity`
+  attribute — the standalone `query_search.negatives` span was retired),
+  `scoring` (Stage 4 Phase D+E: `trait_weights`/`ranked_count`/`top_score`,
+  with the implicit-prior rerank `query_search.implicit_prior_rerank`
+  — `boost_axis`, both priors' direction/strength, `*_cap`/`*_active`,
   `inverse_applied`, `noop_reason`, `signal_missing_count`, plus
-  `implicit_expectations_failed` / `implicit_prior_apply_failed` events).
+  `implicit_expectations_failed`/`implicit_prior_apply_failed` events — now
+  nested inside it rather than a separate post-Stage-4 pass), and `hydration`
+  (`fetch_movie_card_summaries`: `requested_count`/`returned_count` + a
+  "hydration missing cards" event). The six entity-flow executors (person /
+  similarity / exact_title / studio / non_character_franchise /
+  character_franchise) skip that group structure — they record `branch_*`
+  attributes plus per-flow child spans (person per-entity resolution,
+  character-franchise's two parallel resolutions, similarity's Qdrant probes +
+  per-lane candidate fetches) directly onto their `query_search.branch` span,
+  and share the `hydration` span via `_run_*_with_hydration` wrappers. Stage
+  4's Qdrant calls carry `query_search.semantic_qdrant` (three primitives,
+  `probe_kind` discriminator) and `similarity.qdrant` (anchor-vector retrieve +
+  shape probe; flow-neutral, emitted by the shared engine — the similarity
+  branch's signal attributes are likewise the `similarity.*` set, not
+  `query_search.branch_*`) spans.
   Every routed LLM call nests a shared `llm.generate` span (provider/model/
   cost/tokens/prompt-version/retry contract — see `docs/modules/llms.md`) under
-  whichever step/branch/handler span is current. Still pending: the Stage-4
-  dispatch span + `branch_error`/failed-branch-count attributes, the Phase D/E
-  scoring span, and the terminal success verdict + full result-count rollups
-  (Bites 2 remainder, 5, the scoring half of 7, and 9 in
-  `observability_context/query_search_planning.md`). Full catalog:
+  whichever group/branch/handler span is current. Bite 9 (end-to-end
+  validation of this structure in Tempo) is the one remaining item in
+  `observability_context/query_search_planning.md`. Full catalog:
   `observability_context/observability_architecture.md`.
 
 ### `POST /rerun_query_search`
@@ -393,9 +403,10 @@ auto-instruments FastAPI, httpx, psycopg v3, and redis — every request on
 every endpoint already gets a full network-hop trace for free. Manual spans
 and attributes on top of that exist for `/title_search`, `/movie_details`,
 `/movie_credits`, `/similarity_search` (fully), `/attribute_search` (fully),
-`/query_search` (request boundary + most of the streaming pipeline — Steps 0/1,
-per-branch, trait pipeline, entity flows, Qdrant probes, terminal rollups;
-Stage-4 dispatch/scoring code landed, Bite 9 end-to-end validation pending), and
+`/query_search` (request boundary + the full streaming pipeline — Steps 0/1, the
+six-group per-standard-branch structure (`step_2`/`decomposition`/
+`candidate_generation`/`rerankers`/`scoring`/`hydration`), entity flows, Qdrant
+probes, and terminal rollups; Bite 9 end-to-end validation pending), and
 `/rerun_query_search` (full server-span parity — input capture, the
 `trace.use_span` nesting fix, `request.*` (rollups + verdict)/branch-count, and
 `EndpointFailure` rejections; reuses every `query_search.*` pipeline span) as
@@ -450,11 +461,12 @@ catalog (source of truth — this section is a summary, not a replacement).
   reuses them.
 - **Partially instrumented**: `/query_search` and `/rerun_query_search` carry the
   request-boundary attributes, the `request.*` rollups, per-branch spans, the
-  standard-branch trait pipeline (Step 2/trait/Step 3/query generation),
+  standard-branch six-group pipeline (`step_2`/`decomposition`/
+  `candidate_generation`/`rerankers`/`scoring`/`hydration`),
   entity-flow `branch_*` attributes + child spans, Stage-4 semantic/similarity
   Qdrant probe spans, the implicit-prior generation + application spans, and the
-  terminal success verdict — with the Stage-4 dispatch/scoring code landed but
-  awaiting Bite 9 end-to-end validation (`/query_search` additionally has the
+  terminal success verdict — awaiting Bite 9 end-to-end validation in Tempo
+  (`/query_search` additionally has the
   Step 0/1 routing spans, which rerun bypasses). `/similarity_search` and
   `/attribute_search` are fully covered (1c-3 / 1c-4) — see their Telemetry notes
   above. See the remaining-bite list in

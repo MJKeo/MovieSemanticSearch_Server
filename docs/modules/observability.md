@@ -54,8 +54,10 @@ instrumentation elsewhere in the codebase. Both are consumed by
   span), and imports span/attribute constants from `names.py` for all its
   manual instrumentation (see `docs/modules/api.md`'s Observability
   section for the current catalog).
-- `api/outcome.py` imports `OUTCOME_SUCCESS` / `OUTCOME_FAILURE_REASON`
-  from `names.py`.
+- `api/outcome.py` imports `REQUEST_SUCCESS` / `REQUEST_FAILURE_REASON`
+  from `names.py` — the per-request verdict pair lives under the generic
+  `request` root (alongside `request.cost_usd` / `request.result_count` /
+  `request.usage.*`); the old `outcome.*` namespace was retired.
 
 ## Gotchas
 

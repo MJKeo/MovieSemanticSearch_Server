@@ -456,8 +456,9 @@ a restatement of it.
   on other attributes and the recorded exception, not in an
   ever-growing enum.
 - **Span status and request verdict are separate axes.** The span
-  *status* records whether an operation errored; the `outcome.*`
-  attributes record whether the *request* succeeded. Contract for
+  *status* records whether an operation errored; the `request.*`
+  attributes (`request.success`, `request.failure_reason`) record
+  whether the *request* succeeded. Contract for
   manual spans: an expected not-found leaves the span **UNSET** (the
   verdict, not the span, carries the failure); a genuine upstream or
   unexpected failure marks the span **ERROR** + `record_exception`; a
