@@ -89,8 +89,11 @@ from opentelemetry.trace import Status, StatusCode
 
 from db.postgres import fetch_movie_card_summaries
 from implementation.classes.schemas import MetadataFilters
+from observability.cost_tracking import RequestCostAccumulator, use_cost_scope
 from observability.names import (
     QUERY_SEARCH_BRANCH,
+    QUERY_SEARCH_BRANCH_COST_USD,
+    QUERY_SEARCH_BRANCH_ERROR,
     QUERY_SEARCH_BRANCH_RESULT_COUNT,
     QUERY_SEARCH_BRANCH_TYPE,
     QUERY_SEARCH_BRANCH_USES_ORIGINAL_TEXT,
@@ -155,7 +158,11 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
-async def _run_under_span(span: trace.Span, coro: Any) -> Any:
+async def _run_under_span(
+    span: trace.Span,
+    coro: Any,
+    cost_acc: RequestCostAccumulator | None = None,
+) -> Any:
     """Await ``coro`` with ``span`` activated as the current span.
 
     A branch's work is split across independent asyncio tasks (Step 2 ->
@@ -166,9 +173,38 @@ async def _run_under_span(span: trace.Span, coro: Any) -> Any:
     `end_on_exit=False` because the span outlives any single task — it is
     closed centrally by the merge loop when the branch's terminal
     `branch_results` event fires.
+
+    ``cost_acc`` is the branch's shared cost accumulator (one per branch,
+    created alongside the span). Because those three tasks are separate
+    siblings created by the merge loop — not nested — a fresh
+    `track_stage_cost()` scope can't span them; re-entering the SAME
+    accumulator here (via `use_cost_scope`) makes every LLM + embedding call
+    in this task add to the branch total, so it sums across Step 2/3/4.
     """
     with trace.use_span(span, end_on_exit=False):
+        if cost_acc is not None:
+            with use_cost_scope(cost_acc):
+                return await coro
         return await coro
+
+
+def _finalize_and_end_branch_span(
+    span: trace.Span,
+    cost_acc: RequestCostAccumulator | None,
+    branch_error: str | None = None,
+) -> None:
+    """Stamp the branch span's terminal rollups, then end it.
+
+    ``branch_cost_usd`` is ALWAYS set (0.0 for cost-free branches — the
+    always-on rollup). ``branch_error`` is set ONLY on a soft-fail; it is a
+    degradation, so it never marks the span ERROR or flips the request verdict
+    (the nested `llm.generate` child already carries the ERROR status).
+    """
+    if cost_acc is not None:
+        span.set_attribute(QUERY_SEARCH_BRANCH_COST_USD, cost_acc.total_usd)
+    if branch_error is not None:
+        span.set_attribute(QUERY_SEARCH_BRANCH_ERROR, branch_error)
+    span.end()
 
 
 def _activated_flow_names(step0: Step0Response) -> list[str]:
@@ -703,7 +739,13 @@ async def _stream_from_branch_plan(
     # set on standard branches only — true for exactly the verbatim-query
     # `standard:original` branch of the non-clarification flow.
     # ------------------------------------------------------------------
+    # Alongside each branch span, one cost accumulator per branch. It is
+    # re-entered (via `_run_under_span`'s `cost_acc`) inside every one of the
+    # branch's tasks, so the branch's LLM + embedding cost sums across Step
+    # 2/3/4 (or the single entity-flow task) into `branch_cost_usd`, written
+    # when the span closes below.
     branch_spans: dict[str, trace.Span] = {}
+    branch_cost_accumulators: dict[str, RequestCostAccumulator] = {}
     for fetch in fetches:
         span = tracer.start_span(QUERY_SEARCH_BRANCH)
         span.set_attribute(QUERY_SEARCH_BRANCH_TYPE, fetch["type"])
@@ -714,6 +756,7 @@ async def _stream_from_branch_plan(
                 and fetch["id"] == _standard_fetch_id("original"),
             )
         branch_spans[fetch["id"]] = span
+        branch_cost_accumulators[fetch["id"]] = RequestCostAccumulator()
 
     # ------------------------------------------------------------------
     # Progress queue + per-fetch emit callbacks.
@@ -776,6 +819,7 @@ async def _stream_from_branch_plan(
             _run_under_span(
                 branch_spans[fetch_id],
                 _run_step2_for_branch(kind, branch_query, ui_label),
+                branch_cost_accumulators[fetch_id],
             )
         )
         task_info[task] = _TaskInfo(
@@ -799,6 +843,7 @@ async def _stream_from_branch_plan(
                     emit_stage=_make_emitter(_FETCH_ID_EXACT_TITLE),
                     metadata_filters=metadata_filters,
                 ),
+                branch_cost_accumulators[_FETCH_ID_EXACT_TITLE],
             )
         )
         task_info[task] = _TaskInfo(
@@ -814,6 +859,7 @@ async def _stream_from_branch_plan(
                     emit_stage=_make_emitter(_FETCH_ID_SIMILARITY),
                     metadata_filters=metadata_filters,
                 ),
+                branch_cost_accumulators[_FETCH_ID_SIMILARITY],
             )
         )
         task_info[task] = _TaskInfo(
@@ -829,6 +875,7 @@ async def _stream_from_branch_plan(
                     emit_stage=_make_emitter(_FETCH_ID_NON_CHARACTER_FRANCHISE),
                     metadata_filters=metadata_filters,
                 ),
+                branch_cost_accumulators[_FETCH_ID_NON_CHARACTER_FRANCHISE],
             )
         )
         task_info[task] = _TaskInfo(
@@ -844,6 +891,7 @@ async def _stream_from_branch_plan(
                     emit_stage=_make_emitter(_FETCH_ID_CHARACTER_FRANCHISE),
                     metadata_filters=metadata_filters,
                 ),
+                branch_cost_accumulators[_FETCH_ID_CHARACTER_FRANCHISE],
             )
         )
         task_info[task] = _TaskInfo(
@@ -859,6 +907,7 @@ async def _stream_from_branch_plan(
                     emit_stage=_make_emitter(_FETCH_ID_STUDIO),
                     metadata_filters=metadata_filters,
                 ),
+                branch_cost_accumulators[_FETCH_ID_STUDIO],
             )
         )
         task_info[task] = _TaskInfo(
@@ -874,6 +923,7 @@ async def _stream_from_branch_plan(
                     emit_stage=_make_emitter(_FETCH_ID_PERSON),
                     metadata_filters=metadata_filters,
                 ),
+                branch_cost_accumulators[_FETCH_ID_PERSON],
             )
         )
         task_info[task] = _TaskInfo(
@@ -908,6 +958,12 @@ async def _stream_from_branch_plan(
                     continue
 
                 info = task_info.pop(finished)
+                # Capture this fetch's soft-fail (if any) off the terminal
+                # `branch_results` payload — the same field `api/main.py` reads
+                # for the failed-branch count. A `branch_results` event is
+                # always terminal (the span closes in this same iteration), so
+                # whatever error it carries is the branch's final verdict.
+                terminal_branch_error: str | None = None
                 async for event in _handle_finished_task(
                     finished,
                     info,
@@ -915,7 +971,13 @@ async def _stream_from_branch_plan(
                     make_emitter=_make_emitter,
                     metadata_filters=metadata_filters,
                     branch_span=branch_spans.get(info.fetch_id),
+                    branch_cost_acc=branch_cost_accumulators.get(info.fetch_id),
                 ):
+                    if (
+                        event[0] == "branch_results"
+                        and event[1].get("fetch_id") == info.fetch_id
+                    ):
+                        terminal_branch_error = event[1].get("branch_error")
                     yield event
 
                 # Close this branch's span once it reaches its terminal
@@ -924,13 +986,20 @@ async def _stream_from_branch_plan(
                 # terminal handlers add no follow-on task. So "no remaining
                 # task for this fetch_id" means the branch is done — for
                 # both multi-task standard branches and single-task entity
-                # flows, on success and soft-fail alike.
+                # flows, on success and soft-fail alike. Stamp the terminal
+                # rollups (branch_cost_usd always; branch_error on soft-fail)
+                # before ending.
                 if not any(
                     ti.fetch_id == info.fetch_id for ti in task_info.values()
                 ):
                     finished_span = branch_spans.pop(info.fetch_id, None)
+                    finished_acc = branch_cost_accumulators.pop(
+                        info.fetch_id, None
+                    )
                     if finished_span is not None:
-                        finished_span.end()
+                        _finalize_and_end_branch_span(
+                            finished_span, finished_acc, terminal_branch_error
+                        )
 
         # All worker tasks have drained. Flush any progress events that
         # landed in the queue in the same scheduling tick as the final
@@ -965,10 +1034,14 @@ async def _stream_from_branch_plan(
                 pass
         # End any branch span the happy path left open (client disconnect
         # mid-stream aborts before the merge loop closes them). is_recording()
-        # is False after end(), so this never double-ends a closed span.
-        for open_span in branch_spans.values():
+        # is False after end(), so this never double-ends a closed span. Still
+        # stamp branch_cost_usd (whatever cost the aborted branch incurred);
+        # branch_error stays unset — a cancelled branch didn't soft-fail.
+        for open_fetch_id, open_span in branch_spans.items():
             if open_span.is_recording():
-                open_span.end()
+                _finalize_and_end_branch_span(
+                    open_span, branch_cost_accumulators.get(open_fetch_id)
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -984,6 +1057,7 @@ async def _handle_finished_task(
     make_emitter: Callable[[str], StageEmitter],
     metadata_filters: MetadataFilters | None = None,
     branch_span: trace.Span | None = None,
+    branch_cost_acc: RequestCostAccumulator | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Process one completed task; may launch follow-on tasks.
 
@@ -997,10 +1071,16 @@ async def _handle_finished_task(
     `branch_span` is this fetch's `query_search.branch` span; any
     follow-on task launched here (Step 3, Stage 4) runs under it via
     `_run_under_span` so its work stays nested under the branch.
+    `branch_cost_acc` is that branch's shared cost accumulator, re-entered
+    inside each follow-on task so the branch total sums across Step 2/3/4.
     """
     if info.phase == _PHASE_STEP2:
         async for event in _handle_step2_done(
-            task, info, task_info=task_info, branch_span=branch_span
+            task,
+            info,
+            task_info=task_info,
+            branch_span=branch_span,
+            branch_cost_acc=branch_cost_acc,
         ):
             yield event
         return
@@ -1085,7 +1165,7 @@ async def _handle_finished_task(
             metadata_filters=metadata_filters,
         )
         stage4_task = asyncio.create_task(
-            _run_under_span(branch_span, stage4_coro)
+            _run_under_span(branch_span, stage4_coro, branch_cost_acc)
             if branch_span is not None
             else stage4_coro
         )
@@ -1122,11 +1202,14 @@ async def _handle_step2_done(
     *,
     task_info: dict[asyncio.Task, _TaskInfo],
     branch_span: trace.Span | None = None,
+    branch_cost_acc: RequestCostAccumulator | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Emit branch_traits (or a branch_error result), then start Step 3.
 
     `branch_span` is the fetch's `query_search.branch` span; the Step 3
     task launched here runs under it so its LLM work stays nested.
+    `branch_cost_acc` is the branch's shared cost accumulator, re-entered
+    in the Step 3 task so its cost joins the branch total.
     """
     try:
         partial, qa = task.result()
@@ -1173,7 +1256,7 @@ async def _handle_step2_done(
         partial, qa, _kind_from_fetch_id(info.fetch_id)
     )
     step3_task = asyncio.create_task(
-        _run_under_span(branch_span, step3_coro)
+        _run_under_span(branch_span, step3_coro, branch_cost_acc)
         if branch_span is not None
         else step3_coro
     )

@@ -29,7 +29,7 @@ changes.
 | Manual spans/attrs: `/movie_details`, `/movie_credits` | ✅ implemented (1c-6, 1c-7) |
 | Manual attrs: `/query_search` — request-boundary input capture + outcome (boundary failures + mid-stream fatal Step 0) + stream-end `request.cost_usd` rollup | 🟡 partial (1c-1 Stage 0 + cost rollup + Step-0 fatal verdict) |
 | Manual spans: `/query_search` pipeline — Steps 0 + 1 (`query_search.step_0` / `.step_1`) | ✅ implemented + verified (1c-1 Bite 3) |
-| Manual spans: `/query_search` pipeline — per-branch (`query_search.branch`, `branch_type` + `branch_uses_original_text`); also emitted on `/rerun_query_search` | 🟡 spans + attrs landed (1c-1 Bite 4); `branch_error`/result-count attrs pending |
+| Manual spans: `/query_search` pipeline — per-branch (`query_search.branch`, `branch_type` + `branch_uses_original_text` + `branch_error` soft-fail marker + always-on `branch_cost_usd` rollup); also emitted on `/rerun_query_search` | 🟡 spans + attrs landed (1c-1 Bite 4; `branch_error` + `branch_cost_usd` added), awaiting Tempo verification |
 | Manual spans: `/query_search` trait pipeline — Step 2 / trait / Step 3 / query generation (`query_search.step_2` / `.trait` / `.step_3` / `.query_generation`, incl. `query_generation_endpoints` + `"solo trim"` event) | ✅ implemented + verified (1c-1 Bite 4) |
 | Manual spans/attrs: `/query_search` entity flows (person / similarity / exact_title / studio / franchises) — `branch_*` attributes + per-flow child spans (person resolution, char-franchise resolutions, similarity Qdrant + per-lane candidate fetches) | 🟡 code landed, awaiting Tempo verification (1c-1 Bite 8) |
 | Manual spans: `/query_search` Stage 4 semantic Qdrant probes (`query_search.semantic_qdrant` × 3 primitives + retry/failed events) | ✅ implemented + verified (1c-1 Bite 6; now nests under the `query_search.dispatch` span) |
@@ -384,6 +384,8 @@ reuses Step 2 → Stage 4, not routing.
 | `query_search.step_1` | `query_search.step_1_unused` | bool | true when routing left no budget for spins (`not _step1_needed`), so Step 1's output feeds no branch. Derivable from the two step_0 attrs, recorded directly for legibility on the span |
 | `query_search.branch` | `query_search.branch_type` | string | the fetch type — one of `standard` / `exact_title` / `similarity` / `non_character_franchise` / `character_franchise` / `studio` / `person` (mirrors `SearchFlow` values). Low-cardinality closed set; **set on every branch span** |
 | `query_search.branch` | `query_search.branch_uses_original_text` | bool | true only for the first standard branch (`standard:original`) of the non-clarification flow, which searches the typed query verbatim rather than a generated/rewritten query. Set on **standard** branches only; false for spins and for every branch on the rerun path |
+| `query_search.branch` | `query_search.branch_error` | string | the branch's soft-fail string (`repr(exc)` / LLM error) captured off the terminal `branch_results` payload. Set **only** on a soft-fail (Step 2/3/4 exhausted retries or an unexpected escape). A **degradation** — the branch span stays UNSET, the request verdict is untouched, and the nested `llm.generate` child carries the ERROR (mirrors `trait_step_3_error`). High-cardinality → span-attr-only |
+| `query_search.branch` | `query_search.branch_cost_usd` | float | summed USD (LLM + embedding, all billed attempts) incurred inside this branch, via a per-branch `RequestCostAccumulator` re-entered in each of the branch's tasks (`use_cost_scope`). **Always set** — 0.0 for entity flows / cost-free branches. `sum(branch_cost_usd)` ≈ `request.cost_usd` minus the pre-branch Step 0/1 routing cost. Continuous measure → span-attr-only |
 
 **Trait-pipeline spans — Step 2 / Step 3 / query generation (1c-1 Bite 4,
 partial).** The standard-branch trait pipeline, from Step 2 through
@@ -495,8 +497,11 @@ with a `finally`-block safety net for the client-disconnect path. Both the full
 pipeline and the `/rerun_query_search` replay emit these (they share
 `_stream_from_branch_plan`); `branch_uses_original_text` defaults false on
 replays. A per-branch soft-fail (`branch_error`) is a **degradation** — it does
-not set the span to ERROR or touch the request verdict (span status stays UNSET); a
-`branch_error` attribute is a later bite.
+not set the span to ERROR or touch the request verdict (span status stays UNSET).
+The merge loop captures the soft-fail string off the terminal `branch_results`
+payload and stamps it as the `branch_error` attribute (plus the always-on
+`branch_cost_usd` rollup) via `_finalize_and_end_branch_span` just before the
+span closes — both landed, see the branch-span table above.
 
 **Entity-flow attributes on `query_search.branch` (1c-1 Bite 8).** The six
 non-standard flows record — on the branch span — what they searched, how it
@@ -617,10 +622,11 @@ emits `semantic_query_retry` (first-attempt failure) and `semantic_query_failed`
 (terminal, before returning the empty `EndpointResult`) as events carrying an
 `exception.type`. These land on the current span (dispatch/Step/server span in the
 pipeline; notebook span standalone) and no-op when no recording span is active. The
-per-branch `branch_error` attribute and the request-level failed-branch count stay
-out of scope here — they belong to the Bite-5 branch/dispatch span. Verification
-vehicle: `search_v2/test_semantic_qdrant_span.ipynb` (app-free tracing bootstrap +
-an editable sample vector space + a Grafana walkthrough).
+request-level failed-branch count lives on the request span; the per-branch
+`branch_error` attribute is now stamped on the `query_search.branch` span by the
+merge loop (see the branch-span table above). Verification vehicle:
+`search_v2/test_semantic_qdrant_span.ipynb` (app-free tracing bootstrap + an
+editable sample vector space + a Grafana walkthrough).
 
 **Stage 4 execution spans.** All in `search_v2/stage_4_execution.py`. A module
 tracer (`trace.get_tracer(__name__)`, a no-op `ProxyTracer` offline) creates each span

@@ -94,9 +94,14 @@ and API endpoints for search and movie detail retrieval.
   Pipeline-stage spans now cover the full streaming path: `query_search.step_0`
   / `.step_1` (flow routing + spin generation, parallel siblings under the
   server span); one `query_search.branch` span per fetch (`branch_type` +
-  `branch_uses_original_text`), closed centrally in the merge loop — also
-  emitted on `/rerun_query_search` since it shares the same
-  `_stream_from_branch_plan`. Each standard branch collapses its ~11 sibling
+  `branch_uses_original_text` + a `branch_error` soft-fail marker + an always-on
+  per-branch `branch_cost_usd` cost rollup), closed centrally in the merge loop
+  via `_finalize_and_end_branch_span` — also emitted on `/rerun_query_search`
+  since it shares the same `_stream_from_branch_plan`. `branch_cost_usd` sums the
+  branch's LLM + embedding cost across its separate Step 2/3/4 tasks through a
+  per-branch `RequestCostAccumulator` re-entered in each task (`use_cost_scope`);
+  `branch_error` is a degradation only (the span stays UNSET, the request verdict
+  is untouched). Each standard branch collapses its ~11 sibling
   spans into six named groups under `query_search.branch` (with per-stage
   `cost_usd` on the first four): `step_2` (the Step-2 LLM call),
   `decomposition` (wraps every per-trait `.trait`/`.step_3`/`.query_generation`

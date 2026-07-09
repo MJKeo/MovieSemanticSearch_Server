@@ -73,6 +73,10 @@ services:
         - ./implementation:/app/implementation
         - ./schemas:/app/schemas
         - ./search_v2:/app/search_v2
+        # observability/ holds tracing.py + names.py + cost_tracking.py,
+        # which api/main.py imports at startup. Without this mount the
+        # container dies on import (ModuleNotFoundError: observability).
+        - ./observability:/app/observability
 
     caddy:
       image: caddy:2

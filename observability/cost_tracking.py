@@ -33,6 +33,17 @@ Per-stage attribution — `track_stage_cost()`:
     creation, a stage entered before its fan-out isolates its subtree even when
     sibling branches run the same stage concurrently.
 
+Cross-task attribution — `use_cost_scope()`:
+  - `track_stage_cost()` works only when a stage lives inside ONE coroutine,
+    because the contextvar snapshot happens at `create_task`. A `/query_search`
+    BRANCH does not: its Step 2 / Step 3 / Stage 4 run as three SEPARATE sibling
+    tasks created by the merge loop, so no single fresh child scope can span
+    them. `use_cost_scope(acc)` instead re-enters a caller-OWNED accumulator, so
+    the orchestrator can create one accumulator per branch and push that SAME
+    object onto the stack inside each of the branch's tasks — the branch total
+    then sums across all three. Same fan-out semantics; the only difference from
+    `track_stage_cost()` is that the accumulator is supplied, not minted.
+
 Dependency-free (stdlib only), mirroring `observability/names.py`, so the
 low-level LLM router can import it without dragging in the OTel SDK.
 """
@@ -138,6 +149,30 @@ def track_stage_cost() -> Iterator[RequestCostAccumulator]:
     `track_request_cost()`.
     """
     accumulator = RequestCostAccumulator()
+    token = _request_cost.set(_request_cost.get() + (accumulator,))
+    try:
+        yield accumulator
+    finally:
+        _request_cost.reset(token)
+
+
+@contextlib.contextmanager
+def use_cost_scope(
+    accumulator: RequestCostAccumulator,
+) -> Iterator[RequestCostAccumulator]:
+    """Push a caller-OWNED accumulator onto the stack for this coroutine.
+
+    Unlike `track_request_cost()` / `track_stage_cost()`, which each mint a fresh
+    accumulator, this re-enters an accumulator the caller already holds — so cost
+    accrued across MULTIPLE sibling asyncio tasks can land in one place. The
+    `/query_search` orchestrator uses this for the per-branch rollup: a branch's
+    Step 2 / Step 3 / Stage 4 run as separate tasks created by the merge loop, so
+    a single fresh scope can't span them; instead the orchestrator mints one
+    accumulator per branch and enters it (via this manager) inside each task, so
+    every branch call adds to the shared branch total. Same whole-stack fan-out
+    as the other scopes; a no-op-friendly guard is unnecessary since the caller
+    only enters it when it wants the accumulator populated.
+    """
     token = _request_cost.set(_request_cost.get() + (accumulator,))
     try:
         yield accumulator

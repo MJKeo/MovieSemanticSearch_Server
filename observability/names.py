@@ -185,7 +185,8 @@ QUERY_SEARCH_CLARIFICATION_CHARS = QUERY_SEARCH.child("clarification_chars")
 # concept only query_search and /rerun_query_search have (rerun REUSES these keys,
 # the same rule-B move as reusing the branch spans). They back the
 # `request.success` verdict (success = >= 1 branch executed without a
-# branch_error). Low-cardinality counts, metric-label-eligible.
+# branch_error — see the `QUERY_SEARCH_BRANCH_ERROR` per-branch attribute
+# below). Low-cardinality counts, metric-label-eligible.
 QUERY_SEARCH_SUCCEEDED_BRANCH_COUNT = QUERY_SEARCH.child("succeeded_branch_count")  # int
 QUERY_SEARCH_FAILED_BRANCH_COUNT = QUERY_SEARCH.child("failed_branch_count")        # int
 
@@ -334,11 +335,34 @@ QUERY_SEARCH_QUERY_GENERATION_ENDPOINTS = QUERY_SEARCH.child(
 #                             query verbatim rather than a generated/rewritten
 #                             query). Set on standard branches only; false for
 #                             spins and for every branch on the rerun path.
+#   branch_error:             set ONLY when the branch soft-failed (Step 2 / Step 3
+#                             / Stage 4 exhausted its LLM retries, or an unexpected
+#                             escape) — the `repr(exc)` / error string carried in
+#                             the terminal branch_results event. A DEGRADATION, not
+#                             a span error: the branch span stays UNSET and the
+#                             request verdict is untouched (the nested `llm.generate`
+#                             child carries the ERROR status). Mirrors
+#                             `trait_step_3_error`. High-cardinality → span-attr-only.
+#   branch_cost_usd:          summed USD (LLM + embedding, all billed attempts)
+#                             incurred inside this branch. ALWAYS set — 0.0 for
+#                             entity flows and other cost-free branches (their LLM
+#                             resolution happens in Step 0, before branch spans
+#                             exist). Continuous measure → span-attr-only, never a
+#                             metric label (rule F); `_usd` unit suffix mirroring
+#                             `step_2_cost_usd` / `llm.cost_usd`. Note
+#                             `sum(branch_cost_usd)` ≈ `request.cost_usd` minus the
+#                             pre-branch Step 0 / Step 1 routing cost. Flat leaf
+#                             (like `step_2_cost_usd`), not dotted — `branch` is a
+#                             span-name leaf whose attrs are flat `branch_*`.
 QUERY_SEARCH_BRANCH = QUERY_SEARCH.child("branch")                    # span name
 QUERY_SEARCH_BRANCH_TYPE = QUERY_SEARCH.child("branch_type")          # attr (str)
 QUERY_SEARCH_BRANCH_USES_ORIGINAL_TEXT = QUERY_SEARCH.child(
     "branch_uses_original_text"
 )                                                                    # attr (bool)
+QUERY_SEARCH_BRANCH_ERROR = QUERY_SEARCH.child("branch_error")        # attr (str)
+QUERY_SEARCH_BRANCH_COST_USD = QUERY_SEARCH.child(
+    "branch_cost_usd"
+)                                                                    # attr (float)
 
 # --- query_search: entity-flow (non-standard branch) attributes (1c-1 Bite 8) ---
 # The six entity flows (exact_title / similarity / non_character_franchise /

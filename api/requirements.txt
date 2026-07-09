@@ -34,3 +34,14 @@ authlib>=1.6.9
 tiktoken>=0.12.0
 kneed>=0.8
 uvloop>=0.21
+
+# OpenTelemetry tracing. The container installs from THIS file (not
+# pyproject.toml), so the OTel packages must be listed here for the
+# api container to import observability/tracing.py without crashing.
+# Keep this set in sync with pyproject.toml's opentelemetry-* deps.
+opentelemetry-sdk>=1.39.1
+opentelemetry-exporter-otlp-proto-grpc>=1.39.1
+opentelemetry-instrumentation-fastapi>=0.60b1
+opentelemetry-instrumentation-httpx>=0.60b1
+opentelemetry-instrumentation-psycopg>=0.60b1
+opentelemetry-instrumentation-redis>=0.60b1

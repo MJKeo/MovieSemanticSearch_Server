@@ -548,14 +548,24 @@ Check off as landed; after each bite update `observability_architecture.md`
       `handler.py` (both gained a module tracer; they already run under the
       branch span). **`implicit_expectations` generation span landed + verified
       (2026-07-08)** — its policy output is recorded on the Bite-7 rerank span,
-      not the generation span (see Bite 7). **Still pending
-      in this bite:** the branch-level
-      `branch_error` / result-count attrs (deferred with Bite 5). Verify:
+      not the generation span (see Bite 7). **Branch-level `branch_error` +
+      `branch_cost_usd` landed (2026-07-09):** the merge loop captures the
+      soft-fail string off the terminal `branch_results` payload and stamps
+      `branch_error` (degradation only — span stays UNSET), plus an always-on
+      per-branch `branch_cost_usd` rollup summed across the branch's separate
+      Step 2/3/4 tasks via a per-branch `RequestCostAccumulator` re-entered in
+      each task (`observability/cost_tracking.py::use_cost_scope`); both written
+      by `_finalize_and_end_branch_span` at span close. (`branch_result_count`
+      for entity flows was already landed in Bite 8.) Verify:
       per-trait pipelining visible (a trait's generation bar starts before
       sibling step-3 bars end); `step_3_categories` shows the trimmed set +
       `"solo trim"` event on a SOLO-with-extras trait; forced Step-3 failure
       shows `trait_step_3_error` + step_3 ERROR with the request still
-      succeeding; no `query_generation` span for a NO_LLM_PURE_CODE category.
+      succeeding; no `query_generation` span for a NO_LLM_PURE_CODE category;
+      every branch span carries `branch_cost_usd` (>0 for standard branches,
+      0.0 for entity flows; per-branch values sum to ≈ `request.cost_usd` minus
+      Step 0/1 cost); a forced branch soft-fail shows `branch_error` on the
+      branch span while its status stays UNSET.
 - [~] **Bite 5 — Stage 4 execution.** *(execution slice code landed; awaiting
       Tempo verification.)* Final shape diverged from the sketch below: **no
       wrapping `stage_4` span** — the phase spans sit directly under
@@ -589,9 +599,11 @@ Check off as landed; after each bite update `observability_architecture.md`
       / `semantic_query_failed` span **events** on the ambient span. Built ahead
       of Bite 5: the probes nest under whatever span is current (the notebook's
       parent span standalone; today the server/Step span in the live pipeline),
-      and will nest under the Bite-5 dispatch span once it exists — at which point
-      the branch-level `branch_error` attribute + failed-branch count get wired
-      there (deliberately out of scope for Bite 6).
+      and will nest under the Bite-5 dispatch span once it exists.
+      (The branch-level `branch_error` attribute later landed in Bite 4 — stamped
+      by the merge loop from the terminal `branch_results` payload, not the
+      dispatch span; the request-level failed-branch count lives on the request
+      span.)
 - [~] **Bite 7 — Scoring + rerank.** **Implicit-prior spans landed + verified
       (2026-07-08):** `implicit_expectations` (generation, no
       manual attrs — the `llm.generate` child carries the payload) +
